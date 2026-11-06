@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * OpenPocket X — Milestone 1 (boot + screen) — Donner Pocket X.
  * SCREEN (reverse-engineered from the stock firmware): SOFTWARE SPI on PORT B
- *   CS = PB1, D/C = PB5, CLK = PB6, DO = PB7   (+ PC7 driven, reset/backlight?)
+ *   CS = PB1, D/C = PB5, CLK = PB6, DO = PB7   (PC7 is not the screen's: the button lights' enable, px_leds.h)
  * (the FM-1 used port C: that was the cause of the black screen.)
  * Init sequence + 40-line offset: taken verbatim from the Pocket X firmware.
  * Safety net: 2 failed boots -> UBOOT (re-flashable), + backup fm1-1.bin.
@@ -144,7 +144,7 @@ static void lcd_init(void)
     PB_DIR &= ~(CS | DC | CLK | DO);   /* outputs */
     PC_DIR &= ~PC7;
     PB_OUT |= CS; PB_OUT &= ~CLK;      /* CS high, CLK low */
-    PC_OUT |= PC7;                     /* PC7 high (reset released / backlight?) */
+    PC_OUT |= PC7;                     /* PC7 high: the button lights off (their enable, low = on: px_leds.h) */
 #if LCD_HW
     lspi_init();
 #endif
@@ -306,8 +306,8 @@ static void fm1_fault(const fm1_crash_t *c)
 #define OP_VERSION "v" OP_VERSION_NUM   /* shown at boot: changes with every released build */
 #define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
 #define ADC_PROBE 0        /* 1 = ADC diagnostic: shows the channels that move at the bottom (C2:512) */
-#define LED_PROBE 0        /* 1 = LED hunt (issue #8, led_probe.h): stock I/O power, 595 roles, LED lines; no sound */
-#define LED_BLINK 1        /* 1 = test: the normal firmware with sound, plus the lights' 595 (px_leds.h) blinking
+#define LED_PROBE 1        /* 1 = LED map (issue #8, led_probe.h): the knob picks a bit of the lights' 595, it blinks; no sound */
+#define LED_BLINK 0        /* 1 = test: the normal firmware with sound, plus the lights' 595 (px_leds.h) blinking
                             * all 8 bits at 2 Hz (issue #8: do the lights need something the normal start sets up?) */
 #define PA_PD   (*(volatile uint32_t *)0x50014u)
 
@@ -338,7 +338,7 @@ static void input_init(void)
     PH_DIE |= 0xFFFFu; PH_PU |= 0xFFFFu;
     PB_DIE |= 0xFF1Du; PB_PU |= 0xFF1Du;                       /* except PB1/5/6/7 (screen) */
 #endif
-    PC_DIR &= ~PC7; PC_OUT |= PC7;      /* PC7 drives the screen: always an output at 1 */
+    PC_DIR &= ~PC7; PC_OUT |= PC7;      /* PC7, the button lights' enable: high = off until px_leds.h turns them on */
 }
 static void input_baseline(void)
 {
@@ -551,7 +551,7 @@ static uint32_t ed_flags(void) { return (a_bypass ? 1u : 0u) | (a_c1 ? 2u : 0u);
 #if AUDIO_PROBE
 #error "LED_PROBE needs the normal build: USB (the web installer) is the way back"
 #endif
-#include "led_probe.h"      /* the LED hunt (issue #8) */
+#include "led_probe.h"      /* the LED map (issue #8) */
 #endif
 #if LED_BLINK
 #if LED_PROBE || AUDIO_PROBE

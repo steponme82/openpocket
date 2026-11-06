@@ -1,17 +1,21 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * OpenPocket — the button lights (issue #8): one 74HC595 shift register, 8 outputs, on port C.
+ * OpenPocket — the button lights (issue #8): one 74HC595 shift register, 8 outputs, on port C, and PC7, the lights'
+ * enable.
  *
- * Pins and timing as the stock firmware drives them (BlackBox_020; PocketX_016 has the same routine), read by
- * isod89 in the stock code:
- *   DS (data) = PC8, SHCP (shift clock) = PC5, STCP (latch) = PC6. OE is not driven by any pin. PC7 (a screen
- *   line) is high at the same time: OpenPocket already keeps it so, and nothing here touches it.
- *   Stock's init: PC5, PC6, PC8 outputs with SHCP = 1, STCP = 0, DS = 0, then one byte shifted out.
+ * Pins and timing as the stock firmware drives them (BlackBox_016, _020 and _021 have the same routine, read with
+ * JieLi's objdump; isod89 read it first, and finds PocketX_016's the same):
+ *   DS (data) = PC8, SHCP (shift clock) = PC5, STCP (latch) = PC6.
+ *   PC7 = the lights' enable, low = on (the 595's OE, by how the stock code uses it). The 595 init sets PC7 high
+ *   with the three pins and loads the first byte; then the lights go on with PC7 low: in 016 / 020 as the first
+ *   step of the screen init, which leaves it low, in 021 right after that first byte. 021 also sets PC7 high again
+ *   on its way off. OpenPocket used to keep PC7 high as a screen line: it is not one (the stock screen runs with it
+ *   low), and with it high the lights stay dark whatever the 595 holds. Every probe before this one kept it high.
  *   A byte, MSB first: STCP low; for each bit SHCP low, DS = the bit, wait, SHCP high, wait; then STCP high, whose
  *   rising edge puts the byte on the outputs. Stock waits about 4 to 8 us at each step: LEDS_WAIT is 5 us.
- *   Stock's byte: bit 0 a blink signal (toggled by a timer), bits 1..6 six light states, bit 7 always 0. It rewrites
- *   the byte only when it changes, and writes 0 at power-off.
- * On a BlackBox (2026-11-06) this lit nothing, not even all 8 bits blinking: the reading misses something (the
- * roles, another line, an enable). LED_PROBE 1 builds the LED hunt (led_probe.h), which looks for it.
+ *   Stock sends its byte inverted (DS = 1 for a 0 bit): its logical byte has bit 0 a blink signal (a timer), bits
+ *   1..6 the six effect lights, bit 7 always 0; at power-off it writes logical 0, FF on the wire. leds_write here
+ *   takes the byte as it goes on the wire.
+ * Not run on a pedal with PC7 low yet.
  *
  * Every edge is a read-modify-write of PORTC OUT, so these are called from the main loop only (no interrupt writes
  * port C). tests/lpsim.c checks the bit order and the waits against a model of the 595. */
@@ -31,6 +35,8 @@
 #define LEDS_SH (1u << 5)   /* PC5: shift clock, DS is taken on its rising edge */
 #define LEDS_ST (1u << 6)   /* PC6: latch, the outputs change on its rising edge */
 #define LEDS_PINS (LEDS_DS | LEDS_SH | LEDS_ST)
+#define LEDS_EN (1u << 7)   /* PC7: the lights' enable, low = on */
+#define LEDS_OFF 0xFFu      /* the stock's power-off byte on the wire (logical 0, inverted) */
 
 static uint8_t leds_byte;   /* what the outputs show now */
 
@@ -69,8 +75,17 @@ static void leds_write(uint8_t v)
     leds_shift(v, LEDS_DS, LEDS_SH, LEDS_ST);
     leds_byte = v;
 }
-static void leds_init(void)
+static void leds_enable(uint32_t on)                                /* PC7 an output: low = lights on */
 {
+    if (on) LEDS_PC(0x00) &= ~LEDS_EN;
+    else LEDS_PC(0x00) |= LEDS_EN;
+    LEDS_PC(0x08) &= ~LEDS_EN;
+    LEDS_EDGE();
+}
+static void leds_init(void)                                          /* as stock: load with the lights off, then on */
+{
+    leds_enable(0u);
     leds_setup(LEDS_DS, LEDS_SH, LEDS_ST);
-    leds_write(0u);
+    leds_write(LEDS_OFF);
+    leds_enable(1u);
 }
