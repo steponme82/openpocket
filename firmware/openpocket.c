@@ -306,6 +306,7 @@ static void fm1_fault(const fm1_crash_t *c)
 #define OP_VERSION "v" OP_VERSION_NUM   /* shown at boot: changes with every released build */
 #define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
 #define ADC_PROBE 0        /* 1 = ADC diagnostic: shows the channels that move at the bottom (C2:512) */
+#define LED_PROBE 0        /* 1 = light finder (issue #8, led_probe.h): one pin at a time blinks, the knob steps; no sound */
 #define PA_PD   (*(volatile uint32_t *)0x50014u)
 
 /* ---- Controls mapped on the real pedal (diagnostic) ----
@@ -544,6 +545,12 @@ static uint32_t ed_flags(void) { return (a_bypass ? 1u : 0u) | (a_c1 ? 2u : 0u);
 #include "px_editor.h"      /* the web editor (docs/EDITOR-PROTOCOL.md) */
 #endif
 #endif
+#if LED_PROBE
+#if AUDIO_PROBE
+#error "LED_PROBE needs the normal build: USB (the web installer) is the way back"
+#endif
+#include "led_probe.h"      /* the light finder (issue #8) */
+#endif
 
 /* P3_RST_SRC as read at boot: why the chip last reset (fm1_sys.h) */
 static void rst_names(char *l, uint32_t r)
@@ -641,6 +648,12 @@ static void app_main(void)
     keys_capture_idle();
     op_stage(ST_PRESET, "PRESET...");
     load_preset(cur_preset);
+#if LED_PROBE
+    px_usb_start();                      /* USB-MIDI + update entry: the web installer is the way back */
+    px_store_boot();
+    fm1_irq_enable_all();                /* audio_start does it in the normal build; here no audio is started */
+    led_probe_run();                     /* never returns */
+#endif
 #if AUDIO_PROBE
     audio_probe_run();
 #else
