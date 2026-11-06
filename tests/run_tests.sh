@@ -4,7 +4,7 @@
 #  - engine: every block x model x extreme knob, signal / silence / overload, with the pedal's own libm (px_math.c):
 #    no NaN; long runs (3 s pluck + 8 s silence): nothing runs away (only delays at FDBK 100 hold on, by design)
 #  - preset store: save / reload / power cut at every step of a save (firmware/px_store.h on a simulated flash)
-#  - LED hunt (firmware/led_probe.h, px_leds.h): pin check, the 6 roles, 47 LED lines one at a time, the 595 timing
+#  - LED hunt (firmware/led_probe.h, px_leds.h): stock I/O power once, the 6 roles, 47 LED lines, the 595 timing
 #  - packages: tools/pxpkg.py rebuilds the official PocketX_016 app area byte for byte (needs the official file)
 #  - installer: docs/pxota.js + docs/pxpkg.js against a simulated pedal running the real update code (ota.c, ldr_core.c)
 #  - page: docs/index.html in headless Chromium (needs Playwright: npm i playwright && npx playwright install chromium)
