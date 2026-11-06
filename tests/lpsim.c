@@ -1,11 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * OpenPocket — the light finder (firmware/led_probe.h, issue #8) on the PC, against fake GPIO registers:
+ * OpenPocket — the LED map (firmware/led_probe.h and the 595 driver px_leds.h, issue #8) on the PC, against fake
+ * GPIO registers and a model of the 74HC595:
  *   cc -O1 -Wall -Wno-unused-function -Ifirmware -o build/lpsim tests/lpsim.c && build/lpsim build/lp
- * Checks, on every pass of its loop: the pins it must never touch (screen, knob, I2S, amp enable, MASTER) keep
- * their registers; at most one pin differs from the state at start, the one on screen, and it blinks; every pin
- * goes back exactly as it was; the footswitches mark / unmark, the right footswitch is not read while it is the
- * pin being driven; a reset while a pin blinks skips that pin next time, a power-on starts afresh; the knob wraps
- * both ways; USB is serviced; every line of text fits the screen. Writes PPM screenshots to OUTDIR. */
+ * Checks: only PC5, PC6 and PC8 are ever changed (every other register bit of PA, PB, PC and PH as at start, PC7
+ * included); they end as outputs without pulls; every shift clock edge and the latch's rise have a wait before them
+ * (the start counts as an edge, so SHCP is high for a wait even when it began low), DS is an output
+ * and the latch is low while shifting; the byte reaches the 595's outputs MSB first and is always the one the screen
+ * names, blinking at 2 Hz between the bits on screen and 0, lit right after a turn; the knob wraps both ways over the
+ * 9 positions; each button writes itself into the table, again clears it, another replaces it, nothing is written
+ * on ALL 8 BITS; the analog keys (CAB, DLY, REV) are read every 10 ms; USB is serviced; the boot is not counted as
+ * failed; every line of text fits its box. Writes PPM screenshots to OUTDIR. */
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -31,26 +35,35 @@ static void lcd_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t c)
     if (y + h > 240u) h = 240u - y;
     for (uint32_t j = 0; j < h; j++) for (uint32_t i = 0; i < w; i++) fb[(y + j) * 240u + x + i] = c;
 }
-static int lcd_inits;
-static void lcd_init(void) { lcd_inits++; }
 static void fm1_wdt_feed(void) { }
 
-/* ---- the pedal around the light finder: gpio[port p (0 A, 1 B, 2 C, 7 H)][register r / 4] */
-#define LP_REG(port, r) (gpio[(port)][(r) / 4u])
-#define LP_NOINIT
-static uint32_t pa_in, pc_in;                   /* the buttons as pressed (pa_in) and the knob */
+/* ---- the pedal around the LED map: gpio[port p (0 A, 1 B, 2 C, 7 H)][register r / 4] */
+enum { R_OUT = 0, R_DIR = 2, R_PU = 4, R_PD = 5 };              /* register index: OUT +0, DIR +8, PU +0x10, PD +0x14 */
 static uint32_t gpio[8][16];
+static uint32_t pa_in, ph_in, pc_in;            /* the buttons as pressed, the knob */
 static uint32_t sim_pa_in(void)                 /* as the pad reads: an output pin reads back its own level */
 {
-    uint32_t dir = gpio[0][0x08 / 4];
-    return (pa_in & dir) | (gpio[0][0x00 / 4] & ~dir);
+    uint32_t dir = gpio[0][R_DIR];
+    return (pa_in & dir) | (gpio[0][R_OUT] & ~dir);
 }
 #define PA_IN sim_pa_in()
+#define PH_IN ph_in
 #define PC_IN pc_in
 #define ENC_MASK 0x3u
-#define PA_FS_UP (1u << 2)
-#define PA_FS_DN (1u << 3)
-static uint32_t base_pa;
+#define PA_FX     (1u << 0)                     /* as openpocket.c */
+#define PA_HOME   (1u << 1)
+#define PA_FS_UP  (1u << 2)
+#define PA_FS_DN  (1u << 3)
+#define PH_PUSH   ((1u << 4) | (1u << 6))
+#define PH_MOD    ((1u << 7) | (1u << 8))
+#define PH_AMP    (1u << 9)
+static uint32_t base_pa, base_ph;
+enum { KEY_NONE = 0, KEY_CAB, KEY_DLY, KEY_REV };
+#define ADC_CH_KEYS 9u
+static int sim_key;                             /* the analog key held down */
+static unsigned long adc_calls;
+static int32_t adc_read2(uint32_t ch) { if (ch == ADC_CH_KEYS) adc_calls++; return sim_key; }
+static int keys_decode(int32_t v) { return (int)v; }
 static const int8_t QDEC[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
 typedef struct { uint8_t stab, last, cnt; } dbn_t;
 static int dbn_press(dbn_t *d, int raw)          /* as openpocket.c */
@@ -67,7 +80,6 @@ static void px_usb_service(uint32_t now) { (void)now; usb_calls++; }
 static struct { uint32_t magic, pending, failed; } guard;
 enum { ST_OK = 8 };
 static struct { uint32_t stage; } op_diag;
-static struct { uint8_t rst; } op_pwr;
 static void b_num(char *d, uint32_t v)
 {
     char t[10]; int n = 0;
@@ -77,6 +89,35 @@ static void b_num(char *d, uint32_t v)
     *d = 0;
 }
 static void b_str(char *d, const char *s) { while (*d) d++; while (*s) *d++ = *s++; *d = 0; }
+
+/* ---- the 74HC595, from its data sheet: DS is shifted in on SHCP's rising edge (the first bit in ends at Q7), the
+ * outputs take the shift register on STCP's rising edge. A pin's level: its OUT bit when an output, else its pull. */
+#define M_DS (1u << 8)
+#define M_SH (1u << 5)
+#define M_ST (1u << 6)
+static uint32_t lv_prev;
+static uint8_t sr, q;
+static unsigned long waits, w_sh, latches;
+static int e_wait, e_latch, e_dir;
+static uint32_t pc_level(void) { uint32_t d = gpio[2][R_DIR]; return (gpio[2][R_OUT] & ~d) | (gpio[2][R_PU] & d); }
+static void sim_wait(void) { waits++; }
+static void sim_edge(void)
+{
+    uint32_t lv = pc_level(), rise = lv & ~lv_prev, fall = ~lv & lv_prev;
+    if (rise & M_SH) {
+        if (waits == w_sh) e_wait++;            /* no wait while SHCP was low (or since the start) */
+        if (lv & M_ST) e_latch++;               /* shifting with the latch high: the outputs would ripple */
+        if (gpio[2][R_DIR] & M_DS) e_dir++;     /* DS not driven */
+        sr = (uint8_t)((sr << 1) | ((lv & M_DS) ? 1u : 0u));
+        w_sh = waits;
+    }
+    if (fall & M_SH) { if (waits == w_sh) e_wait++; w_sh = waits; }   /* no wait while SHCP was high */
+    if (rise & M_ST) { if (waits == w_sh) e_wait++; q = sr; latches++; }   /* a wait after the last shift too */
+    lv_prev = lv;
+}
+#define LEDS_PC(r) (gpio[2][(r) / 4u])
+#define LEDS_WAIT() sim_wait()
+#define LEDS_EDGE() sim_edge()
 
 static int failed, clipped;
 #define LP_TEXT_HOOK(s, f, w) do { \
@@ -88,64 +129,64 @@ static int failed, clipped;
 /* ---- the checks */
 static const int PORTS[4] = { 0, 1, 2, 7 };
 static uint32_t snap[8][16];
+static int want, want2 = -1;                    /* the position the test expects (0 all, 1..8 bit want - 1); mid-turn either */
 static void ok(int c, const char *what) { if (!c) { printf("FAIL: %s\n", what); failed++; } }
-static void reset_gpio(void)                     /* a distinctive start: inputs with some pulls, some levels */
+static void reset_gpio(void)                    /* a distinctive start; PC5, PC6, PC8 inputs with pull-ups, as booted */
 {
     memset(gpio, 0, sizeof gpio);
     for (int k = 0; k < 4; k++) {
         int p = PORTS[k];
-        gpio[p][LP_OUT / 4] = 0x5A5Au ^ (uint32_t)(k * 0x1111);
-        gpio[p][LP_DIR / 4] = 0xFFFFu & ~(0x0101u << k);   /* a few outputs too */
-        gpio[p][LP_PD / 4] = 0x3030u >> k;                 /* every pin has a pull, so a driven one always differs */
-        gpio[p][LP_PU / 4] = 0xFFFFu & ~gpio[p][LP_PD / 4];
+        gpio[p][R_OUT] = 0x5A5Au ^ (uint32_t)(k * 0x1111);
+        gpio[p][R_DIR] = 0xFFFFu & ~(0x0101u << k);
+        gpio[p][R_PD] = 0x3030u >> k;
+        gpio[p][R_PU] = 0xFFFFu & ~gpio[p][R_PD];
     }
-    gpio[1][LP_DIR / 4] &= ~0x00E2u;            /* the screen pins are outputs, as lcd_init leaves them */
+    gpio[1][R_DIR] &= ~0x00E2u;                 /* the screen pins PB1/5/6/7 and PC7: outputs, PC7 high */
+    gpio[2][R_DIR] &= ~(1u << 7); gpio[2][R_OUT] |= 1u << 7;
+    gpio[2][R_DIR] |= M_DS | M_SH | M_ST; gpio[2][R_PU] |= M_DS | M_SH | M_ST; gpio[2][R_PD] &= ~(M_DS | M_SH | M_ST);
+    gpio[0][R_DIR] |= 0x000Fu;                  /* the buttons are inputs, as input_init leaves them */
+    gpio[7][R_DIR] |= PH_PUSH | PH_MOD | PH_AMP;
     memcpy(snap, gpio, sizeof snap);
+    pa_in = ph_in = pc_in = 0; sim_key = KEY_NONE;
+    base_pa = sim_pa_in() & 0xFFFFu; base_ph = ph_in;   /* as input_baseline */
+    lv_prev = pc_level();
+    sr = 0x5Au; q = 0xA5u;                      /* a 595 holds garbage at power-on */
 }
-static int diff_pins(uint32_t *only)            /* how many pins differ from the start (and the last one's id) */
+static int only_595_pins(void)                  /* every register bit as at start, but PC5/6/8's OUT, DIR, PU, PD */
 {
-    int n = 0;
     for (int k = 0; k < 4; k++)
-        for (int b = 0; b < 16; b++) {
-            uint32_t m = 1u << b; int p = PORTS[k], d = 0;
-            for (int r = 0; r < 6; r++) if ((gpio[p][r] ^ snap[p][r]) & m) d = 1;
-            if (d) { n++; if (only) *only = (uint32_t)(k * 16 + b + 1); }
+        for (int r = 0; r < 16; r++) {
+            uint32_t may = (PORTS[k] == 2 && (r == R_OUT || r == R_DIR || r == R_PU || r == R_PD)) ? (M_DS | M_SH | M_ST) : 0u;
+            if ((gpio[PORTS[k]][r] ^ snap[PORTS[k]][r]) & ~may) return 0;
         }
-    return n;
-}
-/* written out again here, not taken from led_probe.h: PA4..PA9 (I2S, amp enable), PA10 (MASTER), PB1/5/6/7 and
- * PC7 (screen), PC0/1 (knob) */
-static const uint32_t FORBID[4] = { (0x7Fu << 4), (1u << 1) | (1u << 5) | (1u << 6) | (1u << 7), 3u | (1u << 7), 0u };
-static int never_touched(void)
-{
-    for (int k = 0; k < 4; k++)
-        for (int r = 0; r < 6; r++)
-            if ((gpio[PORTS[k]][r] ^ snap[PORTS[k]][r]) & FORBID[k]) return 0;
     return 1;
 }
+static uint8_t mask_of(int pos) { return pos ? (uint8_t)(1u << (pos - 1)) : 0xFFu; }
 static void run(uint32_t ms)                    /* the loop for ms milliseconds, checking every pass */
 {
     for (uint32_t t = 0; t < ms; t++) {
-        uint32_t who = 0; int n;
         sim_ms++;
         lp_step(ms_now());
-        n = diff_pins(&who);
-        if (!never_touched()) { ok(0, "a pin it must never drive was changed"); return; }
-        if (n > 1 || (n == 1 && who != lp.id)) { ok(0, "a pin other than the one on screen changed"); return; }
+        if (!only_595_pins()) { ok(0, "a pin other than PC5 / PC6 / PC8 was changed"); return; }
+        if (q != 0u && q != mask_of(want) && !(want2 >= 0 && q == mask_of(want2))) {
+            ok(0, "the 595 shows a byte other than the bits on screen"); return;
+        }
     }
 }
 static void turn(int dir)                       /* one detent: 0 1 3 2 0 is one step forward (the main loop's sign) */
 {
     static const uint8_t FWD[4] = { 1, 3, 2, 0 }, BACK[4] = { 2, 3, 1, 0 };
+    want2 = dir > 0 ? (want + 1) % 9 : (want + 8) % 9;
     for (int k = 0; k < 4; k++) { pc_in = (pc_in & ~3u) | (dir > 0 ? FWD[k] : BACK[k]); run(2); }
+    want = want2; want2 = -1;
+    ok(lp.pos == (uint32_t)want, "the knob moves one position per detent");
+    ok(q == mask_of(want), "lit right after a turn");
 }
-static void press(uint32_t fs) { pa_in ^= fs; run(20); pa_in ^= fs; run(20); }
-static void go_to(uint32_t id)                  /* knob forward until that pin is on screen */
-{
-    for (uint32_t k = 0; k <= lp.n + 1u && !(lp.i && lp.ids[lp.i - 1u] == id); k++) turn(+1);
-    ok(lp.i && lp.ids[lp.i - 1u] == id, "the knob reaches the pin");
-}
-static uint32_t pin(int k, int b) { return (uint32_t)(k * 16 + b + 1); }
+static void go(int pos) { for (int k = 0; k < 9 && want != pos; k++) turn(+1); }
+static void press_pa(uint32_t m) { pa_in ^= m; run(20); pa_in ^= m; run(20); }
+static void press_ph(uint32_t m) { ph_in ^= m; run(20); ph_in ^= m; run(20); }
+static void press_key(int k) { sim_key = k; run(60); sim_key = KEY_NONE; run(60); }
+static int map(int bit) { return lp.map[bit] ? lp.map[bit] - 1 : -1; }
 static void shot(const char *dir, const char *name)
 {
     static int n;
@@ -162,106 +203,75 @@ static void shot(const char *dir, const char *name)
     }
     fclose(f);
 }
-static void boot(uint8_t rst)                   /* the pedal starts (registers as the hardware leaves them) */
-{
-    reset_gpio();
-    op_pwr.rst = rst;
-    guard.pending = 1; guard.failed = 1; op_diag.stage = 3;
-    pc_in = 0; pa_in = 0; base_pa = 0;
-    lp_init();
-    run(5);
-}
 
 int main(int argc, char **argv)
 {
     const char *dir = argc > 1 ? argv[1] : "build/lp";
 
-    /* power-on, garbage in .noinit */
-    lp_keep.magic = 0x12345678u; lp_keep.cur = 7; lp_keep.skip[0] = 0xFFFFu; lp_keep.mark[3] = 0xFFFFu;
-    boot(1u);
-    ok(lp.n == 50u, "50 pins to try");
-    ok(lp_keep.magic == LP_MAGIC && !lp_keep.skip[0] && !lp_keep.mark[3], "a power-on starts afresh");
+    reset_gpio();
+    guard.pending = 1; guard.failed = 1; op_diag.stage = 3;
+    lp_init();
     ok(guard.pending == 0u && guard.failed == 0u && op_diag.stage == ST_OK, "not counted as a failed boot");
-    ok(diff_pins(0) == 0, "nothing driven at start");
+    ok(!(gpio[2][R_DIR] & (M_DS | M_SH | M_ST)), "PC5, PC6, PC8 are outputs");
+    ok(!(gpio[2][R_PU] & (M_DS | M_SH | M_ST)) && !(gpio[2][R_PD] & (M_DS | M_SH | M_ST)), "without pulls");
+    ok(latches == 2u && q == 0xFFu, "0 at start (as stock), then ALL 8 BITS lit");
+    ok(only_595_pins(), "nothing else touched by the start");
+    run(5);
     ok(usb_calls > 0u, "USB serviced");
-    shot(dir, "ready");
+    shot(dir, "all_bits");
 
-    /* the first pin: PA0 (FX button), an output, blinking at 2 Hz, its pulls off */
-    turn(+1);
-    ok(lp.i == 1u && lp.id == pin(0, 0), "one detent: the first pin");
-    ok(!(gpio[0][LP_DIR / 4] & 1u) && !(gpio[0][LP_PU / 4] & 1u) && !(gpio[0][LP_PD / 4] & 1u), "PA0 driven, no pulls");
-    {
-        int flips = 0; uint32_t last = gpio[0][LP_OUT / 4] & 1u;
-        for (int t = 0; t < 2000; t++) { run(1); if ((gpio[0][LP_OUT / 4] & 1u) != last) { flips++; last ^= 1u; } }
+    {   /* 2 Hz: 8 changes in 2 s, always the bits on screen or 0 */
+        int flips = 0; uint8_t last = q;
+        for (int t = 0; t < 2000; t++) { run(1); if (q != last) { flips++; last = q; } }
         ok(flips >= 7 && flips <= 9, "2 Hz: 8 changes in 2 s");
     }
-    shot(dir, "pa0_fx_button");
-
-    /* every pin forward, then back to READY: all as it was */
-    for (uint32_t k = 1; k < lp.n; k++) {
+    {   /* each bit alone, MSB first (an LSB-first driver would light bit 7 - n) */
+        for (int b = 0; b < 8; b++) { turn(+1); run(300); }
+        ok(want == 8, "at BIT 7");
         turn(+1);
-        uint32_t id = lp.ids[lp.i - 1u], who = 0;
-        run(300);                                        /* past one blink */
-        ok(lp.id == id && diff_pins(&who) == 1 && who == id, "each pin in turn, alone");
+        ok(lp.pos == 0u, "past BIT 7: ALL 8 BITS");
+        turn(-1);
+        ok(lp.pos == 8u && q == 0x80u, "back from ALL: BIT 7");
+        turn(+1);
     }
-    turn(+1);
-    ok(lp.i == 0u && lp.id == 0u, "past the last pin: READY");
-    ok(memcmp(gpio, snap, sizeof snap) == 0, "every register as at start after the whole round");
-    turn(-1);
-    ok(lp.i == lp.n && lp.id == pin(3, 15), "back from READY: the last pin (PH15)");
-    turn(+1);
-    ok(lp.i == 0u && memcmp(gpio, snap, sizeof snap) == 0, "and forward again: READY, all as at start");
-
-    /* marks: PH6 with the right footswitch; on PA2 (the right footswitch) only the left one marks */
-    go_to(pin(3, 6));
-    press(PA_FS_UP);
-    ok(lp_has(lp_keep.mark, pin(3, 6)), "right footswitch marks PH6");
-    shot(dir, "ph6_marked");
-    go_to(pin(3, 9));
-    press(PA_FS_UP);
-    go_to(pin(0, 2));
-    press(PA_FS_UP);
-    ok(!lp_has(lp_keep.mark, pin(0, 2)), "the right footswitch is not read while PA2 blinks");
-    press(PA_FS_DN);
-    ok(lp_has(lp_keep.mark, pin(0, 2)), "the left one marks PA2");
-    shot(dir, "pa2_right_footswitch");
-    press(PA_FS_DN);
-    ok(!lp_has(lp_keep.mark, pin(0, 2)), "and unmarks it");
-    {   /* PA2 and PA3 blinking read back as presses: neither may mark or redraw */
-        uint32_t m3 = lp_keep.mark[0];
-        int i0 = lcd_inits;
-        go_to(pin(0, 3));
-        run(2000);
-        go_to(pin(0, 2));
-        run(2000);
-        ok(lp_keep.mark[0] == m3 && lcd_inits == i0, "a blinking footswitch pin is not taken for a press");
+    {   /* the table: every button, again clears, another replaces, none on ALL */
+        unsigned long a0 = adc_calls; uint32_t t0 = sim_ms;
+        press_key(KEY_DLY);
+        ok(memcmp(lp.map, "\0\0\0\0\0\0\0\0", 8) == 0, "nothing written on ALL 8 BITS");
+        unsigned long n = adc_calls - a0, t = (sim_ms - t0) / 10u;
+        ok(n + 1u >= t && n <= t + 1u, "the keys every 10 ms");
+        go(1);
+        shot(dir, "bit0");
+        press_pa(PA_FX);
+        ok(map(0) == LB_FX, "FX on BIT 0");
+        shot(dir, "bit0_fx");
+        press_pa(PA_FX);
+        ok(map(0) < 0, "FX again clears it");
+        press_pa(PA_FX);
+        go(2); press_pa(PA_FS_UP);
+        ok(map(1) == LB_FSR, "right footswitch on BIT 1");
+        go(3); press_pa(PA_FS_DN);
+        ok(map(2) == LB_FSL, "left footswitch on BIT 2");
+        go(4); press_ph(PH_AMP);
+        ok(map(3) == LB_AMP, "AMP on BIT 3");
+        go(5); press_key(KEY_CAB);
+        ok(map(4) == LB_CAB, "CAB (analog) on BIT 4");
+        go(6); press_ph(1u << 6);
+        ok(map(5) == LB_PUSH, "PUSH (PH6 alone) on BIT 5");
+        go(7); press_key(KEY_REV); press_pa(PA_HOME);
+        ok(map(6) == LB_HOME, "HOME replaces REV on BIT 6");
+        go(8); press_ph(1u << 8);
+        ok(map(7) == LB_MOD, "MOD (PH8 alone) on BIT 7");
+        ok(map(0) == LB_FX && map(3) == LB_AMP, "the table keeps the others");
+        shot(dir, "map");
+        go(0);
+        press_pa(PA_FX);
+        ok(map(0) == LB_FX, "a press on ALL changes nothing");
     }
-    go_to(pin(1, 0));
-    int inits = lcd_inits;
-    press(PA_FS_DN);
-    ok(lcd_inits == inits + 1, "left footswitch redraws the screen");
-    ok(!lp_has(lp_keep.mark, pin(1, 0)), "and does not mark");
-
-    /* a reset while PB3 blinks: PB3 skipped next boot, the marks kept; the right footswitch tries it again */
-    go_to(pin(1, 3));
-    ok(lp_keep.cur == pin(1, 3), "the pin being driven is remembered");
-    boot(0x04u);                                         /* watchdog reset */
-    ok(lp_has(lp_keep.skip, pin(1, 3)), "after the reset PB3 is skipped");
-    ok(lp_has(lp_keep.mark, pin(3, 6)) && lp_has(lp_keep.mark, pin(3, 9)), "marks kept across the reset");
-    ok(lp.note_col == RED, "the reset is reported");
-    shot(dir, "after_reset");
-    go_to(pin(1, 3));
-    run(600);
-    ok(lp.id == 0u && diff_pins(0) == 0, "a skipped pin is not driven");
-    shot(dir, "pb3_skipped");
-    press(PA_FS_UP);
-    ok(!lp_has(lp_keep.skip, pin(1, 3)) && lp.id == pin(1, 3), "right footswitch: try it again");
-
-    /* switched off and on: afresh */
-    boot(1u);
-    ok(!lp_has(lp_keep.mark, pin(3, 6)) && !lp_has(lp_keep.skip, pin(1, 3)), "power-on clears marks and skips");
-
-    ok(clipped == 0, "every line fits the screen");
-    printf("light finder: %s (%d failures, %lu USB passes)\n", failed ? "FAIL" : "ok", failed, usb_calls);
+    ok(e_wait == 0, "a wait on each side of every shift clock edge");
+    ok(e_latch == 0, "the latch is low while shifting");
+    ok(e_dir == 0, "DS is driven while shifting");
+    ok(clipped == 0, "every line fits its box");
+    printf("LED map: %s (%d failures, %lu latches, %lu USB passes)\n", failed ? "FAIL" : "ok", failed, latches, usb_calls);
     return failed ? 1 : 0;
 }

@@ -4,7 +4,7 @@
 #  - engine: every block x model x extreme knob, signal / silence / overload, with the pedal's own libm (px_math.c):
 #    no NaN; long runs (3 s pluck + 8 s silence): nothing runs away (only delays at FDBK 100 hold on, by design)
 #  - preset store: save / reload / power cut at every step of a save (firmware/px_store.h on a simulated flash)
-#  - light finder (firmware/led_probe.h): never drives the screen / knob / audio pins, one pin at a time, all restored
+#  - LED map (firmware/led_probe.h, px_leds.h): only the 595 pins move, MSB first with the waits, the byte on screen
 #  - packages: tools/pxpkg.py rebuilds the official PocketX_016 app area byte for byte (needs the official file)
 #  - installer: docs/pxota.js + docs/pxpkg.js against a simulated pedal running the real update code (ota.c, ldr_core.c)
 #  - page: docs/index.html in headless Chromium (needs Playwright: npm i playwright && npx playwright install chromium)
@@ -19,7 +19,7 @@ echo "== preset store"
 $CC -O1 -Iengine tests/test_store.c engine/px_dsp.c firmware/px_math.c -lm -o build/test_store && build/test_store | tail -2
 echo "== screen (every page fully drawn)"
 mkdir -p build/ui && $CC -O1 -Wall -Wno-unused-function -Iengine -Ifirmware -o build/uisim tests/uisim.c engine/px_dsp.c firmware/px_math.c -lm && build/uisim build/ui > build/ui/log.txt && if grep -q "never drawn" build/ui/log.txt; then grep "never drawn" build/ui/log.txt; echo "screen: FAIL"; else echo "screen: $(wc -l < build/ui/log.txt) pages ok (build/ui/*.ppm)"; fi
-echo "== light finder (LED_PROBE build, issue #8)"
+echo "== LED map and the 595 driver (LED_PROBE build, issue #8)"
 mkdir -p build/lp && $CC -O1 -Wall -Wno-unused-function -Ifirmware -o build/lpsim tests/lpsim.c && build/lpsim build/lp
 echo "== simulated pedal"
 $CC -O1 -Wall -Wno-unused-function -o build/devsim tests/devsim.c
