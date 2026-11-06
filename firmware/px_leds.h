@@ -9,9 +9,9 @@
  *   A byte, MSB first: STCP low; for each bit SHCP low, DS = the bit, wait, SHCP high, wait; then STCP high, whose
  *   rising edge puts the byte on the outputs. Stock waits about 4 to 8 us at each step: LEDS_WAIT is 5 us.
  *   Stock's byte: bit 0 a blink signal (toggled by a timer), bits 1..6 six light states, bit 7 always 0. It rewrites
- *   the byte only when it changes, and writes 0 at power-off. Which bit is which light: the LED map finds out
- *   (led_probe.h, LED_PROBE 1).
- * Not verified on hardware yet.
+ *   the byte only when it changes, and writes 0 at power-off.
+ * On a BlackBox (2026-11-06) this lit nothing, not even all 8 bits blinking: the reading misses something (the
+ * roles, another line, an enable). LED_PROBE 1 builds the LED hunt (led_probe.h), which looks for it.
  *
  * Every edge is a read-modify-write of PORTC OUT, so these are called from the main loop only (no interrupt writes
  * port C). tests/lpsim.c checks the bit order and the waits against a model of the 595. */
@@ -40,26 +40,37 @@ static void leds_pin(uint32_t m, uint32_t hi)
     else LEDS_PC(0x00) &= ~m;
     LEDS_EDGE();
 }
-static void leds_write(uint8_t v)
+/* The pins are parameters so that a test build can try other roles (led_probe.h); the driver is leds_init /
+ * leds_write with the pins above. */
+static void leds_shift(uint8_t v, uint32_t ds, uint32_t sh, uint32_t st)
 {
-    leds_pin(LEDS_ST, 0u);
+    leds_pin(st, 0u);
     for (int i = 7; i >= 0; i--) {
-        leds_pin(LEDS_SH, 0u);
-        leds_pin(LEDS_DS, ((uint32_t)v >> i) & 1u);
+        leds_pin(sh, 0u);
+        leds_pin(ds, ((uint32_t)v >> i) & 1u);
         LEDS_WAIT();
-        leds_pin(LEDS_SH, 1u);
+        leds_pin(sh, 1u);
         LEDS_WAIT();
     }
-    leds_pin(LEDS_ST, 1u);
+    leds_pin(st, 1u);
+}
+static void leds_setup(uint32_t ds, uint32_t sh, uint32_t st)
+{
+    uint32_t m = ds | sh | st;
+    LEDS_PC(0x10) &= ~m;                                             /* no pull-ups (the boot leaves them on) */
+    LEDS_PC(0x14) &= ~m;                                             /* no pull-downs */
+    LEDS_PC(0x00) = (LEDS_PC(0x00) & ~m) | sh;                       /* SHCP 1, STCP 0, DS 0, as stock */
+    LEDS_PC(0x08) &= ~m;                                             /* outputs */
+    LEDS_EDGE();
+    LEDS_WAIT();                                                     /* SHCP high for a while, even if it was low */
+}
+static void leds_write(uint8_t v)
+{
+    leds_shift(v, LEDS_DS, LEDS_SH, LEDS_ST);
     leds_byte = v;
 }
 static void leds_init(void)
 {
-    LEDS_PC(0x10) &= ~LEDS_PINS;                                     /* no pull-ups (the boot leaves them on) */
-    LEDS_PC(0x14) &= ~LEDS_PINS;                                     /* no pull-downs */
-    LEDS_PC(0x00) = (LEDS_PC(0x00) & ~LEDS_PINS) | LEDS_SH;          /* SHCP 1, STCP 0, DS 0, as stock */
-    LEDS_PC(0x08) &= ~LEDS_PINS;                                     /* outputs */
-    LEDS_EDGE();
-    LEDS_WAIT();                                                     /* SHCP high for a while, even if it was low */
+    leds_setup(LEDS_DS, LEDS_SH, LEDS_ST);
     leds_write(0u);
 }
