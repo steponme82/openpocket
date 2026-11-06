@@ -464,11 +464,12 @@ static void ui_preset_step(int dd)
     if (ui_mode == M_EDIT) ui_mode = M_BLOCK;
     if ((int)ui_item >= ui_nitems()) ui_item = 0;
 }
+/* the FX button's blocks, in its order (the FX light follows them: px_lights.h) */
+static const uint8_t UI_FXB[7] = {PX_B_DRIVE, PX_B_SFX, PX_B_SYN, PX_B_PITCH, PX_B_COMP, PX_B_GATE, PX_B_EQ};
 static void ui_fx_cycle(void)          /* FX: DRV -> SFX -> SYN -> PIT -> CMP -> GT -> EQ */
 {
-    static const uint8_t FXB[7] = {PX_B_DRIVE, PX_B_SFX, PX_B_SYN, PX_B_PITCH, PX_B_COMP, PX_B_GATE, PX_B_EQ};
     uint32_t nx = PX_B_DRIVE;
-    for (int i = 0; i < 7; i++) if (FXB[i] == ui_blk) nx = FXB[(i + 1) % 7];
+    for (int i = 0; i < 7; i++) if (UI_FXB[i] == ui_blk) nx = UI_FXB[(i + 1) % 7];
     ui_blk = nx; ui_mode = M_BLOCK; ui_item = 0;
 }
 
