@@ -306,7 +306,7 @@ static void fm1_fault(const fm1_crash_t *c)
 #define OP_VERSION "v" OP_VERSION_NUM   /* shown at boot: changes with every released build */
 #define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
 #define ADC_PROBE 0        /* 1 = ADC diagnostic: shows the channels that move at the bottom (C2:512) */
-#define LED_PROBE 0        /* 1 = LED hunt (issue #8, led_probe.h): pin check, 595 roles, LED lines; no sound */
+#define LED_PROBE 0        /* 1 = LED hunt (issue #8, led_probe.h): stock I/O power, 595 roles, LED lines; no sound */
 #define PA_PD   (*(volatile uint32_t *)0x50014u)
 
 /* ---- Controls mapped on the real pedal (diagnostic) ----

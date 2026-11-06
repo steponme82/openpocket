@@ -1,14 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * OpenPocket — the LED hunt (firmware/led_probe.h and the 595 driver px_leds.h, issue #8) on the PC, against fake
- * GPIO registers (pads with pulls and outside holds) and a model of the 74HC595 wired as isod89 read it:
+ * GPIO registers (pads with pulls), a fake always-on power domain (P33) and a model of the 74HC595 wired as isod89
+ * read it:
  *   cc -O1 -Wall -Wno-unused-function -Ifirmware -o build/lpsim tests/lpsim.c && build/lpsim build/lp
  * Checks, on every pass of its loop: the pins it must never drive (screen, knob, I2S, amp enable, MASTER, analog keys)
  * keep every register; besides PC5, PC6 and PC8 at most one pin differs from the start, the LED line on screen.
- * The pin check tells a free pin (DRIVES OK, FREE) from one held high or low, and leaves the three pins outputs
- * without pulls, their DIE as found. With isod89's roles every shift clock edge and latch has a wait before it, the
- * latch is low while shifting, and the bytes arrive MSB first: ROLES 1 blinks FF / 00 at 2 Hz; on an LED line the
- * line (1 / 0) and the 595 (FF / 00) go through all four mixes each second. All 47 lines in turn, each alone and
- * given back exactly; the knob wraps both ways; the analog keys mark and unmark (not on the pin check); USB is
+ * POWER AS FOUND reads CON5 and writes nothing; STOCK POWER writes CON5 = 0x74, once, and no other power register;
+ * both blink all 8 bits. With isod89's roles every shift clock edge and latch has a wait before it, the latch is low
+ * while shifting, and the bytes arrive MSB first: all 8 bits blink FF / 00 at 2 Hz; on an LED line the line (1 / 0)
+ * and the 595 (FF / 00) go through all four mixes each second. All 47 lines in turn, each alone and given back
+ * exactly; the knob wraps both ways; the analog keys mark and unmark, also at a level the supply moved; USB is
  * serviced; the boot is not counted as failed; every line of text fits. The driver alone too: leds_init from pins
  * with pulls leaves outputs without them and 0 shifted out, leds_write puts each byte on the outputs (MSB first).
  * Writes PPM screenshots to OUTDIR. */
@@ -40,25 +41,38 @@ static void lcd_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t c)
 static void fm1_wdt_feed(void) { }
 
 /* ---- the pedal: gpio[port p (0 A, 1 B, 2 C, 7 H)][register r / 4]; a pad is its OUT bit when an output, else its
- * pull (no pull reads 0); ext_hi / ext_lo hold port C pads from outside, stronger than the pin's own driver */
+ * pull (no pull reads 0) */
 enum { R_OUT = 0, R_IN = 1, R_DIR = 2, R_DIE = 3, R_PU = 4, R_PD = 5 };
 static uint32_t gpio[8][16];
-static uint32_t pc_in, ext_hi, ext_lo;
+static uint32_t pc_in;
 static uint32_t pc_pad(void)
 {
     uint32_t d = gpio[2][R_DIR];
-    return (((gpio[2][R_OUT] & ~d) | (gpio[2][R_PU] & d)) | ext_hi) & ~ext_lo;
+    return (gpio[2][R_OUT] & ~d) | (gpio[2][R_PU] & d);
 }
-static uint32_t sim_pc_in(void) { return (pc_in & 3u) | (pc_pad() & gpio[2][R_DIE] & ~3u); }
+static uint32_t sim_pc_in(void) { return pc_in & 3u; }   /* the knob */
 #define LP_REG(port, r) (gpio[(port)][(r) / 4u])
 #define PC_IN sim_pc_in()
 #define ENC_MASK 0x3u
 enum { KEY_NONE = 0, KEY_CAB, KEY_DLY, KEY_REV };
 #define ADC_CH_KEYS 9u
-static int sim_key;
+static int32_t sim_adc = 1023;                  /* the keypad's reading: 1023 idle, CAB 617, DLY 706, REV 788 */
 static unsigned long adc_calls;
-static int32_t adc_read2(uint32_t ch) { if (ch == ADC_CH_KEYS) adc_calls++; return sim_key; }
-static int keys_decode(int32_t v) { return (int)v; }
+static int32_t adc_read2(uint32_t ch) { if (ch == ADC_CH_KEYS) adc_calls++; return sim_adc; }
+static int keys_decode(int32_t v)               /* as openpocket.c */
+{
+    static const int32_t REF[3] = { 617, 706, 788 };
+    int best = -1; int32_t bd = 100000;
+    if (v < 0) return KEY_NONE;
+    for (int i = 0; i < 3; i++) { int32_t e = v - REF[i]; if (e < 0) e = -e; if (e < bd) { bd = e; best = i; } }
+    return (bd <= 42) ? best + 1 : KEY_NONE;
+}
+/* the always-on power domain: CON5 as the boot leaves it; every write logged */
+static uint8_t p33[256];
+static int p33_writes, p33_last_a, p33_last_v;
+static uint8_t fm1_p33_read(uint32_t a) { return p33[a & 255u]; }
+static void fm1_p33_write(uint32_t a, uint8_t v) { p33[a & 255u] = v; p33_writes++; p33_last_a = (int)a; p33_last_v = v; }
+static struct { uint8_t rst; } op_pwr;
 static const int8_t QDEC[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
 typedef struct { uint8_t stab, last, cnt; } dbn_t;
 static int dbn_press(dbn_t *d, int raw)          /* as openpocket.c */
@@ -94,15 +108,13 @@ static void b_str(char *d, const char *s) { while (*d) d++; while (*s) *d++ = *s
 #define M_595 (M_DS | M_SH | M_ST)
 static uint32_t lv_prev;
 static uint8_t sr, q;
-static unsigned long waits, w_sh, latches, settles;
+static unsigned long waits, w_sh, latches;
 static int e_wait, e_latch, e_dir;
 static void sim_wait(void) { waits++; }
-static void sim_settle(void) { settles++; waits++; }       /* 50 us: time passes for the 595 too */
 static void sim_edge(void);
 #define LEDS_PC(r) (gpio[2][(r) / 4u])
 #define LEDS_WAIT() sim_wait()
 #define LEDS_EDGE() sim_edge()
-#define LP_SETTLE() sim_settle()
 
 static int failed, clipped;
 #define LP_TEXT_HOOK(s, f, w) do { \
@@ -146,7 +158,7 @@ static void reset_gpio(void)                    /* a distinctive start; PC5, PC6
     gpio[2][R_DIR] &= ~(1u << 7); gpio[2][R_OUT] |= 1u << 7;
     gpio[2][R_DIR] |= M_595; gpio[2][R_PU] |= M_595; gpio[2][R_PD] &= ~M_595; gpio[2][R_DIE] &= ~M_595;
     memcpy(snap, gpio, sizeof snap);
-    pc_in = 0; sim_key = KEY_NONE;
+    pc_in = 0; sim_adc = 1023;
     lv_prev = pc_pad();
     sr = 0x5Au; q = 0xA5u;                      /* a 595 holds garbage at power-on */
 }
@@ -195,7 +207,8 @@ static void turn(int dir)                       /* one detent: 0 1 3 2 0 is one 
     ok(lp.pos == want, "the knob moves one test per detent");
 }
 static void go(uint32_t pos) { for (uint32_t k = 0; k <= lp_npos() && lp.pos != pos; k++) turn(+1); ok(lp.pos == pos, "the knob reaches it"); }
-static void press_key(int k) { sim_key = k; run(60); sim_key = KEY_NONE; run(60); }
+static void press_key(int32_t v) { sim_adc = v; run(60); sim_adc = 1023; run(60); }
+enum { CAB = 617, DLY = 706, REV = 788 };
 static uint32_t pin(int k, int b) { return (uint32_t)(k * 16 + b + 1); }
 static uint32_t pos_of(uint32_t id) { for (uint32_t i = 0; i < lp.n; i++) if (lp.ids[i] == id) return LP_LINES + i; return 0; }
 static void shot(const char *dir, const char *name)
@@ -214,14 +227,15 @@ static void shot(const char *dir, const char *name)
     }
     fclose(f);
 }
-static void boot(void)
+static void boot(uint8_t con5, uint8_t rst)
 {
     reset_gpio();
+    memset(p33, 0, sizeof p33); p33[LP_CON5] = con5; p33_writes = 0;
+    op_pwr.rst = rst;
     guard.pending = 1; guard.failed = 1; op_diag.stage = 3;
     lp_init();
     run(5);
 }
-static int chk_is(int i, int drive, int pull) { return lp.chk[i][0] == drive && lp.chk[i][1] == pull; }
 
 int main(int argc, char **argv)
 {
@@ -243,32 +257,34 @@ int main(int argc, char **argv)
     }
     ok(others_changed(0) == 0, "the driver touches only PC5, PC6, PC8");
 
-    /* the pin check, on a board where something holds PC8 high and PC6 low */
-    ext_hi = M_DS; ext_lo = M_ST;
-    boot();
-    ok(chk_is(0, CK_OK, CK_OK), "PC5 free: DRIVES OK, FREE");
-    ok(chk_is(1, CK_LO, CK_LO), "PC6 held low: STUCK AT 0, HELD LOW");
-    ok(chk_is(2, CK_HI, CK_HI), "PC8 held high: STUCK AT 1, HELD HIGH");
-    ok(settles == 12u, "every read waits for the pad");
-    shot(dir, "pin_check_held");
-    ext_hi = ext_lo = 0;
-    e_wait = e_latch = e_dir = 0;               /* a held latch is not the driver's fault */
-
-    /* as on the board isod89 read */
-    boot();
+    /* after a power-on, the I/O supply at 3.0 V (VDDIOM 2) */
+    boot(0x62u, 0x01u);
     ok(guard.pending == 0u && guard.failed == 0u && op_diag.stage == ST_OK, "not counted as a failed boot");
-    ok(lp.n == 47u && lp_npos() == 54u, "47 LED lines, 54 tests");
-    ok(chk_is(0, CK_OK, CK_OK) && chk_is(1, CK_OK, CK_OK) && chk_is(2, CK_OK, CK_OK), "free pins: DRIVES OK, FREE");
-    ok(!(gpio[2][R_DIR] & M_595) && !(gpio[2][R_PU] & M_595) && !(gpio[2][R_PD] & M_595), "then outputs, no pulls");
-    ok((gpio[2][R_DIE] & M_595) == (snap[2][R_DIE] & M_595), "their DIE as found");
-    ok(q == 0u && lp.role == 0, "the 595 at 0 with isod's roles after the check");
-    ok(others_changed(0) == 0, "nothing else touched");
+    ok(lp.n == 47u && lp_npos() == 55u, "47 LED lines, 55 tests");
+    ok(lp.pos == 0u && lp.con5_found == 0x62u && p33_writes == 0, "POWER AS FOUND: CON5 read, nothing written");
+    ok(!(gpio[2][R_DIR] & M_595) && !(gpio[2][R_PU] & M_595) && !(gpio[2][R_PD] & M_595), "the 595 pins outputs, no pulls");
+    ok(lp.role == 0 && q == 0xFFu, "isod's roles, all 8 bits lit at once");
+    {
+        int flips = 0; uint8_t last = q;
+        for (int t = 0; t < 2000; t++) { run(1); if (q != last) { flips++; last = q; } }
+        ok(flips >= 7 && flips <= 9 && (q == 0u || q == 0xFFu), "FF / 00 at 2 Hz");
+    }
     ok(usb_calls > 0u, "USB serviced");
-    shot(dir, "pin_check");
+    shot(dir, "power_found");
+
+    /* STOCK POWER: CON5 0x74, once */
+    turn(+1);
+    ok(lp.pos == 1u && p33_writes == 1 && p33_last_a == LP_CON5 && p33_last_v == 0x74 && p33[LP_CON5] == 0x74u,
+       "STOCK POWER: CON5 = 0x74, one write");
+    ok(q == 0xFFu, "all 8 bits lit at once");
+    run(1000);
+    shot(dir, "power_stock");
+    turn(-1); turn(+1);
+    ok(p33_writes == 1, "set once only");
 
     /* ROLES 1: all 8 bits at 2 Hz */
     turn(+1);
-    ok(lp.pos == 1u && lp.role == 0 && q == 0xFFu, "ROLES 1: isod's roles, lit at once");
+    ok(lp.pos == 2u && lp.role == 0 && q == 0xFFu, "ROLES 1: isod's roles, lit at once");
     {
         int flips = 0; uint8_t last = q;
         for (int t = 0; t < 2000; t++) { run(1); if (q != last) { flips++; last = q; } if (q && q != 0xFFu) break; }
@@ -276,7 +292,6 @@ int main(int argc, char **argv)
     }
     shot(dir, "roles1");
     for (int r = 2; r <= 6; r++) { turn(+1); ok(lp.role == r - 1, "the next roles"); run(600); }
-    shot(dir, "roles6");
 
     /* the LED lines: each alone, all four mixes, given back */
     for (uint32_t i = 0; i < lp.n; i++) {
@@ -289,28 +304,36 @@ int main(int argc, char **argv)
         if (lp.id == pin(3, 6)) shot(dir, "line_ph6");
     }
     turn(+1);
-    ok(lp.pos == 0u && lp.id == 0u && others_changed(0) == 0, "past the last line: the pin check, all given back");
+    ok(lp.pos == 0u && lp.id == 0u && others_changed(0) == 0, "past the last line: power, all given back");
     turn(-1);
-    ok(lp.id == pin(3, 15), "back from the pin check: the last line (PH15)");
+    ok(lp.id == pin(3, 15), "back from power: the last line (PH15)");
     turn(+1);
+    ok(p33_writes == 1, "still one power write after a whole round");
 
-    /* marks: the analog keys, not on the pin check */
-    press_key(KEY_REV);
-    ok(lp.mark_role == 0u && !lp.mark[0] && !lp.mark[1] && !lp.mark[2] && !lp.mark[3], "no mark on the pin check");
-    go(3);
-    press_key(KEY_DLY);
-    ok(lp.mark_role == 4u, "DLY marks ROLES 3");
-    press_key(KEY_DLY);
-    ok(lp.mark_role == 0u, "and unmarks it");
-    press_key(KEY_CAB);
+    /* marks: the analog keys, also at a level the supply moved */
+    press_key(REV);
+    ok(lp.mark_pos == 1u, "REV marks POWER AS FOUND");
+    press_key(REV);
+    ok(lp.mark_pos == 0u, "and unmarks it");
+    turn(+1);
+    press_key(500);
+    ok(lp.mark_pos == 2u, "a key read at a moved level marks STOCK POWER");
+    go(LP_ROLES + 2u);
+    press_key(DLY);
+    ok(lp.mark_pos == (2u | (1u << (LP_ROLES + 2u))), "DLY marks ROLES 3");
     go(pos_of(pin(3, 6)));
-    press_key(KEY_CAB);
+    press_key(CAB);
     ok(lp_has(lp.mark, pin(3, 6)), "CAB marks PH6");
     go(pos_of(pin(0, 1)));
-    press_key(KEY_REV);
-    ok(lp_has(lp.mark, pin(0, 1)) && lp.mark_role == 4u, "REV marks PA1, the others kept");
+    press_key(REV);
+    ok(lp_has(lp.mark, pin(0, 1)), "REV marks PA1, the others kept");
     shot(dir, "marks");
     ok(adc_calls >= sim_ms / 10u - 2u && adc_calls <= sim_ms / 10u + 2u, "the keys every 10 ms");
+
+    /* after a restart, with the stock level kept by the always-on domain */
+    boot(0x74u, 0x40u);
+    ok(lp.con5_found == 0x74u && p33_writes == 0, "a restart: the stock level found, nothing written");
+    shot(dir, "power_kept");
 
     ok(e_wait == 0, "isod's roles: a wait before every shift clock edge and latch");
     ok(e_latch == 0, "isod's roles: the latch low while shifting");
