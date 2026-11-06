@@ -306,7 +306,9 @@ static void fm1_fault(const fm1_crash_t *c)
 #define OP_VERSION "v" OP_VERSION_NUM   /* shown at boot: changes with every released build */
 #define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
 #define ADC_PROBE 0        /* 1 = ADC diagnostic: shows the channels that move at the bottom (C2:512) */
-#define LED_PROBE 1        /* 1 = LED hunt (issue #8, led_probe.h): stock I/O power, 595 roles, LED lines; no sound */
+#define LED_PROBE 0        /* 1 = LED hunt (issue #8, led_probe.h): stock I/O power, 595 roles, LED lines; no sound */
+#define LED_BLINK 0        /* 1 = test: the normal firmware with sound, plus the lights' 595 (px_leds.h) blinking
+                            * all 8 bits at 2 Hz (issue #8: do the lights need something the normal start sets up?) */
 #define PA_PD   (*(volatile uint32_t *)0x50014u)
 
 /* ---- Controls mapped on the real pedal (diagnostic) ----
@@ -551,6 +553,12 @@ static uint32_t ed_flags(void) { return (a_bypass ? 1u : 0u) | (a_c1 ? 2u : 0u);
 #endif
 #include "led_probe.h"      /* the LED hunt (issue #8) */
 #endif
+#if LED_BLINK
+#if LED_PROBE || AUDIO_PROBE
+#error "LED_BLINK is the normal build plus the 595 blinking"
+#endif
+#include "px_leds.h"        /* the button lights' 74HC595 (issue #8) */
+#endif
 
 /* P3_RST_SRC as read at boot: why the chip last reset (fm1_sys.h) */
 static void rst_names(char *l, uint32_t r)
@@ -593,6 +601,9 @@ static void app_main(void)
         b_str(l, "RST "); rst_names(l, op_pwr.rst); b_str(l, " PINR "); hex8(h, op_pwr.pinr); b_str(l, h + 6);
         ft_box(0, 170, 240, l, &FT_SM, UI_DIM, UI_BG, 1);
     }
+#endif
+#if LED_BLINK
+    ft_box(0, 196, 240, "LED TEST: ALL 8 LIGHT BITS BLINK", &FT_SM, UI_ACC, UI_BG, 1);
 #endif
     for (int i = 0; i < 6; i++) { fm1_wdt_feed(); fm1_delay_ms(100); }
     /* --- report of the previous boot, if it did not finish (or crashed) --- */
@@ -661,6 +672,9 @@ static void app_main(void)
     px_usb_start();                      /* USB-MIDI device + update entry (web installer) */
     px_store_boot();                     /* the saved presets; start on the last one saved */
     audio_start();                       /* guitar -> DSP engine -> output, amp enabled */
+#if LED_BLINK
+    leds_init();                         /* PC5 / PC6 / PC8 outputs, 0 shifted out (as stock) */
+#endif
     op_stage(ST_UI, "SCREEN...");
     lcd_rect(0, 0, 240, 240, UI_BG);
     ui_invalidate();
@@ -674,6 +688,12 @@ static void app_main(void)
 #if !AUDIO_PROBE
         px_usb_service(now);             /* web installer: handshake, update, UBOOT soft key */
         audio_poll(now);                 /* the sound follows the UI (preset, settings, volume) */
+#if LED_BLINK
+        {   /* all 8 bits FF / 00 at 2 Hz: whatever the polarity, every light on the 595 blinks */
+            static uint32_t t_led;
+            if (now - t_led >= 250u) { t_led = now; leds_write(leds_byte ? 0x00u : 0xFFu); }
+        }
+#endif
         if (ui_mode != M_TUNER) {        /* DSP load at the bottom right: "C1 42%" (2nd core), "C0" or BYP */
             static uint32_t t_cpu;
             if (now - t_cpu >= 500u) {
