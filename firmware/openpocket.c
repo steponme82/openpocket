@@ -307,7 +307,7 @@ static void fm1_fault(const fm1_crash_t *c)
 #define PROBE 0            /* 1 = GPIO diagnostic: shows the pins that change at the bottom */
 #define ADC_PROBE 0        /* 1 = ADC diagnostic: shows the channels that move at the bottom (C2:512) */
 #define LED_PROBE 0        /* 1 = LED hunt (issue #8, led_probe.h): stock I/O power, 595 roles, LED lines; no sound */
-#define LED_BLINK 0        /* 1 = test: the normal firmware with sound, plus the lights' 595 (px_leds.h) blinking
+#define LED_BLINK 1        /* 1 = test: the normal firmware with sound, plus the lights' 595 (px_leds.h) blinking
                             * all 8 bits at 2 Hz (issue #8: do the lights need something the normal start sets up?) */
 #define PA_PD   (*(volatile uint32_t *)0x50014u)
 
