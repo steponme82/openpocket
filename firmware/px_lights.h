@@ -6,9 +6,10 @@
  *   AMP, MOD, DLY, REV, CAB     lit while their block is on
  *   HOME                        blinks (2 Hz) while the tuner is open, dark otherwise
  * The bits are the LED map's, read on a BlackBox (2026-11-06): 0 HOME, 1 FX, 2 AMP, 3 MOD, 4 DLY, 5 REV, 6 CAB,
- * 7 none: the panel's order. On the wire a 0 lights, so the byte goes out inverted (as the stock firmware sends
- * it), and only when it changes. Not yet: a setting to switch the lights off (it belongs with the settings store
- * isod89/openpocket#10 adds).
+ * 7 none: the panel's order (a Pocket X may differ: not checked there yet). On the wire a 0 lights, so the byte
+ * goes out inverted (as the stock firmware sends it), and only when it changes. Confirmed on a BlackBox: each
+ * light follows its block, HOME blinks in the tuner. Not yet: a setting to switch the lights off (it belongs with
+ * the settings store isod89/openpocket#10 adds).
  * Included by openpocket.c (after ui.h: UI_FXB) and by tests/lightsim.c. */
 #pragma once
 #include <stdint.h>

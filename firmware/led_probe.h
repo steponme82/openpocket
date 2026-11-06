@@ -8,8 +8,8 @@
  *   - Pressing the button whose light blinks writes it into the table at the bottom (FX, MOD, AMP, CAB, DLY, REV,
  *     HOME, the knob's PUSH, either footswitch); the same button again clears it. A photo of the table is the map.
  *   - Driven: PC5, PC6 and PC8 (the 595's shift clock, latch and data) and PC7, the lights' enable, low (px_leds.h
- *     leds_init, as the stock firmware). The first LED map and the LED hunts (git history) lit nothing because PC7
- *     stayed high: OpenPocket held it so as a screen line.
+ *     leds_init, as the stock firmware). The earlier test builds of issue #8 lit nothing because PC7 stayed high:
+ *     OpenPocket held it so as a screen line.
  *   - USB stays up, as in the normal build, so the web installer takes the pedal back to a normal OpenPocket or to
  *     the official firmware.
  *

@@ -15,7 +15,8 @@
  *   Stock sends its byte inverted (DS = 1 for a 0 bit): its logical byte has bit 0 a blink signal (a timer), bits
  *   1..6 the six effect lights, bit 7 always 0; at power-off it writes logical 0, FF on the wire. leds_write here
  *   takes the byte as it goes on the wire.
- * Not run on a pedal with PC7 low yet.
+ * Confirmed on a BlackBox (2026-11-06): with PC7 low after the first byte the lights follow the 595; not tried on a
+ * Pocket X yet (the same firmware, and the stock routine is the same there).
  *
  * Every edge is a read-modify-write of PORTC OUT, so these are called from the main loop only (no interrupt writes
  * port C). tests/lpsim.c checks the bit order and the waits against a model of the 595. */
