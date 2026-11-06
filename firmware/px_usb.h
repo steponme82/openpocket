@@ -43,6 +43,10 @@ void fm1_timer5_irq(void)                       /* 10 kHz; USB at 2 kHz */
 }
 extern void isr_timer5(void);
 
+#ifndef PX_LIGHTS_OFF                           /* the button lights off while an update runs (openpocket.c: px_lights.h) */
+#define PX_LIGHTS_OFF() ((void)0)
+#endif
+
 /* ---- ota.c hooks ---- */
 static uint32_t ota_now_ms(void) { return ms_now(); }
 static void ota_idle(void) { fm1_wdt_feed(); }
@@ -78,6 +82,7 @@ static int ota_fread(uint32_t off, void *p, uint32_t n)
 static void ota_show(uint32_t step, int32_t code)
 {
     static const char *const STEP[] = {"", "PACKAGE", "CHECK", "LOADER", "CONFIRM", "RESTART"};
+    PX_LIGHTS_OFF();
     lcd_rect(0, 0, 240, 240, UI_BG);
     ft_box(0, 92, 240, "UPDATE", &FT_MD, UI_ACC, UI_BG, 1);
     if (step < 9u) {
