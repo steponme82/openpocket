@@ -74,12 +74,24 @@ int main(int argc, char **argv)
     full(); shot(d, "play");
     ui_knob(1, 0); ui_render(); shot(d, "play_knob_next_block");
     ui_knob(-1, 0); ui_push(); poison(); ui_render(); status(); shot(d, "edit_amp_model");
-    ui_knob(1, 0); ui_knob(1, 0); ui_render(); shot(d, "edit_amp_gain_selected");
+    ui_knob(1, 0); ui_render(); shot(d, "edit_amp_gain_selected");
     ui_push(); for (int i = 0; i < 8; i++) ui_knob(1, 0); ui_render(); shot(d, "edit_amp_gain_editing");
     ui_push(); ui_home(); poison(); ui_render(); status(); shot(d, "play_edited");
     ui_enter_block(PX_B_DELAY); poison(); ui_render(); status(); shot(d, "edit_delay");
-    ui_knob(1, 0); ui_render(); shot(d, "edit_delay_onoff_selected");
+    ui_knob(-1, 0); ui_render(); shot(d, "edit_delay_onoff_selected");
     ui_enter_block(PX_B_DELAY); ui_render(); shot(d, "edit_delay_off");
+    {   /* the knob walks the EDIT page top to bottom as drawn: ON/OFF (band), model, settings, and round again */
+        uint32_t m = ui_mode, it = ui_item, b = ui_blk;
+        ui_blk = PX_B_AMP; ui_mode = M_BLOCK; ui_item = 0;
+        int n = ui_nitems();
+        ui_knob(1, 0); if (ui_item != 2u) { printf("edit page: one detent down from the model must reach the first setting\n"); return 1; }
+        ui_knob(-1, 0); ui_knob(-1, 0); if (ui_item != 1u) { printf("edit page: one detent up from the model must reach ON/OFF\n"); return 1; }
+        ui_knob(-1, 0); if ((int)ui_item != n - 1) { printf("edit page: up from ON/OFF must wrap to the last setting\n"); return 1; }
+        ui_knob(1, 0); if (ui_item != 1u) { printf("edit page: down from the last setting must wrap to ON/OFF\n"); return 1; }
+        ui_knob(n, 0); if (ui_item != 1u) { printf("edit page: a whole turn of the list must come back to the same line\n"); return 1; }
+        ui_knob(-(2 * n + 1), 0); if ((int)ui_item != n - 1) { printf("edit page: big turns back must stay in the list\n"); return 1; }
+        ui_mode = m; ui_item = it; ui_blk = b;
+    }
     ui_home(); ui_blk = PX_B_GATE; ui_mode = M_BLOCK; full(); shot(d, "edit_gate_preset_level");
     ui_home(); cur_preset = 13; load_preset(13); ui_blk = PX_B_REVERB; poison(); ui_render(); status(); shot(d, "play_smooth_lead");
     ui_move_start(); ui_knob(-1, 0); ui_render(); shot(d, "play_move");
