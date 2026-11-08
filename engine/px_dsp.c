@@ -343,10 +343,10 @@ static const char *const PN_POLY[] = {"DRY", "OCT -1", "OCT +1"};
 static const char *const PN_WHAM[] = {"SHIFT", "MIX", "GLIDE"};
 static const char *const PN_HARM[] = {"INTERVAL", "MIX"};
 static const char *const PN_DET[] = {"CENTS", "MIX"};
-static const char *const PN_LOWOCT[] = {"RANGE", "OCT -1", "DRY"};
+static const char *const PN_LOWOCT[] = {"RANGE", "OCT -1", "DRY", "GROWL"};
 static const tdef T_PITCH[PX_PIT_COUNT] = {
     {"OCTAVER", 5, PN_OCT}, {"POLY OCTAVE", 3, PN_POLY}, {"WHAMMY", 3, PN_WHAM}, {"HARMONIZER", 2, PN_HARM},
-    {"DETUNE", 2, PN_DET}, {"LOW OCTAVE", 3, PN_LOWOCT}};
+    {"DETUNE", 2, PN_DET}, {"LOW OCTAVE", 4, PN_LOWOCT}};
 
 static const char *const PN_AWAH[] = {"SENS", "RESO", "RANGE", "DECAY"};
 static const char *const PN_LWAH[] = {"RATE", "DEPTH", "RESO", "CENTER"};
@@ -585,7 +585,7 @@ static void put_int(char *b, int v, int plus)
 static void put_str(char *b, const char *s) { int i = 0; while (s[i] && i < 7) { b[i] = s[i]; i++; } b[i] = 0; }
 /* LOW OCTAVE's RANGE: the crossover, 80 Hz (only the lowest notes of the E string) to 400 Hz (up to G4) */
 static float lo_fc(int v) { return 80.0f * powf(5.0f, (float)v * 0.01f); }
-#define LO_W 176.0f                                   /* its shifter's window at sr / 8: 32 ms, as POLY OCTAVE's -1 */
+#define LO_W 256.0f                                   /* its shifter's window at sr / 8: 46 ms (room for chords: lo_align) */
 static void lo_note(char *b, int v)                   /* the note at the crossover: "D#3" */
 {
     static const char *const NM[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
@@ -970,9 +970,18 @@ static void rc_pitch(px_engine *e)
         bq_lowpass(&e->lo_aa[0], sr, 700.0f, 0.5412f); /* 4th-order Butterworth: nothing folds back at sr / 8 */
         bq_lowpass(&e->lo_aa[1], sr, 700.0f, 1.3066f);
         for (int i = 0; i < 4; i++) bq_lowpass(&e->lo_sel[i], sd, lo_fc(q[0]), QB8[i]);   /* steep at RANGE */
+        bq_highpass(&e->lo_hp, sd, 50.0f, 0.7071f);   /* rumble and thumps kept out of the octave: -10 dB at 30 Hz, */
+                                                       /* +3 ms to the octave (a 4th order: -18 dB, but +8 ms) */
         e->lo_lpk = onepole_k(sr, 1.0f / (2.0f * PI_F * 900.0f));   /* after the x8 interpolation: its images */
         e->ps_W[0] = LO_W; e->ps_inc[0] = 0.5f / LO_W;
         e->lo_lvl = f01(q[1]) * 2.0f; e->lo_dry = f01(q[2]);
+        {   /* GROWL (the OC-3's DRIVE, on the octave only): tanh(k o), as loud as the clean octave at 0.25, then
+             * smoothed above 2 kHz; mixed in with the knob, so 0 leaves the octave exactly as it is */
+            float g = f01(q[3]);
+            e->lo_g = g; e->lo_gk = 1.0f + 24.0f * g;
+            e->lo_gn = 0.25f / px_tanh(0.25f * e->lo_gk);
+            e->lo_glk = onepole_k(sr, 1.0f / (2.0f * PI_F * 2000.0f));
+        }
     } break;
     default: {                                         /* doubler: +c and -c cents */
         float c = 3.0f + f01(q[0]) * 27.0f, m = f01(q[1]);
@@ -2539,10 +2548,12 @@ PX_INL static inline float ps_voice_al(float *buf, int w, float *ph, float *off,
     float s = lfo_sin(a * 0.5f), g = s * s;
     return rd_frac(buf, PX_PS_N - 1, pa) * g + rd_frac(buf, PX_PS_N - 1, pb) * (1.0f - g);
 }
-/* LOW OCTAVE's shifter, at sr / 8: ps_voice_al's -1 octave with a search sized for that rate (one period of the
- * lowest note, compared over 8.7 ms) */
-#define LO_OFFMAX 80
-#define LO_CORR 48
+/* LOW OCTAVE's shifter, at sr / 8: ps_voice_al's -1 octave with a search sized for chords on the low strings. Two
+ * notes a fifth apart repeat together every 2 periods of the lower one, a fourth every 3: searched over 38 ms (3
+ * periods of the low E) and compared over 20 ms, both notes are spliced in step (an E5 chord: 98% of the output on
+ * its two octaves, against 30% with one period). Once per window (21 times a second), about 3,800 multiply-adds. */
+#define LO_OFFMAX 210
+#define LO_CORR 112
 static float lo_align(const float *buf, int w, float d_ref, float d_new)
 {
     int r0 = w - (int)d_ref, best = 0;
@@ -3263,6 +3274,7 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
                     if (++e->lo_k >= PX_LO_DEC) {          /* every 8th sample: the low band at its own rate */
                         e->lo_k = 0;
                         for (int i = 0; i < 4; i++) a = bq_run(&e->lo_sel[i], a);
+                        a = bq_run(&e->lo_hp, a);
                         e->ps_buf[e->ps_w] = a;
                         float v = lo_voice(e);
                         if (++e->ps_w >= PX_PS_N) e->ps_w = 0;
@@ -3270,7 +3282,12 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
                     }
                     float o = e->lo_y0 + (e->lo_y1 - e->lo_y0) * ((float)e->lo_k * (1.0f / (float)PX_LO_DEC));
                     e->lo_lp += (o - e->lo_lp) * e->lo_lpk;
-                    x = x * e->lo_dry + e->lo_lp * e->lo_lvl;
+                    float oc = e->lo_lp;
+                    if (e->lo_g > 0.0f) {                  /* GROWL */
+                        e->lo_glp += (px_tanh(oc * e->lo_gk) * e->lo_gn - e->lo_glp) * e->lo_glk;
+                        oc += (e->lo_glp - oc) * e->lo_g;
+                    }
+                    x = x * e->lo_dry + oc * e->lo_lvl;
                 } else {
                     e->ps_buf[e->ps_w] = x;
                     if (pit_t == PX_PIT_WHAMMY) {

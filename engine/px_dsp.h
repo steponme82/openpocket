@@ -149,9 +149,10 @@ typedef struct {
     float oct_env, oct_ff, oct_ff2, oct_prev, oct_dry, oct_s1, oct_s2, oct_up;
     /* LOW OCTAVE: the notes below RANGE an octave down, the dry signal untouched. The low band runs at sr / PX_LO_DEC
      * through ps_buf (the pitch block runs one type at a time) and voice 0 of the shifter state above. */
-    px_bq lo_aa[2], lo_sel[4];
+    px_bq lo_aa[2], lo_sel[4], lo_hp;
     int lo_k;
     float lo_y0, lo_y1, lo_lp, lo_lpk, lo_dry, lo_lvl;
+    float lo_g, lo_gk, lo_gn, lo_glp, lo_glk;         /* GROWL: the octave alone through a soft clipper */
     /* special fx */
     float sfx_lo, sfx_bp, sfx_env, sfx_ph, sfx_ph2, sfx_inc, sfx_ff, sfx_prev, sfx_g;
     float sfx_a, sfx_b, sfx_c, sfx_d, sfx_mix, sfx_qd;
