@@ -58,7 +58,7 @@ enum { PX_CAB_112JN, PX_CAB_212BLUE, PX_CAB_412GB, PX_CAB_412T75, PX_CAB_412V30,
 #define PX_IR_N   8
 #define PX_IR_LEN 1024
 enum { PX_SYN_ORGAN, PX_SYN_CHURCH, PX_SYN_STRINGS, PX_SYN_CHOIR, PX_SYN_MONO, PX_SYN_PWM, PX_SYN_BASS,
-       PX_SYN_12STR, PX_SYN_ACOUSTIC, PX_SYN_SITAR, PX_SYN_BARI, PX_SYN_COUNT };
+       PX_SYN_12STR, PX_SYN_ACOUSTIC, PX_SYN_SITAR, PX_SYN_BARI, PX_SYN_PAD, PX_SYN_COUNT };
 enum { PX_EQ_5BAND, PX_EQ_GEQ, PX_EQ_PARAM, PX_EQ_COUNT };
 enum { PX_MOD_CHORUS, PX_MOD_DIMENSION, PX_MOD_FLANGER, PX_MOD_PHASE90, PX_MOD_STONE, PX_MOD_UNIVIBE,
        PX_MOD_OPTOTREM, PX_MOD_BIASTREM, PX_MOD_HARMTREM, PX_MOD_ROTARY, PX_MOD_VIBRATO, PX_MOD_COUNT };
@@ -121,6 +121,11 @@ typedef struct { float x[6], y[6]; } px_hb;           /* v38: a half-band filter
 
 #define PX_PS_N 2048                   /* pitch shifter buffer (46 ms) */
 #define PX_LO_DEC 8                    /* LOW OCTAVE: its low band at sr / 8 (5.5 kHz) */
+#define PX_PAD_DEC 8                   /* SYN PAD: its grains at sr / 8 */
+#define PX_PAD_NORM 1.05f              /* SYN PAD: MIX 50 = about the chord's own level */
+#ifndef PX_PAD_NG
+#define PX_PAD_NG 2                    /* SYN PAD: grains per slice, crossing over in phase (4: 4 dB of wobble, 2: 2.3) */
+#endif
 #define PX_SYN_CB 1024                 /* SYN: ensemble / doubler / body reflections (23 ms) */
 #define PX_DLY_N 45056                 /* v40: 2.04 s of delay at half rate (22.05 kHz, 16-bit: 88 KB), as the stock */
 #define PX_RV_M 16384                  /* reverb memory: one 16-bit ring (32 KB) at half rate, laid out per type */
@@ -171,8 +176,10 @@ typedef struct {
     struct { int32_t x1, x2, y1, y2; } fq_cab[8];    /* v37: the integer filters' state (px_fx_int) */
     uint8_t ord[PX_NBLK];
     /* synth / instrument block (v29) */
-    float syn_buf[PX_PS_N]; int syn_w;                 /* shifter source (organ, strings...); sitar: string combs */
-    float syn_cb[PX_SYN_CB]; int syn_cw;
+    union { float syn_buf[PX_PS_N]; int16_t syn_pad[2 * PX_PS_N]; };   /* shifter source (organ, strings...); */
+    int syn_w;                                        /* sitar: string combs; PAD: two of its three slices */
+    union { float syn_cb[PX_SYN_CB]; int16_t syn_pad2[2 * PX_SYN_CB]; };   /* PAD: its third slice */
+    int syn_cw;
     float syn_ph[3], syn_off[3][2], syn_inc[3], syn_W[3], syn_lvl[3]; int syn_nv;
     float syn_dry, syn_out, syn_d8;                    /* dry guitar, effect level, organ 8' (the guitar's own pitch) */
     float syn_env, syn_slow, syn_ea, syn_er, syn_sr2;  /* envelope (fast, slow), coefficients */
@@ -185,6 +192,16 @@ typedef struct {
     float syn_t1, syn_t2, syn_prev, syn_cnt, syn_per, syn_p1, syn_p2, syn_f0, syn_f0t, syn_glk, syn_oph, syn_mul;
     float syn_wave, syn_lad[4], syn_cut, syn_res, syn_ea2, syn_fenv, syn_fdk, syn_amp, syn_ff, syn_ff2, syn_sq;
     float syn_pwm, syn_pw0, syn_pwd;
+    /* PAD: a chord caught on a footswitch (px_pad_press) at sr / 8 into one of three 16-bit slices, played as
+     * overlapping grains; one slice fades in, one fades out, one records */
+    volatile uint32_t pad_press, pad_stop;            /* bumped by the UI and MIDI only (px_pad_press / px_pad_stop) */
+    uint32_t pad_seen_p, pad_seen_s;
+    int pad_k, pad_cap, pad_capr, pad_wait, pad_skip, pad_act;
+    float pad_g[3], pad_gt[3], pad_rk[3], pad_ka, pad_kr, pad_kf, pad_env, pad_slow, pad_mot, pad_mix;
+    int pad_attp;
+    float pad_gp[3][4], pad_gi[3][4], pad_gt0[3][4];  /* each slice's grains (PX_PAD_NG): start, step, phase */
+    px_bq pad_aa[2], pad_tone[2];
+    float pad_y0, pad_y1;
     /* sitar */
     int   syn_cl[6], syn_cp[6], syn_c0[6], syn_type; float syn_cs[6], syn_cfb, syn_cdamp, syn_buzz, syn_sym;
     /* drive */
@@ -277,6 +294,8 @@ enum { PX_CH_NONE, PX_CH_KNOBS, PX_CH_FULL };
 int  px_engine_change(const px_engine *e, const px_preset_t *p);
 void px_engine_knobs(px_engine *e, const px_preset_t *p);
 void px_engine_prepare(const px_engine *e, const px_preset_t *p);
+void px_pad_press(px_engine *e);   /* PAD: catch the chord being played (footswitch, MIDI CC 64) */
+void px_pad_stop(px_engine *e);    /* PAD: fade it out over RELEASE (footswitch held 0.7 s) */
 void px_engine_process(px_engine *e, const float *in, float *out, int n);
 enum { PX_PART_ALL, PX_PART_PRE, PX_PART_NAM, PX_PART_POST };   /* v37: px_engine_part's stages (see px_dsp.c) */
 void px_engine_part(px_engine *e, const float *in, float *out, int n, int part);

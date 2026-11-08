@@ -58,6 +58,9 @@ static uint32_t ft_box(uint32_t x, uint32_t y, uint32_t w, const char *s, const 
 #define UI_BG 0
 #define OP_BLE_TEST 1
 static uint32_t ms_now(void) { return 0; }
+static int ui_pad_on(void) { return PRESET.on[PX_B_SYN] && PRESET.type[PX_B_SYN] == PX_SYN_PAD; }   /* as ui.h */
+static int pad_presses;
+#define PX_PAD_PRESS() (pad_presses++)
 #include "px_midi_io.h"
 
 static uint32_t cc(uint32_t ch, uint32_t n, uint32_t v) { return 0xBu | (0xB0u | ch) << 8 | n << 16 | v << 24; }
@@ -216,6 +219,20 @@ int main(void)
         px_midi_ble_write(tap0, sizeof tap0);
         px_midi_service();
         ok(PRESET.on[PX_B_DRIVE] == !was, "after a preset change the toggle flips what the new preset has");
+    }
+    {   /* CC 64 (sustain) catches the PAD's chord: at 64 and up, with a PAD on; nothing else changes */
+        reset();
+        px_preset_t before;
+        PRESET.type[PX_B_SYN] = PX_SYN_PAD; PRESET.on[PX_B_SYN] = 1; before = PRESET; pad_presses = 0;
+        midi_enqueue(cc(0, 64, 127), 1); midi_enqueue(cc(0, 64, 0), 2); midi_enqueue(cc(0, 64, 64), 3); midi_enqueue(cc(0, 64, 63), 4);
+        px_midi_service();
+        int on = pad_presses == 2 && !memcmp(&before, &PRESET, sizeof before);
+        PRESET.on[PX_B_SYN] = 0; pad_presses = 0;
+        midi_enqueue(cc(0, 64, 127), 5); px_midi_service();
+        int off = pad_presses == 0;
+        PRESET.on[PX_B_SYN] = 1; PRESET.type[PX_B_SYN] = PX_SYN_STRINGS; pad_presses = 0;
+        midi_enqueue(cc(0, 64, 127), 6); px_midi_service();
+        ok(on && off && pad_presses == 0, "CC 64 at 64 and up catches the PAD's chord (PAD on only), the sound unchanged");
     }
     printf("\n%s\n", failed ? "MIDI glue tests FAILED" : "all MIDI glue tests passed");
     return failed ? 1 : 0;

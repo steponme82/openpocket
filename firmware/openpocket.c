@@ -562,6 +562,7 @@ static void ir_changed(uint32_t s)   /* v38: a user IR was written or erased: th
 static void ed_diag_line(uint32_t i, char *out);
 #endif
 #include "px_editor.h"      /* the web editor (docs/EDITOR-PROTOCOL.md) */
+#define PX_PAD_PRESS() px_pad_press(&g_eng)
 #include "px_midi_io.h"     /* musical MIDI over USB (docs/MIDI.md) */
 #endif
 #endif
@@ -609,7 +610,8 @@ static void app_main(void)
     dbn_t btn[NBTN] = {{0,0,0}};
     dbn_t bhome = {0,0,0};
     uint32_t adc_tick = 0, home_t = 0, t_knob = 0, t_tuner = 0;
-    int home_down = 0, home_long = 0, push_down = 0, push_long = 0, fx_down = 0, fx_long = 0;
+    int home_down = 0, home_long = 0, push_down = 0, push_long = 0, fx_down = 0, fx_long = 0, dn_down = 0, dn_long = 0;
+    uint32_t dn_t = 0;
     uint32_t push_t = 0, clk_t = 0, fx_t = 0;
     int clk_pend = 0;                    /* chain page: a PUSH waiting to see if a 2nd one makes it a double-click */
     int32_t master_raw = -100;
@@ -824,6 +826,11 @@ static void app_main(void)
         if (!push_now && push_down) { push_down = 0; if (!push_long) p_push = 1; }
         int p_up = dbn_press(&btn[B_FSUP], (pa & PA_FS_UP) != 0);
         int p_dn = dbn_press(&btn[B_FSDN], (pa & PA_FS_DN) != 0);
+        /* the left footswitch held 0.7 s: with a PAD on, it fades the pad out (its press caught the chord) */
+        int dn_now = btn[B_FSDN].stab != 0, p_padstop = 0;
+        if (p_dn) { dn_down = 1; dn_long = 0; dn_t = now; }
+        if (dn_down && dn_now && !dn_long && now - dn_t >= 700u) { dn_long = 1; p_padstop = 1; }
+        if (!dn_now) dn_down = 0;
         /* FX: a short press (on release) cycles the effects, a long one (0.8 s) opens the MIDI settings */
         dbn_press(&btn[B_FX], (pa & PA_FX) != 0);
         int fx_now = btn[B_FX].stab != 0, p_fx = 0, p_midi = 0;
@@ -886,7 +893,8 @@ static void app_main(void)
             else {
                 if (p_push) ui_push();
                 if (p_up) ui_preset_step(+1);
-                if (p_dn) ui_preset_step(-1);
+                if (p_dn) { if (ui_pad_on()) px_pad_press(&g_eng); else ui_preset_step(-1); }
+                if (p_padstop && ui_pad_on()) px_pad_stop(&g_eng);
                 if (p_home) ui_home();
                 if (p_fx) ui_fx_cycle();
                 if (p_mod) ui_enter_block(PX_B_MOD);

@@ -12,7 +12,7 @@ Written from scratch for the pedal's own chip (JieLi AC791N, two cores), install
 
 ## What it does
 
-- **12-block chain, 79 models**, in any order you like (double-click PUSH to move a block; the order is saved with
+- **12-block chain, 80 models**, in any order you like (double-click PUSH to move a block; the order is saved with
   the preset): GATE, COMP, PITCH, SPECIAL FX, SYNTH, DRIVE, AMP, CAB, EQ, MOD, DELAY, REVERB
 - **Synths, keyboards and other guitars** from a normal guitar (no MIDI pickup): organ, church organ, string machine,
   choir, mono synth with pitch tracking and a resonant ladder filter, PWM synth, bass synth, 12-string, acoustic,

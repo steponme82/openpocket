@@ -187,7 +187,7 @@ static void pedal(const char *l)
 
 /* ---- the controls, as the pedal's main loop (openpocket.c) dispatches a debounced press ---- */
 static char last_press[32];
-static uint32_t n_press;
+static uint32_t n_press, n_pad;              /* n_pad: left footswitch presses taken by a PAD (no engine here) */
 static const char *press(const char *n)
 {
     static const struct { const char *name; uint32_t blk; } BLKBTN[] = {
@@ -212,7 +212,7 @@ static const char *press(const char *n)
         tuner_open();
     } else if (is_push) ui_push();
     else if (!strcmp(n, "fs_up")) ui_preset_step(+1);
-    else if (!strcmp(n, "fs_dn")) ui_preset_step(-1);
+    else if (!strcmp(n, "fs_dn")) { if (ui_pad_on()) n_pad++; else ui_preset_step(-1); }   /* with a PAD on: the pad's */
     else if (is_home) ui_home();
     else if (!strcmp(n, "fx")) ui_fx_cycle();
     else for (i = 0; i < sizeof BLKBTN / sizeof *BLKBTN; i++) if (!strcmp(n, BLKBTN[i].name)) ui_enter_block(BLKBTN[i].blk);

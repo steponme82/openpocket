@@ -2,7 +2,7 @@
 
 ![OpenPocket screens](ui-v23.png)
 
-## The chain (12 blocks, 79 models)
+## The chain (12 blocks, 80 models)
 Default order: `GT → CMP → PIT → SFX → SYN → DRV → AMP → CAB → EQ → MOD → DLY → REV`
 
 Since v29 every preset has its own block order: **double-click PUSH** on the chain to grab the selected block, turn
@@ -85,6 +85,18 @@ Played with a normal guitar: no special pickup, no MIDI.
 | | ACOUSTIC | BODY, BASS, TREBLE, ROOM | magnetic pickup → flat-top: body resonance (parlour to jumbo), top, sparkle, body reflections |
 | | SITAR | KEY, BUZZ, SYMPATH, DECAY | bridge buzz (jawari) + 6 sympathetic strings tuned to KEY |
 | | BARITONE | TUNE, TONE, MIX | the whole guitar 1 to 12 semitones down |
+| A chord held under you | PAD | ATTACK, RELEASE, TONE, MOTION, MIX | the chord you catch on the left footswitch, held as a smooth pad until the next one |
+
+**PAD**: a smooth chord held under your playing, for as long as you want. Strum a chord and press the **left
+footswitch** (or press it, then strum: it waits for the strum and skips the pick): the pad catches 0.37 s of the
+ringing chord and swells it in over ATTACK (`0.1 S` to `6.0 S`), then holds it, steady, while you play over it.
+Press again on the next chord: the pad crosses over to it over the same ATTACK. Hold the footswitch 0.7 s to let it
+fade out over RELEASE (`0.2 S` to `10 S`). TONE goes from dark (`300 HZ`) to open (`2400 HZ`), MOTION from still
+(`OFF`) to a slow chorus (`15 CT` of detune), MIX is the pad's level (`0 DB` at 50: about as loud as the chord).
+Your guitar itself goes through untouched. While a preset has the pad on, the left footswitch is the pad's and no
+longer steps back a preset (the right one still steps forward). A MIDI footswitch can catch the chord too: Control
+Change 64 (sustain) at 64 or more. The pad plays the chord as your guitar sounded it (it is not an oscillator): a
+clean or lightly driven tone in front gives the smoothest pad. It runs at 5.5 kHz in the synth block's own memory.
 
 Keyboards hold the note while the string sounds (like a key held down) and release when it dies away or when you
 mute it. MONO SYNTH needs single notes: it finds the pitch in 30–80 ms and is accurate to a few cents.
@@ -195,7 +207,7 @@ block type, with its knobs at noon, keeps the loudness when switched on; each pr
 | PUSH **double-click** (PLAY) | **MOVE** the selected block: knob = move it, PUSH = drop, HOME = put it back |
 | PUSH **long press (0.8 s)** | **SAVE**: store the current sound (see below) |
 | HOME | back to PLAY · **long press (0.7 s) = tuner** |
-| Right / left footswitch | next / previous preset |
+| Right / left footswitch | next / previous preset (with a SYN PAD on in the preset, the left one is the pad's: press = catch the chord, hold 0.7 s = fade it out) |
 | AMP, CAB, DLY, REV, MOD | jump to the block; press again = on/off |
 | FX | steps through DRV → SFX → SYN → PIT → CMP → GT → EQ |
 | MASTER | output volume |

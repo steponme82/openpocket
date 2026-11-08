@@ -18,7 +18,8 @@ Bluetooth test image** ([BLE-TEST.md](BLE-TEST.md)).
 | Control Change, the map below | Switches or flips a block on or off, picks a block's model, sets one of its 5 settings, or sets the MASTER volume |
 | MIDI clock (24 per quarter note), when CLOCK > DELAY is on | Sets the delay TIME to one quarter note |
 | Start, Continue, Stop | Restart the tempo measurement |
-| Everything else | Ignored: notes, pitch bend, bank select (0 and 32), modulation, sustain, "all notes off", system messages |
+| 64 (sustain) | With a SYN PAD on in the preset: 64 to 127 catches the chord being played (as the left footswitch); 0 to 63 nothing |
+| Everything else | Ignored: notes, pitch bend, bank select (0 and 32), modulation, "all notes off", system messages |
 
 **Sends** (when SEND is on and a host is connected):
 
