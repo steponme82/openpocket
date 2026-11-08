@@ -147,12 +147,17 @@ typedef struct {
     float ps_ph[2], ps_inc[2], ps_W[2], ps_lvl[2], ps_off[2][2], ps_dry, ps_r, ps_rt, ps_glide, ps_invW;
     px_bq oct_lp, oct_lp2, oct_sublp, oct_sublp2, oct_bp, oct_uphp;
     float oct_env, oct_ff, oct_ff2, oct_prev, oct_dry, oct_s1, oct_s2, oct_up;
-    /* LOW OCTAVE: the notes below RANGE an octave down, the dry signal untouched. The low band runs at sr / PX_LO_DEC
-     * through ps_buf (the pitch block runs one type at a time) and voice 0 of the shifter state above. */
-    px_bq lo_aa[2], lo_sel[4], lo_hp;
+    /* LOW OCTAVE: the lowest note below RANGE (or of the whole chord: LOWEST) an octave down, the dry signal
+     * untouched. Its low band runs at sr / PX_LO_DEC. */
+    px_bq lo_aa[2], lo_sel[3], lo_hp;
     int lo_k;
     float lo_y0, lo_y1, lo_lp, lo_lpk, lo_dry, lo_lvl;
     float lo_g, lo_gk, lo_gn, lo_glp, lo_glk;         /* GROWL: the octave alone through a soft clipper */
+    float lo_ax[8][2], lo_ay[8][2], lo_ad, lo_hr, lo_hi;   /* phase halving: the 90-degree pair, the half phase */
+    float lo_t[6], lo_tk;                             /* the tilt: the lowest note leads the phase */
+    int lo_np, lo_lowest;
+    float lo_bx[8][2], lo_by[8][2], lo_bd;            /* a second 90-degree pair, on the band before the tilt */
+    float lo_amp, lo_aatk, lo_arel, lo_c;             /* the octave's level, COMP */
     /* special fx */
     float sfx_lo, sfx_bp, sfx_env, sfx_ph, sfx_ph2, sfx_inc, sfx_ff, sfx_prev, sfx_g;
     float sfx_a, sfx_b, sfx_c, sfx_d, sfx_mix, sfx_qd;
