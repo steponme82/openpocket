@@ -91,7 +91,7 @@ mute it. MONO SYNTH needs single notes: it finds the pitch in 30–80 ms and is 
 |---|---|
 | GT | NOISE GATE (THRESH, RELEASE) |
 | CMP | SQUASH (Dyna Comp), STUDIO (parallel, MIX), OPTO LA-2 (optical, slow release), SLOW SWELL (attack removed: violin effect) |
-| PIT | OCTAVER (analog: SUB -1, SUB -2, UP +1), POLY OCTAVE (clean −1 and +1 octave), WHAMMY (±24 semitones, GLIDE), HARMONIZER (fixed interval −OCT…+OCT), DETUNE (doubling ±cents), LOW OCTAVE (−1 octave on the low strings only: RANGE, OCT -1, DRY, GROWL) |
+| PIT | OCTAVER (analog: SUB -1, SUB -2, UP +1), POLY OCTAVE (clean −1 and +1 octave), WHAMMY (±24 semitones, GLIDE), HARMONIZER (fixed interval −OCT…+OCT), DETUNE (doubling ±cents), LOW OCTAVE (−1 octave on the low strings, or on a chord's lowest note: RANGE, OCT -1, DRY, GROWL, COMP) |
 | SFX | ENVELOPE WAH (Mu-Tron), AUTO WAH (LFO, or fixed wah with DEPTH 0), RING MOD, BITCRUSHER, SLICER (8 rhythm patterns), LO-FI RADIO, SQUARE SYNTH (square-wave synth + sub, opening filter) |
 | EQ | 5 BAND, GRAPHIC 5 (the Mesa "V"), PARAMETRIC |
 | MOD | CE CHORUS, DIMENSION (4 modes), FLANGER, PHASE 90, SMALL STONE, UNI-VIBE, OPTO TREMOLO, BIAS TREMOLO, HARMONIC TREM, ROTARY (Leslie, real SLOW↔FAST ramp), VIBRATO |
@@ -101,17 +101,19 @@ mute it. MONO SYNTH needs single notes: it finds the pitch in 30–80 ms and is 
 The analog/tape delays (ANALOG, MEMORY MAN, TAPE, SPACE ECHO, LO-FI) **self-oscillate above FDBK ≈ 90**, like the
 real ones: lower FDBK to stop it.
 
-**LOW OCTAVE**: the octave goes only to the notes below RANGE, as an octaver's poly mode with a crossover (the
-OC-3's and OC-5's POLY): the low strings get their octave, the high strings and chords on top stay as they are.
-RANGE shows the note where it stops (an 8th-order crossover): `A2` (20) the E string up to the 5th fret and the open
-A, `C#3` (33) the E and A strings in open position, `D#3` (40) the open D too, up to `G4` (100). Power chords and
-fourths on the low strings get both octaves, clean (96–99 % of the octave on the two notes). OCT -1 at 50 plays the
-octave as loud as the note. DRY 100 leaves your signal exactly as it is (the block switched off gives the same
-samples). GROWL drives the octave alone through a soft clipper, as the OC-3's DRIVE mode, so that it carries on
-small speakers and a PA without subwoofers; at 0 the octave stays clean. The low band runs at 5.5 kHz, so it costs
-little CPU; rumble below the low E is kept out of it, and the octave comes in about 20 ms after the note (the dry
-signal has no delay). It splits by pitch, not by string: a note below RANGE gets the octave on whatever string you
-play it.
+**LOW OCTAVE**: an octave under the low notes, the rest of the guitar untouched, as the OC-3's and OC-5's POLY
+modes. RANGE shows the note where it stops: `A2` (20) the E string up to the 5th fret and the open A, `D3` (40) the
+E and A strings in open position, up to `G4` (100). Of two notes below RANGE the lower one gets the octave, as a
+bass player would play the root of a power chord (clean: 96–99 % of the octave on it). RANGE at 0 is `LOWEST`, as on
+the OC-5: the octave of the lowest note of any chord, anywhere on the neck. OCT -1 at 50 plays the octave as loud as
+the note. DRY 100 leaves your signal exactly as it is (the block switched off gives the same samples). GROWL drives
+the octave alone through a soft clipper, as the OC-3's DRIVE mode, so that it carries on small speakers and a PA
+without subwoofers; at 0 the octave stays clean. COMP evens the octave's level, as a compressor in front of an
+octaver: at 100 a note 20 dB softer gets an octave only 2 dB softer, and the hum between notes is not raised. The
+octave comes about 14 ms after the note (the dry signal has no delay): it is made from the note's phase, turned half
+as fast, so nothing waits in a buffer; the time is the filters' that pick the note. The low band runs at 5.5 kHz and
+costs little CPU. It splits by pitch, not by string: a note below RANGE gets the octave on whatever string you play
+it.
 
 **Delay TIME (v35)**: 0–80 = 20–1000 ms in steps of 12.25 ms, 80–100 = 1–2 s in steps of 50 ms; the screen shows
 the ms. Presets saved before v35 keep their delay time (the knob value moves). The repeats are read with cubic

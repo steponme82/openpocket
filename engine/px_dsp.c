@@ -340,10 +340,10 @@ static const char *const PN_POLY[] = {"DRY", "OCT -1", "OCT +1"};
 static const char *const PN_WHAM[] = {"SHIFT", "MIX", "GLIDE"};
 static const char *const PN_HARM[] = {"INTERVAL", "MIX"};
 static const char *const PN_DET[] = {"CENTS", "MIX"};
-static const char *const PN_LOWOCT[] = {"RANGE", "OCT -1", "DRY", "GROWL"};
+static const char *const PN_LOWOCT[] = {"RANGE", "OCT -1", "DRY", "GROWL", "COMP"};
 static const tdef T_PITCH[PX_PIT_COUNT] = {
     {"OCTAVER", 5, PN_OCT}, {"POLY OCTAVE", 3, PN_POLY}, {"WHAMMY", 3, PN_WHAM}, {"HARMONIZER", 2, PN_HARM},
-    {"DETUNE", 2, PN_DET}, {"LOW OCTAVE", 4, PN_LOWOCT}};
+    {"DETUNE", 2, PN_DET}, {"LOW OCTAVE", 5, PN_LOWOCT}};
 
 static const char *const PN_AWAH[] = {"SENS", "RESO", "RANGE", "DECAY"};
 static const char *const PN_LWAH[] = {"RATE", "DEPTH", "RESO", "CENTER"};
@@ -578,11 +578,12 @@ static void put_int(char *b, int v, int plus)
     b[i] = 0;
 }
 static void put_str(char *b, const char *s) { int i = 0; while (s[i] && i < 7) { b[i] = s[i]; i++; } b[i] = 0; }
-/* LOW OCTAVE's RANGE: the crossover, 80 Hz (only the lowest notes of the E string) to 400 Hz (up to G4) */
-static float lo_fc(int v) { return 80.0f * powf(5.0f, (float)v * 0.01f); }
-#define LO_W 256.0f                                   /* its shifter's window at sr / 8: 46 ms (room for chords: lo_align) */
-static void lo_note(char *b, int v)                   /* the note at the crossover: "D#3" */
+/* LOW OCTAVE's RANGE: 0 = LOWEST (the OC-5's: the lowest note of any chord), 1..100 = the crossover, 80 Hz (only
+ * the lowest notes of the E string) to 400 Hz (up to G4) */
+static float lo_fc(int v) { return 80.0f * powf(5.0f, (float)(v < 1 ? 0 : v - 1) * (1.0f / 99.0f)); }
+static void lo_note(char *b, int v)                   /* the note at the crossover: "D#3", or LOWEST */
 {
+    if (v < 1) { put_str(b, "LOWEST"); return; }
     static const char *const NM[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
     int m = (int)(69.5f + 17.31234f * logf(lo_fc(v) / 440.0f));   /* 12 log2(f / 440) + 69, rounded */
     put_str(b, NM[m % 12]);
@@ -945,16 +946,23 @@ static void rc_pitch(px_engine *e)
         e->ps_nv = 1; e->ps_dry = 1.0f; e->ps_lvl[0] = f01(q[1]) * 1.1f;
         e->ps_W[0] = r < 1.0f ? 1400.0f : 1100.0f; e->ps_inc[0] = (1.0f - r) / e->ps_W[0];
     } break;
-    case PX_PIT_LOWOCT: {                              /* the notes below RANGE an octave down, the rest dry */
-        static const float QB8[4] = {0.5098f, 0.6013f, 0.9000f, 2.5629f};   /* 8th-order Butterworth */
+    case PX_PIT_LOWOCT: {                              /* the lowest note below RANGE an octave down, the rest dry */
+        static const float QB6[3] = {0.5176f, 0.7071f, 1.9319f};   /* 6th-order Butterworth (an 8th: +1.5 ms) */
         const float sd = sr / (float)PX_LO_DEC;
+        e->lo_lowest = q[0] < 1;
+        const float fc = e->lo_lowest ? 600.0f : lo_fc(q[0]);
         bq_lowpass(&e->lo_aa[0], sr, 700.0f, 0.5412f); /* 4th-order Butterworth: nothing folds back at sr / 8 */
         bq_lowpass(&e->lo_aa[1], sr, 700.0f, 1.3066f);
-        for (int i = 0; i < 4; i++) bq_lowpass(&e->lo_sel[i], sd, lo_fc(q[0]), QB8[i]);   /* steep at RANGE */
-        bq_highpass(&e->lo_hp, sd, 50.0f, 0.7071f);   /* rumble and thumps kept out of the octave: -10 dB at 30 Hz, */
-                                                       /* +3 ms to the octave (a 4th order: -18 dB, but +8 ms) */
+        for (int i = 0; i < 3; i++) bq_lowpass(&e->lo_sel[i], sd, fc, QB6[i]);   /* steep at RANGE */
+        bq_highpass(&e->lo_hp, sd, 50.0f, 0.7071f);   /* rumble and thumps kept out of the octave (-10 dB at 30 Hz) */
         e->lo_lpk = onepole_k(sr, 1.0f / (2.0f * PI_F * 900.0f));   /* after the x8 interpolation: its images */
-        e->ps_W[0] = LO_W; e->ps_inc[0] = 0.5f / LO_W;
+        /* the tilt: one-pole low-passes at 60 Hz, -6 dB an octave each above it, so that of two notes the lower
+         * one leads the phase (4: a fifth above is 10 dB down; LOWEST, 6: 16 dB, a fourth 11 dB, anywhere on the
+         * neck). The level comes from the band before the tilt: a pluck's tilted start settles in 20 ms. */
+        e->lo_np = e->lo_lowest ? 6 : 4;
+        e->lo_tk = onepole_k(sd, 1.0f / (2.0f * PI_F * 60.0f));
+        e->lo_aatk = onepole_k(sd, 0.0003f); e->lo_arel = onepole_k(sd, 0.025f);   /* the level: up at once, down in 25 ms */
+        e->lo_c = 0.9f * f01(q[4]);                    /* COMP: 0 .. 0.9 of the way to an even level */
         e->lo_lvl = f01(q[1]) * 2.0f; e->lo_dry = f01(q[2]);
         {   /* GROWL (the OC-3's DRIVE, on the octave only): tanh(k o), as loud as the clean octave at 0.25, then
              * smoothed above 2 kHz; mixed in with the knob, so 0 leaves the octave exactly as it is */
@@ -2123,48 +2131,52 @@ PX_INL static inline float ps_voice_al(float *buf, int w, float *ph, float *off,
     float s = lfo_sin(a * 0.5f), g = s * s;
     return rd_frac(buf, PX_PS_N - 1, pa) * g + rd_frac(buf, PX_PS_N - 1, pb) * (1.0f - g);
 }
-/* LOW OCTAVE's shifter, at sr / 8: ps_voice_al's -1 octave with a search sized for chords on the low strings. Two
- * notes a fifth apart repeat together every 2 periods of the lower one, a fourth every 3: searched over 38 ms (3
- * periods of the low E) and compared over 20 ms, both notes are spliced in step (an E5 chord: 98% of the output on
- * its two octaves, against 30% with one period). Once per window (21 times a second), about 3,800 multiply-adds. */
-#define LO_OFFMAX 210
-#define LO_CORR 112
-static float lo_align(const float *buf, int w, float d_ref, float d_new)
+/* LOW OCTAVE's fast octave: phase halving. Two allpass chains 90 degrees apart (Olli Niemitalo's coefficients,
+ * 90 +- 0.7 degrees from 30 Hz to 1 kHz at sr / 8, 3.6 ms at the low E) make the low band a turning arrow, z; the
+ * octave is an arrow turning half as fast, h, kept in step by h <- unit(h + unit(z) conj(h)) every sample (the
+ * half-way arrow between h and h turned as far as z turned), and given z's length. No buffer to read from: the
+ * octave is as late as the filters in front of it. It follows one note: with two in the band it gives neither. */
+static const float LO_HC[8] = {0.47940087f, 0.87621849f, 0.97659759f, 0.99749926f,      /* the squares, chain A */
+                               0.16175850f, 0.73302893f, 0.94534970f, 0.99059916f};     /* chain B */
+static inline float lo_ap(float x, float c, float *xh, float *yh)   /* y = c (x + y[n-2]) - x[n-2] */
 {
-    int r0 = w - (int)d_ref, best = 0;
-    for (int pass = 0; pass < 2; pass++) {             /* coarse (every 4 offsets, every 2nd sample), then fine */
-        int lo = pass ? best - 3 : 0, hi = pass ? best + 3 : LO_OFFMAX, st = pass ? 1 : 4, b2 = best, js = pass ? 1 : 2;
-        float bc = -1e30f;
-        if (lo < 0) lo = 0;
-        for (int o = lo; o <= hi; o += st) {
-            int c0 = w - (int)(d_new + (float)o);
-            float acc = 0.0f, en = 1e-9f;
-            for (int j = 0; j < LO_CORR; j += js) {
-                float x = buf[(r0 - j) & (PX_PS_N - 1)], y = buf[(c0 - j) & (PX_PS_N - 1)];
-                acc += x * y; en += y * y;
-            }
-            acc = acc / sqrtf(en);
-            if (acc > bc) { bc = acc; b2 = o; }
-        }
-        best = b2;
-    }
-    return (float)best;
+    float y = c * (x + yh[1]) - xh[1];
+    xh[1] = xh[0]; xh[0] = x; yh[1] = yh[0]; yh[0] = y;
+    return y;
 }
-static float lo_voice(px_engine *e)
+#define LO_REF 0.1f                                    /* COMP brings the octave towards this level */
+#define LO_FLOOR 0.002f                                /* and stops raising it below this one (-54 dB) */
+static float lo_fast(px_engine *e, float a)
 {
-    const float *buf = e->ps_buf, W = e->ps_W[0], inc = e->ps_inc[0];
-    const int w = e->ps_w;
-    float *off = e->ps_off[0];
-    float a0 = e->ps_ph[0], a = wrap1(a0 + inc);
-    e->ps_ph[0] = a;
-    float b = a + 0.5f; if (b >= 1.0f) b -= 1.0f;
-    float da = 3.0f + a * W, db = 3.0f + b * W;
-    if (a < a0) off[0] = lo_align(buf, w, db + off[1], da);                 /* tap A restarts (silent) */
-    if (a0 < 0.5f && a >= 0.5f) off[1] = lo_align(buf, w, da + off[0], db); /* tap B restarts (silent) */
-    float pa = (float)w - (da + off[0]); if (pa < 0.0f) pa += (float)PX_PS_N;
-    float pb = (float)w - (db + off[1]); if (pb < 0.0f) pb += (float)PX_PS_N;
-    float s = lfo_sin(a * 0.5f), g = s * s;
-    return rd_frac(buf, PX_PS_N - 1, pa) * g + rd_frac(buf, PX_PS_N - 1, pb) * (1.0f - g);
+    float ua = a, ub = a;                              /* the band's own level: its 90-degree pair, z's length */
+    for (int i = 0; i < 4; i++) ua = lo_ap(ua, LO_HC[i], e->lo_bx[i], e->lo_by[i]);
+    for (int i = 4; i < 8; i++) ub = lo_ap(ub, LO_HC[i], e->lo_bx[i], e->lo_by[i]);
+    const float A = sqrtf(ub * ub + e->lo_bd * e->lo_bd);
+    e->lo_bd = ua;
+    e->lo_amp += (A - e->lo_amp) * (A > e->lo_amp ? e->lo_aatk : e->lo_arel);
+    float t = a;                                       /* the tilt: the lowest note in the band leads the phase */
+    for (int i = 0; i < e->lo_np; i++) { e->lo_t[i] += (t - e->lo_t[i]) * e->lo_tk; t = e->lo_t[i]; }
+    float pa = t, pb = t;
+    for (int i = 0; i < 4; i++) pa = lo_ap(pa, LO_HC[i], e->lo_ax[i], e->lo_ay[i]);
+    for (int i = 4; i < 8; i++) pb = lo_ap(pb, LO_HC[i], e->lo_ax[i], e->lo_ay[i]);
+    const float re = pb, im = e->lo_ad;                /* chain A a sample later: 90 degrees behind chain B */
+    e->lo_ad = pa;
+    const float m2 = re * re + im * im;
+    float hr = e->lo_hr, hi = e->lo_hi;
+    if (m2 > 1e-20f) {
+        const float inv = 1.0f / sqrtf(m2), wr = re * inv, wi = im * inv;
+        if (hr * hr + hi * hi < 0.5f) { hr = 1.0f; hi = 0.0f; }
+        const float gr = hr + wr * hr + wi * hi, gi = hi + wi * hr - wr * hi;   /* h + unit(z) conj(h) */
+        const float gn = gr * gr + gi * gi;
+        if (gn > 1e-6f) { const float n = 1.0f / sqrtf(gn); hr = gr * n; hi = gi * n; }
+    }
+    e->lo_hr = hr; e->lo_hi = hi;
+    float amp = e->lo_amp;
+    if (e->lo_c > 0.0f) {                              /* COMP: amp^(1-c), towards LO_REF; closes below LO_FLOOR */
+        amp *= powf(LO_REF / (amp > LO_FLOOR ? amp : LO_FLOOR), e->lo_c);
+        if (e->lo_amp < LO_FLOOR) { const float x = e->lo_amp * (1.0f / LO_FLOOR); amp *= x * x; }
+    }
+    return amp * hr;
 }
 
 
@@ -2586,11 +2598,9 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
                     float a = bq_run(&e->lo_aa[1], bq_run(&e->lo_aa[0], x));
                     if (++e->lo_k >= PX_LO_DEC) {          /* every 8th sample: the low band at its own rate */
                         e->lo_k = 0;
-                        for (int i = 0; i < 4; i++) a = bq_run(&e->lo_sel[i], a);
+                        for (int i = 0; i < 3; i++) a = bq_run(&e->lo_sel[i], a);
                         a = bq_run(&e->lo_hp, a);
-                        e->ps_buf[e->ps_w] = a;
-                        float v = lo_voice(e);
-                        if (++e->ps_w >= PX_PS_N) e->ps_w = 0;
+                        float v = lo_fast(e, a);
                         e->lo_y0 = e->lo_y1; e->lo_y1 = v;
                     }
                     float o = e->lo_y0 + (e->lo_y1 - e->lo_y0) * ((float)e->lo_k * (1.0f / (float)PX_LO_DEC));
