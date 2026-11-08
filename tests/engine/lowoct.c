@@ -12,7 +12,8 @@
  *   - plucked notes: the octave's attack comes less than 20 ms after the note's
  *   - COMP: a note 20 dB softer comes out less than 8 dB softer at COMP 100; hum at -80 dB is not raised above -70 dB
  *   - a 30 Hz rumble mostly stays out of the octave; GROWL 0 changes nothing, GROWL up adds harmonics, not level
- *   - RANGE's text: LOWEST at 0, then the note at the crossover, D#2 at 1, G4 at 100 */
+ *   - RANGE's text: LOWEST at 0, then the note at the crossover, D#2 at 1, G4 at 100; the other knobs in plain values:
+ *     OCT -1 and DRY in dB against the note, GROWL its drive in dB, COMP its ratio, OFF at 0 */
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -212,6 +213,17 @@ int main(void)
     printf("   RANGE texts: 0 LOWEST? %s, 1 D#2? %s, %d -> %s\n", t0 ? "yes" : "no", t1 ? "yes" : "no", RDEF, t);
     px_param_text(PX_B_PITCH, PX_PIT_LOWOCT, 0, 100, t);
     ok(t0 && t1 && !strcmp(t, "G4"), "RANGE shows LOWEST, then the note at the crossover (D#2 .. G4)");
+    {
+        static const struct { int k, v; const char *want; } T[] = {
+            {1, 0, "OFF"}, {1, 25, "-6 DB"}, {1, 50, "0 DB"}, {1, 100, "+6 DB"}, {2, 100, "0 DB"}, {2, 50, "-6 DB"},
+            {3, 0, "OFF"}, {3, 100, "+28 DB"}, {4, 0, "OFF"}, {4, 50, "1.8:1"}, {4, 100, "10:1"}};
+        int good = 1;
+        for (unsigned i = 0; i < sizeof T / sizeof T[0]; i++) {
+            px_param_text(PX_B_PITCH, PX_PIT_LOWOCT, T[i].k, T[i].v, t);
+            if (strcmp(t, T[i].want)) { printf("   knob %d at %d shows %s, wanted %s\n", T[i].k, T[i].v, t, T[i].want); good = 0; }
+        }
+        ok(good, "OCT -1, DRY, GROWL and COMP show plain values (dB, ratio, OFF)");
+    }
 
     printf("\n%s\n", failed ? "LOW OCTAVE tests FAILED" : "all LOW OCTAVE tests passed");
     return failed ? 1 : 0;
