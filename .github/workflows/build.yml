@@ -20,6 +20,14 @@ jobs:
             docs/firmware/*.fwsc
             docs/firmware/manifest.json
             build/SHA256SUMS
+      - name: The simulator's engine as WebAssembly (test branch only)
+        run: node tools/op.mjs wasm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openpocket-wasm
+          path: |
+            tools/sim/px_engine.wasm
+            tools/sim/px_engine.wasm.sources
       - name: Build the MIDI test channel package (never the installer default)
         run: node tools/op.mjs package-test
       - uses: actions/upload-artifact@v4
