@@ -590,6 +590,32 @@ static void lo_note(char *b, int v)                   /* the note at the crossov
     int i = 0; while (b[i]) i++;
     b[i++] = (char)('0' + m / 12 - 1); b[i] = 0;
 }
+static void lo_db(char *b, float db)                   /* "+6 DB", "0 DB", "-12 DB" */
+{
+    put_int(b, (int)(db + (db >= 0.0f ? 0.5f : -0.5f)), 1);
+    int i = 0; while (b[i]) i++;
+    b[i++] = ' '; b[i++] = 'D'; b[i++] = 'B'; b[i] = 0;
+}
+/* LOW OCTAVE's other knobs in plain values: OCT -1 and DRY in dB against the note (OCT -1 50 = 0 dB, DRY 100 =
+ * 0 dB), GROWL the drive into its clipper in dB, COMP its ratio (the octave's level change for the note's, 1.1:1 to
+ * 10:1); OFF at 0 */
+static void lo_text(char *b, int k, int v)
+{
+    const float x = (float)v * 0.01f;
+    if (v <= 0) { put_str(b, "OFF"); return; }
+    switch (k) {
+    case 1: lo_db(b, 8.685889f * logf(2.0f * x)); return;            /* 20 log10 */
+    case 2: lo_db(b, 8.685889f * logf(x)); return;
+    case 3: lo_db(b, 8.685889f * logf(1.0f + 24.0f * x)); return;
+    default: {
+        int r10 = (int)(10.0f / (1.0f - 0.9f * x) + 0.5f);          /* the ratio, in tenths */
+        int i = 0;
+        if (r10 >= 100) { b[i++] = (char)('0' + r10 / 100); b[i++] = (char)('0' + (r10 / 10) % 10); }
+        else { b[i++] = (char)('0' + r10 / 10); b[i++] = '.'; b[i++] = (char)('0' + r10 % 10); }
+        b[i++] = ':'; b[i++] = '1'; b[i] = 0;
+    }
+    }
+}
 static const char *const NOTE_TXT[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 static int syn_key_idx(int v) { int i = v * 12 / 101; return i < 0 ? 0 : (i > 11 ? 11 : i); }
 static float syn_att_ms(float x) { return 10.0f + x * x * 1490.0f; }     /* STRINGS / CHOIR attack */
@@ -658,6 +684,7 @@ int px_param_text(int b, int t, int k, int v, char *buf)
         if (t == PX_PIT_WHAMMY && k == 0) { float st = (x - 0.5f) * 48.0f; put_int(buf, (int)(st + (st >= 0 ? 0.5f : -0.5f)), 1); return 1; }
         if (t == PX_PIT_DETUNE && k == 0) { put_int(buf, (int)(3.0f + x * 27.0f + 0.5f), 0); return 1; }
         if (t == PX_PIT_LOWOCT && k == 0) { lo_note(buf, v); return 1; }
+        if (t == PX_PIT_LOWOCT && k <= 4) { lo_text(buf, k, v); return 1; }
         break;
     case PX_B_SFX:
         if (t == PX_SFX_CRUSH && k == 0) { put_int(buf, 16 - (int)(x * 14.0f + 0.5f), 0); return 1; }

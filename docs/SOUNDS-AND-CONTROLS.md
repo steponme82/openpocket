@@ -102,8 +102,8 @@ The analog/tape delays (ANALOG, MEMORY MAN, TAPE, SPACE ECHO, LO-FI) **self-osci
 real ones: lower FDBK to stop it.
 
 **LOW OCTAVE**: an octave under the low notes, the rest of the guitar untouched, as the OC-3's and OC-5's POLY
-modes. RANGE shows the note where it stops: `A2` (20) the E string up to the 5th fret and the open A, `D3` (40) the
-E and A strings in open position, up to `G4` (100). Of two notes below RANGE the lower one gets the octave, as a
+modes. RANGE shows the note where it stops: `A2` (20) the E string up to the 4th fret, `D3` (40) the E and A strings
+in open position, up to `G4` (100) (the table below). Of two notes below RANGE the lower one gets the octave, as a
 bass player would play the root of a power chord (clean: 96–99 % of the octave on it). RANGE at 0 is `LOWEST`, as on
 the OC-5: the octave of the lowest note of any chord, anywhere on the neck. OCT -1 at 50 plays the octave as loud as
 the note. DRY 100 leaves your signal exactly as it is (the block switched off gives the same samples). GROWL drives
@@ -114,6 +114,43 @@ octave comes about 14 ms after the note (the dry signal has no delay): it is mad
 as fast, so nothing waits in a buffer; the time is the filters' that pick the note. The low band runs at 5.5 kHz and
 costs little CPU. It splits by pitch, not by string: a note below RANGE gets the octave on whatever string you play
 it.
+
+#### LOW OCTAVE: where RANGE reaches, the knobs' values, settings to start from
+
+Where the octave reaches on the neck, in standard tuning (a note right at the value shown gets it about 3 dB softer, a
+whole tone above about 12 dB softer: the edge is soft):
+
+| RANGE | Screen | Crossover | Gets the octave |
+|---:|---|---:|---|
+| 0 | `LOWEST` | 600 Hz | the lowest note of any chord, anywhere on the neck |
+| 1 | `D#2` | 80 Hz | the open low E (a little softer) |
+| 10 | `F#2` | 93 Hz | E 0–2 |
+| 20 | `A2` | 109 Hz | E 0–4 (the 5th fret and the open A softer) |
+| 25 | `A#2` | 118 Hz | E 0–6, A 0–1 |
+| 33 | `C3` | 135 Hz | E 0–8, A 0–3 |
+| 40 | `D3` | 151 Hz | E 0–10, A 0–5, the open D softer |
+| 50 | `F3` | 177 Hz | E 0–13, A 0–8, D 0–3 |
+| 60 | `G#3` | 209 Hz | E 0–16, A 0–11, D 0–6, G 0–1 |
+| 70 | `B3` | 246 Hz | E 0–18, A 0–13, D 0–8, G 0–3 |
+| 80 | `D4` | 289 Hz | E 0–21, A 0–16, D 0–11, G 0–6, B 0–2 |
+| 100 | `G4` | 400 Hz | E, A, D up to the 17th fret, G 0–12, B 0–8, e 0–3 |
+
+What the other knobs show: **OCT -1** the octave's level against the note (`0 DB` at 50, `+6 DB` at 100, `-6 DB` at
+25), **DRY** your signal's level (`0 DB` at 100: untouched), **GROWL** the drive into its clipper (`OFF`, then `+11 DB`
+at 10 up to `+28 DB`), **COMP** the compression ratio (`OFF`, `1.4:1` at 33, `1.8:1` at 50, `3.6:1` at 80, `10:1` at
+100: at 10:1 a note 20 dB softer gets an octave 2 dB softer).
+
+Settings to start from. They depend on what reproduces the bass and on the pickup, so tune them by ear (these were
+worked out on paper and with recordings, not yet on a stage):
+
+| Situation | RANGE | OCT -1 | DRY | GROWL | COMP | Why |
+|---|---|---|---|---|---|---|
+| PA or amp with a subwoofer | `D3` (40) | `0 DB` (50) | `0 DB` (100) | `OFF` | `1.4:1` (33) | the octave's fundamental (41 Hz under a low E) comes out: keep it a clean sine |
+| No subwoofer: small PA, combo amp, stage monitor | `D3` (40) | `+3 DB` (70) | `0 DB` (100) | `+19 DB` (33) to `+22 DB` (50) | `1.8:1` (50) | 41 Hz barely leaves a 10–12" speaker: GROWL's harmonics (3, 5 times the octave) let the ear hear it |
+| Headphones, in-ear monitors | `D3` (40) | `0 DB` (50) | `0 DB` (100) | `OFF` | `1.4:1` (33) | they reproduce the sub; GROWL only for the sound |
+| Piezo pickup (acoustic) | `C3` (33) | `-2 DB` (40) | `0 DB` (100) | `OFF` | `2.7:1` (70) | a piezo booms in the lows and slaps hard: a lower RANGE keeps the boom out, more COMP evens the slaps |
+| Magnetic pickup (electric, or a soundhole pickup) | `D3` (40) to `F3` (50) | `0 DB` (50) | `0 DB` (100) | to taste | `1.6:1` (40) | an even low end: little COMP needed |
+| Bass line that moves up the neck under chords | `LOWEST` (0) | `0 DB` (50) | `0 DB` (100) | as above | as above | the octave follows the lowest note wherever it is |
 
 **Delay TIME (v35)**: 0–80 = 20–1000 ms in steps of 12.25 ms, 80–100 = 1–2 s in steps of 50 ms; the screen shows
 the ms. Presets saved before v35 keep their delay time (the knob value moves). The repeats are read with cubic
