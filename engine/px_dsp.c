@@ -370,10 +370,11 @@ static const char *const PN_12S[] = {"OCTAVE", "DETUNE", "TONE"};
 static const char *const PN_ACO[] = {"BODY", "BASS", "TREBLE", "ROOM"};
 static const char *const PN_SIT[] = {"KEY", "BUZZ", "SYMPATH", "DECAY"};
 static const char *const PN_BAR[] = {"TUNE", "TONE", "MIX"};
+static const char *const PN_PAD[] = {"ATTACK", "RELEASE", "TONE", "MOTION", "MIX"};
 static const tdef T_SYN[PX_SYN_COUNT] = {
     {"ORGAN", 5, PN_ORG}, {"CHURCH ORGAN", 5, PN_CHU}, {"STRINGS", 5, PN_STR}, {"CHOIR", 5, PN_CHO},
     {"MONO SYNTH", 5, PN_MONO}, {"PWM SYNTH", 5, PN_PWM}, {"BASS SYNTH", 5, PN_BSY}, {"12-STRING", 3, PN_12S},
-    {"ACOUSTIC", 4, PN_ACO}, {"SITAR", 4, PN_SIT}, {"BARITONE", 3, PN_BAR}};
+    {"ACOUSTIC", 4, PN_ACO}, {"SITAR", 4, PN_SIT}, {"BARITONE", 3, PN_BAR}, {"PAD", 5, PN_PAD}};
 
 /* drives: each knob has a role; the name shown comes from the role */
 enum { R_DRIVE, R_DIST, R_FUZZ, R_SUST, R_BOOST, R_TONE, R_TREBLE, R_LEVEL, R_BASS, R_VOICE, R_GATE, R_BIAS,
@@ -616,6 +617,30 @@ static void lo_text(char *b, int k, int v)
     }
     }
 }
+/* PAD's knobs: ATTACK 0.1 .. 6 s (the swell, and the crossing into a new chord), RELEASE 0.2 .. 10 s (the fade when
+ * stopped), TONE 300 .. 2400 Hz, MOTION the grains' detune 0 .. 15 cents, MIX the pad's level (0 DB at 50) */
+static float pad_att_s(float x) { return 0.1f + x * x * 5.9f; }
+static float pad_rel_s(float x) { return 0.2f + x * x * 9.8f; }
+static float pad_tone_hz(float x) { return 300.0f * powf(8.0f, x); }
+static void pad_text(char *b, int k, int v)
+{
+    const float x = (float)v * 0.01f;
+    int i = 0;
+    switch (k) {
+    case 0: case 1: {                                  /* "0.1 S" .. "9.9 S", "10 S" */
+        int d = (int)((k ? pad_rel_s(x) : pad_att_s(x)) * 10.0f + 0.5f);
+        if (d >= 100) { b[i++] = (char)('0' + d / 100); b[i++] = (char)('0' + (d / 10) % 10); }
+        else { b[i++] = (char)('0' + d / 10); b[i++] = '.'; b[i++] = (char)('0' + d % 10); }
+        b[i++] = ' '; b[i++] = 'S'; b[i] = 0;
+    } return;
+    case 2: put_int(b, (int)(pad_tone_hz(x) / 10.0f + 0.5f) * 10, 0); while (b[i]) i++;
+        b[i++] = ' '; b[i++] = 'H'; b[i++] = 'Z'; b[i] = 0; return;
+    case 3: if (v <= 0) { put_str(b, "OFF"); return; }
+        put_int(b, (int)(x * 15.0f + 0.5f), 0); while (b[i]) i++;
+        b[i++] = ' '; b[i++] = 'C'; b[i++] = 'T'; b[i] = 0; return;
+    default: lo_text(b, 1, v); return;                /* as LOW OCTAVE's OCT -1: 0 DB at 50 */
+    }
+}
 static const char *const NOTE_TXT[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 static int syn_key_idx(int v) { int i = v * 12 / 101; return i < 0 ? 0 : (i > 11 ? 11 : i); }
 static float syn_att_ms(float x) { return 10.0f + x * x * 1490.0f; }     /* STRINGS / CHOIR attack */
@@ -708,6 +733,7 @@ int px_param_text(int b, int t, int k, int v, char *buf)
         if (t == PX_SYN_12STR && k == 1) { put_int(buf, (int)(x * 15.0f + 0.5f), 0); return 1; }
         if (t == PX_SYN_SITAR && k == 0) { put_str(buf, NOTE_TXT[syn_key_idx(v)]); return 1; }
         if (t == PX_SYN_BARI && k == 0) { put_int(buf, syn_bari_st(v), 0); return 1; }
+        if (t == PX_SYN_PAD) { pad_text(buf, k, v); return 1; }
         break;
     case PX_B_DELAY:
         if (k == 0) { put_int(buf, (int)(dly_ms(t, v) + 0.5f), 0); int i = 0; while (buf[i]) i++;
@@ -1710,6 +1736,11 @@ static void rc_syn(px_engine *e)
         for (int i = 0; i < 6; i++) bq_reset(&e->syn_f[i]);
         memset(e->syn_buf, 0, sizeof e->syn_buf); memset(e->syn_cb, 0, sizeof e->syn_cb);
         e->syn_f0 = 0.0f; e->syn_per = 0.0f; e->syn_p1 = e->syn_p2 = 0.0f;
+        e->pad_capr = -1; e->pad_act = -1; e->pad_k = 0; e->pad_y0 = e->pad_y1 = 0.0f; e->pad_attp = 0;
+        e->pad_env = e->pad_slow = 0.0f;
+        for (int r = 0; r < 3; r++) { e->pad_g[r] = e->pad_gt[r] = 0.0f; for (int g = 0; g < PX_PAD_NG; g++) e->pad_gt0[r][g] = (float)g / (float)PX_PAD_NG; }
+        e->pad_seen_p = e->pad_press; e->pad_seen_s = e->pad_stop;   /* presses made before: forgotten */
+        for (int i = 0; i < 2; i++) { bq_reset(&e->pad_aa[i]); bq_reset(&e->pad_tone[i]); }
     }
     e->syn_nv = 0; e->syn_dry = 0.0f; e->syn_d8 = 0.0f; e->syn_out = 1.0f; e->syn_nf = 0; e->syn_plvl = 0.0f;
     e->syn_clk = 0.0f; e->syn_cdep[0] = e->syn_cdep[1] = 0.0f;
@@ -1816,6 +1847,18 @@ static void rc_syn(px_engine *e)
         e->syn_cfb = 0.985f + d * 0.0135f; e->syn_cdamp = 0.35f;
         bq_bandpass(&e->syn_f[0], sr, 2800.0f, 1.3f); bq_bandpass(&e->syn_f[1], sr, 500.0f, 0.7f);
         e->syn_dry = 1.0f; e->syn_out = 0.7f;
+    } break;
+    case PX_SYN_PAD: {                                 /* a chord held on a footswitch: grains at sr / 8 */
+        const float sd = sr / (float)PX_PAD_DEC;
+        bq_lowpass(&e->pad_aa[0], sr, 2200.0f, 0.5412f); bq_lowpass(&e->pad_aa[1], sr, 2200.0f, 1.3066f);
+        const float fc = pad_tone_hz(c);
+        bq_lowpass(&e->pad_tone[0], sr, fc, 0.5412f); bq_lowpass(&e->pad_tone[1], sr, fc, 1.3066f);
+        e->pad_ka = onepole_k(sd, pad_att_s(a) / 3.0f);      /* ~95% of the way in ATTACK */
+        e->pad_kr = onepole_k(sd, pad_rel_s(b) / 3.0f);
+        e->pad_kf = onepole_k(sd, 0.01f);                    /* a slice dropped to record into: 30 ms */
+        e->pad_mot = d * 0.0087f;                            /* 15 cents */
+        e->pad_mix = f * 2.0f * PX_PAD_NORM;
+        e->syn_dry = 1.0f;
     } break;
     default: {                                         /* baritone: the whole guitar a few semitones down */
         syn_voice(e, 0, (float)syn_bari_st(q[0]), 1400.0f, c);
@@ -2281,6 +2324,149 @@ static inline int syn_track(px_engine *e, float x)
     e->syn_prev = b;
     return trig;
 }
+/* ---- SYN PAD: the chord caught on the footswitch, held as overlapping grains ---- */
+#define PX_PAD_L 2048                                  /* a slice: 372 ms at sr / 8, 16 bits */
+#define PX_PAD_G 882                                   /* a grain: 160 ms */
+#define PX_PAD_SKIP 441                                /* after a pick attack heard while recording: 80 ms */
+static inline int16_t *pad_slice(px_engine *e, int r) { return r < 2 ? e->syn_pad + r * PX_PAD_L : e->syn_pad2; }
+static inline float pad_rand(px_engine *e)             /* 0 .. 1 */
+{
+    e->syn_rnd = e->syn_rnd * 1664525u + 1013904223u;
+    return (float)(e->syn_rnd >> 9) * (1.0f / 8388608.0f);
+}
+/* A new grain starts where it is in phase with the grain playing loudest now (the one nearest the middle of its
+ * window): 24 starts 8 samples apart from a random one (35 ms: two periods of the low E, at sr / 8), then +-4 by
+ * one, compared over 48 samples. Grains out of phase beat (the level wobbled 5 dB); in phase they do not. */
+static void pad_grain_new(px_engine *e, int r, int g)
+{
+    const int16_t *sl = pad_slice(e, r);
+    const int hi = PX_PAD_L - (int)(PX_PAD_G * 1.01f) - 3;
+    e->pad_gi[r][g] = 1.0f + e->pad_mot * (2.0f * pad_rand(e) - 1.0f);
+    int lead = -1; float bw = 0.0f;
+    for (int i = 0; i < PX_PAD_NG; i++) {
+        if (i == g) continue;
+        const float w = lfo_sin(e->pad_gt0[r][i] * 0.5f);
+        if (w * w > bw) { bw = w * w; lead = i; }
+    }
+    int base = (int)(pad_rand(e) * (float)(hi - 24 * 8 - 4));
+    if (lead < 0 || bw < 0.25f) { e->pad_gp[r][g] = (float)base; return; }
+    float ref[48];
+    const float lp = e->pad_gp[r][lead] + e->pad_gt0[r][lead] * (float)PX_PAD_G * e->pad_gi[r][lead];
+    for (int j = 0; j < 48; j++) {
+        int i0 = (int)(lp + (float)j * e->pad_gi[r][lead]);
+        ref[j] = (float)sl[i0 < PX_PAD_L - 1 ? i0 : PX_PAD_L - 1];
+    }
+    int best = base; float bc = -1e30f;
+    for (int pass = 0; pass < 2; pass++) {
+        const int lo = pass ? best - 4 : base, n = pass ? 9 : 24, st = pass ? 1 : 8;
+        int b2 = best;
+        for (int k = 0; k < n; k++) {
+            const int c0 = lo + k * st;
+            if (c0 < 0 || c0 > hi) continue;
+            float acc = 0.0f, en = 1.0f;
+            for (int j = 0; j < 48; j += 2) { const float v = (float)sl[c0 + j]; acc += v * ref[j]; en += v * v; }
+            acc /= sqrtf(en);
+            if (acc > bc) { bc = acc; b2 = c0; }
+        }
+        best = b2;
+    }
+    e->pad_gp[r][g] = (float)best;
+}
+/* A caught chord still decays over its slice (a strum: about 3 dB in 372 ms), so grains from its start would play
+ * louder than grains from its end: each eighth of the slice is brought to the slice's mean level, the gain moving
+ * linearly between their centres. Once per catch. */
+static void pad_flatten(int16_t *sl)
+{
+    float rm[8], mean = 0.0f;
+    for (int b = 0; b < 8; b++) {
+        float a = 0.0f;
+        for (int i = 0; i < PX_PAD_L / 8; i++) { const float v = (float)sl[b * (PX_PAD_L / 8) + i]; a += v * v; }
+        rm[b] = sqrtf(a / (float)(PX_PAD_L / 8)) + 1.0f; mean += rm[b] * 0.125f;
+    }
+    for (int i = 0; i < PX_PAD_L; i++) {
+        float pos = ((float)i + 0.5f) / (float)(PX_PAD_L / 8) - 0.5f;
+        int b0 = (int)pos; if (pos < 0.0f) { b0 = 0; pos = 0.0f; } if (b0 > 6) { b0 = 6; pos = 7.0f; }
+        const float fr = pos - (float)b0;
+        float g = mean / (rm[b0] + (rm[b0 + 1] - rm[b0]) * fr);
+        g = g > 2.0f ? 2.0f : g < 0.5f ? 0.5f : g;
+        float v = (float)sl[i] * g;
+        v = v > 32767.0f ? 32767.0f : v < -32767.0f ? -32767.0f : v;
+        sl[i] = (int16_t)v;
+    }
+}
+void px_pad_press(px_engine *e) { e->pad_press++; }   /* the UI and MIDI only: the audio side never writes these */
+void px_pad_stop(px_engine *e) { e->pad_stop++; }
+static void pad_step(px_engine *e, float a)            /* one sample at sr / 8 */
+{
+    const uint32_t pp = e->pad_press, ps = e->pad_stop;
+    if (ps != e->pad_seen_s) {                         /* held footswitch: everything fades over RELEASE */
+        e->pad_seen_s = ps;
+        for (int r = 0; r < 3; r++) { e->pad_gt[r] = 0.0f; e->pad_rk[r] = e->pad_kr; }
+        e->pad_capr = -1;
+    }
+    if (pp != e->pad_seen_p) {                         /* a press: record the chord from now into a free slice */
+        e->pad_seen_p = pp;
+        if (e->pad_capr < 0) {
+            int r = -1;
+            for (int i = 0; i < 3; i++) if (i != e->pad_act && (r < 0 || e->pad_g[i] < e->pad_g[r])) r = i;
+            e->pad_capr = r;
+            e->pad_gt[r] = 0.0f; e->pad_rk[r] = e->pad_kf;   /* (if it was still fading out: dropped quickly) */
+        }
+        e->pad_wait = 1; e->pad_cap = 0; e->pad_skip = 0;
+    }
+    {   /* a pick attack: the envelope jumps over its slow average */
+        const float m = a < 0.0f ? -a : a;
+        e->pad_env = m > e->pad_env ? m : e->pad_env + (m - e->pad_env) * 0.006f;
+        e->pad_slow += (e->pad_env - e->pad_slow) * 0.0006f;
+    }
+    const int att = e->pad_env > 1.8f * e->pad_slow + 0.01f, edge = att && !e->pad_attp;
+    e->pad_attp = att;
+    if (e->pad_capr >= 0) {
+        const int r = e->pad_capr;
+        if (e->pad_wait) { if (e->pad_g[r] < 1e-4f) { e->pad_g[r] = 0.0f; e->pad_wait = 0; } }
+        else if (edge && e->pad_cap < PX_PAD_L / 2) { e->pad_cap = 0; e->pad_skip = PX_PAD_SKIP; }   /* strummed */
+        else if (e->pad_skip > 0) e->pad_skip--;
+        else {
+            float v = a * 16384.0f;
+            v = v > 32767.0f ? 32767.0f : v < -32767.0f ? -32767.0f : v;
+            pad_slice(e, r)[e->pad_cap++] = (int16_t)v;
+            if (e->pad_cap >= PX_PAD_L) {              /* caught: it swells in, the one before fades out */
+                pad_flatten(pad_slice(e, r));
+                if (e->pad_act >= 0) { e->pad_gt[e->pad_act] = 0.0f; e->pad_rk[e->pad_act] = e->pad_ka; }
+                e->pad_act = r; e->pad_gt[r] = 1.0f; e->pad_rk[r] = e->pad_ka; e->pad_capr = -1;
+                for (int g = 0; g < PX_PAD_NG; g++) { e->pad_gt0[r][g] = (float)g / (float)PX_PAD_NG; pad_grain_new(e, r, g); }
+            }
+        }
+    }
+    float y = 0.0f;
+    for (int r = 0; r < 3; r++) {
+        e->pad_g[r] += (e->pad_gt[r] - e->pad_g[r]) * e->pad_rk[r];
+        if (e->pad_gt[r] == 0.0f && e->pad_g[r] < 1e-5f) e->pad_g[r] = 0.0f;
+        if (e->pad_g[r] == 0.0f || r == e->pad_capr) continue;
+        const int16_t *sl = pad_slice(e, r);
+        float acc = 0.0f;
+        for (int g = 0; g < PX_PAD_NG; g++) {          /* NG grains, 1/NG apart: their windows sum to NG / 2 */
+            float t = e->pad_gt0[r][g];
+            const float pos = e->pad_gp[r][g] + t * (float)PX_PAD_G * e->pad_gi[r][g];
+            const int i0 = (int)pos;
+            const float fr = pos - (float)i0, s = lfo_sin(t * 0.5f);
+            acc += ((float)sl[i0] + (float)(sl[i0 + 1] - sl[i0]) * fr) * s * s;
+            t += 1.0f / (float)PX_PAD_G;
+            if (t >= 1.0f) { t -= 1.0f; pad_grain_new(e, r, g); }
+            e->pad_gt0[r][g] = t;
+        }
+        y += acc * e->pad_g[r];
+    }
+    e->pad_y0 = e->pad_y1; e->pad_y1 = y * (2.0f / (float)PX_PAD_NG / 16384.0f);
+}
+static float pad_run(px_engine *e, float x)
+{
+    const float a = bq_run(&e->pad_aa[1], bq_run(&e->pad_aa[0], x));
+    if (++e->pad_k >= PX_PAD_DEC) { e->pad_k = 0; pad_step(e, a); }
+    float o = e->pad_y0 + (e->pad_y1 - e->pad_y0) * ((float)e->pad_k * (1.0f / (float)PX_PAD_DEC));
+    o = bq_run(&e->pad_tone[1], bq_run(&e->pad_tone[0], o));
+    return x + o * e->pad_mix + e->dn;
+}
 PX_INL static inline float syn_run(px_engine *e, int t, float x)
 {
     float y = 0.0f;
@@ -2444,6 +2630,8 @@ PX_INL static inline float syn_run(px_engine *e, int t, float x)
         }
         return (y + sum * e->syn_sym) * e->syn_out + e->dn;
     }
+    case PX_SYN_PAD:
+        return pad_run(e, x);
     default: {                                         /* baritone */
         e->syn_buf[e->syn_w] = x;
         y = x * e->syn_dry + syn_shift(e, 0) * e->syn_lvl[0];

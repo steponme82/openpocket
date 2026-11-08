@@ -16,7 +16,7 @@
  *  +------------------------------+       +------------------------------+
  *
  * Controls: KNOB = select / adjust; PUSH = open / edit / confirm; HOME = back to PLAY (long press = tuner);
- * FOOTSWITCHES = next / previous preset; AMP CAB DLY REV MOD = that block's page (press again = on/off);
+ * FOOTSWITCHES = next / previous preset (with a SYN PAD on: the left one catches the chord, held 0.7 s fades it); AMP CAB DLY REV MOD = that block's page (press again = on/off);
  * FX = cycles DRV, SFX, SYN, PIT, CMP, GT, EQ. Hold PUSH = SAVE (into one of the 52 slots, in flash).
  * Double-click PUSH on PLAY = MOVE the selected block: KNOB moves it along the chain, PUSH drops it, HOME puts it back.
  * The preset LEVEL (v36) is the GT page's 3rd setting ("PRESET LVL").
@@ -538,6 +538,9 @@ static void ui_fx_cycle(void)          /* FX: DRV -> SFX -> SYN -> PIT -> CMP ->
     for (int i = 0; i < 7; i++) if (UI_FXB[i] == ui_blk) nx = UI_FXB[(i + 1) % 7];
     ui_blk = nx; ui_mode = M_BLOCK; ui_item = 0;
 }
+/* SYN PAD: with a PAD on in the preset the left footswitch is the pad's (a press catches the chord being played,
+ * held 0.7 s fades it out: openpocket.c) instead of the previous preset */
+static int ui_pad_on(void) { return PRESET.on[PX_B_SYN] && PRESET.type[PX_B_SYN] % PX_SYN_COUNT == PX_SYN_PAD; }
 
 /* ===================================================== tuner ======== */
 static const char *NOTE_N[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};

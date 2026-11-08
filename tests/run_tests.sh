@@ -5,6 +5,7 @@
 #    no NaN; long runs (3 s pluck + 8 s silence): nothing runs away (only delays at FDBK 100 hold on, by design)
 #  - the two-core pipeline (PRE / NAM / POST stages) gives the plain engine's output one block later
 #  - LOW OCTAVE (PIT): low notes get their octave, high ones and the dry signal stay as they are (tests/engine/lowoct.c)
+#  - SYN PAD: a caught chord held steady, swell, crossing to a new chord, fade, stomp-then-strum, no clicks (tests/engine/pad.c)
 #  - NAM: engine/px_nam.c against tools/nam_a2.py with every factory model (needs numpy)
 #  - MIDI: the musical-MIDI code (firmware/px_midi.h) on a PC: decoder, CC map, messages sent, settings byte, clock
 #  - preset store: save / reload / power cut at every step of a save (firmware/px_store.h on a simulated flash)
@@ -31,6 +32,9 @@ $CC -O2 -Iengine tests/engine/pipe_test.c engine/px_dsp.c firmware/px_math.c -lm
 echo "== LOW OCTAVE (PIT: the notes below RANGE an octave down, the rest dry)"
 $CC -O2 -Iengine tests/engine/lowoct.c engine/px_dsp.c firmware/px_math.c -lm -o build/lowoct
 build/lowoct > build/lowoct.log || { cat build/lowoct.log; exit 1; }; tail -1 build/lowoct.log
+echo "== SYN PAD (a chord held on a footswitch)"
+$CC -O2 -Iengine tests/engine/pad.c engine/px_dsp.c firmware/px_math.c -lm -o build/pad
+build/pad > build/pad.log || { cat build/pad.log; exit 1; }; tail -1 build/pad.log
 echo "== NAM (fixed point against the float reference, every factory model)"
 $CC -O2 -DPXN_EMUVEC -Iengine tests/engine/nam_test.c engine/px_nam.c -o build/nam_test
 if python3 -c "import numpy" 2>/dev/null; then mkdir -p build/nam; python3 tests/test_nam.py build/nam_test > build/nam/log.txt || { cat build/nam/log.txt; exit 1; }; tail -1 build/nam/log.txt; else echo "(numpy not installed: NAM comparison skipped)"; fi

@@ -37,6 +37,9 @@ static void px_midi_ble_write(const uint8_t *p, uint32_t n)
 #endif
 
 /* one received event packet, from either road; *touched: the sound changed */
+#ifndef PX_PAD_PRESS                             /* SYN PAD: catch the chord (openpocket.c: px_pad_press on the engine) */
+#define PX_PAD_PRESS() ((void)0)
+#endif
 static void px_midi_in(uint32_t pkt, uint32_t ms, int free_ui, int *touched)
 {
     px_midi_msg_t m = px_midi_decode(&mid_cfg, pkt);
@@ -59,6 +62,8 @@ static void px_midi_in(uint32_t pkt, uint32_t ms, int free_ui, int *touched)
             if ((int)ui_item >= ui_nitems()) ui_item = 0;
             *touched = 1;
         }
+    } else if (m.d1 == 64u) {                          /* CC 64 (a sustain pedal) at 64 and up: the PAD catches the chord */
+        if (m.d2 >= 64u && ui_pad_on()) PX_PAD_PRESS();
     } else {
         uint32_t mv = master_vol;
         int mset = 0;
