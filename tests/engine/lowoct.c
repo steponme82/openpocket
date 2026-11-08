@@ -7,6 +7,9 @@
  *   - high E (329.6 Hz) at that RANGE: no octave (the shifter hears almost nothing)
  *   - a chord, low E + G (196 Hz): the E gets its octave, the G does not (no 98 Hz)
  *   - RANGE at the top: the high E gets its octave (164.8 Hz), and the x8 upsampling leaves no images (-66 dB)
+ *   - power chords on the low strings (E5, A5) and a fourth (E + A): both octaves, spliced in step (90% of the output)
+ *   - a 30 Hz rumble (below the low E) mostly stays out of the octave (the 50 Hz high-pass: -8 dB at least)
+ *   - GROWL 0 leaves the octave as it is; GROWL up adds its harmonics (3rd: at least 10% of the octave), not level
  *   - the octave starts within 60 ms of the note
  *   - RANGE's text is the note at the crossover: D#2 at 0, G4 at 100 */
 #include <math.h>
@@ -18,7 +21,7 @@
 #define N 66150                         /* 1.5 s per case at 44.1 kHz */
 static px_engine e;
 static float in[N], out[N], ref[N];
-static int failed;
+static int failed, growl;
 static void ok(int c, const char *what) { printf("%-68s %s\n", what, c ? "ok" : "FAIL"); if (!c) failed++; }
 
 static void preset(px_preset_t *p, int pitch_on, int range, int oct, int dry)
@@ -29,6 +32,7 @@ static void preset(px_preset_t *p, int pitch_on, int range, int oct, int dry)
     p->on[PX_B_PITCH] = (uint8_t)pitch_on;
     p->type[PX_B_PITCH] = PX_PIT_LOWOCT;
     p->p[PX_B_PITCH][0] = (uint8_t)range; p->p[PX_B_PITCH][1] = (uint8_t)oct; p->p[PX_B_PITCH][2] = (uint8_t)dry;
+    p->p[PX_B_PITCH][3] = (uint8_t)growl;
 }
 static void run(const px_preset_t *p, float *y)
 {
@@ -89,6 +93,44 @@ int main(void)
         ok(im < a165 * 0.0005f, "the upsampling leaves no images (below -66 dB)");
     }
 
+    {   /* two notes below RANGE: the splices must suit both (search over 3 periods of the low E) */
+        static const float C[3][2] = {{82.41f, 123.47f}, {110.0f, 164.81f}, {82.41f, 110.0f}};
+        static const char *const NAME[3] = {"E5", "A5", "E + A"};
+        int good = 1;
+        for (int c = 0; c < 3; c++) {
+            tones(C[c][0], C[c][1]);
+            preset(&p, 1, 60, 100, 0); run(&p, out);
+            float x1 = amp_at(out, C[c][0] * 0.5f, from), x2 = amp_at(out, C[c][1] * 0.5f, from), rr = rms(out, from);
+            float on = (x1 * x1 + x2 * x2) * 0.5f / (rr * rr);
+            printf("   %-6s: octaves %.3f %.3f, %.0f%% of the output on them\n", NAME[c], x1, x2, 100.0f * on);
+            if (on < 0.9f || x1 < 0.3f || x2 < 0.3f) good = 0;
+        }
+        ok(good, "power chords and a fourth on the low strings: both octaves, clean");
+    }
+    {   /* rumble below the low E */
+        tones(30.0f, 0);
+        preset(&p, 1, RDEF, 100, 0); run(&p, out);
+        float rb = rms(out, from);
+        tones(82.41f, 0);
+        preset(&p, 1, RDEF, 100, 0); run(&p, out);
+        float re = rms(out, from);
+        printf("   30 Hz rumble: %.1f dB under a low E's octave\n", -20.0f * log10f(rb / re));
+        ok(rb < re * 0.4f, "a 30 Hz rumble stays mostly out of the octave (-8 dB)");
+    }
+    {   /* GROWL */
+        tones(82.41f, 0);
+        preset(&p, 1, RDEF, 100, 0); run(&p, ref);
+        growl = 0;
+        preset(&p, 1, RDEF, 100, 0); run(&p, out);
+        float m0 = 0; for (int k = 0; k < N; k++) { float d = fabsf(out[k] - ref[k]); if (d > m0) m0 = d; }
+        growl = 100;
+        preset(&p, 1, RDEF, 100, 0); run(&p, out);
+        growl = 0;
+        float f1 = amp_at(out, 41.2f, from), f3 = amp_at(out, 123.6f, from), c1 = amp_at(ref, 41.2f, from), c3 = amp_at(ref, 123.6f, from);
+        printf("   GROWL 100: octave %.3f (clean %.3f), its 3rd harmonic %.0f%% (clean %.1f%%)\n", f1, c1, 100.0f * f3 / f1, 100.0f * c3 / c1);
+        ok(m0 == 0.0f, "GROWL 0: the octave exactly as without it");
+        ok(f3 > 0.1f * f1 && c3 < 0.01f * c1 && f1 > 0.5f * c1 && f1 < 2.0f * c1, "GROWL 100: harmonics on the octave, about the same level");
+    }
     for (int k = 0; k < N; k++) in[k] = k < (int)(0.2f * SR) ? 0.0f : 0.3f * sinf(6.2831853f * 82.41f * (float)k / SR);
     preset(&p, 1, RDEF, 100, 0); run(&p, out);
     int onset = -1;
