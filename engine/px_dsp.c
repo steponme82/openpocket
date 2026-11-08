@@ -340,9 +340,10 @@ static const char *const PN_POLY[] = {"DRY", "OCT -1", "OCT +1"};
 static const char *const PN_WHAM[] = {"SHIFT", "MIX", "GLIDE"};
 static const char *const PN_HARM[] = {"INTERVAL", "MIX"};
 static const char *const PN_DET[] = {"CENTS", "MIX"};
+static const char *const PN_LOWOCT[] = {"RANGE", "OCT -1", "DRY"};
 static const tdef T_PITCH[PX_PIT_COUNT] = {
     {"OCTAVER", 5, PN_OCT}, {"POLY OCTAVE", 3, PN_POLY}, {"WHAMMY", 3, PN_WHAM}, {"HARMONIZER", 2, PN_HARM},
-    {"DETUNE", 2, PN_DET}};
+    {"DETUNE", 2, PN_DET}, {"LOW OCTAVE", 3, PN_LOWOCT}};
 
 static const char *const PN_AWAH[] = {"SENS", "RESO", "RANGE", "DECAY"};
 static const char *const PN_LWAH[] = {"RATE", "DEPTH", "RESO", "CENTER"};
@@ -577,6 +578,17 @@ static void put_int(char *b, int v, int plus)
     b[i] = 0;
 }
 static void put_str(char *b, const char *s) { int i = 0; while (s[i] && i < 7) { b[i] = s[i]; i++; } b[i] = 0; }
+/* LOW OCTAVE's RANGE: the crossover, 80 Hz (only the lowest notes of the E string) to 400 Hz (up to G4) */
+static float lo_fc(int v) { return 80.0f * powf(5.0f, (float)v * 0.01f); }
+#define LO_W 176.0f                                   /* its shifter's window at sr / 8: 32 ms, as POLY OCTAVE's -1 */
+static void lo_note(char *b, int v)                   /* the note at the crossover: "D#3" */
+{
+    static const char *const NM[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    int m = (int)(69.5f + 17.31234f * logf(lo_fc(v) / 440.0f));   /* 12 log2(f / 440) + 69, rounded */
+    put_str(b, NM[m % 12]);
+    int i = 0; while (b[i]) i++;
+    b[i++] = (char)('0' + m / 12 - 1); b[i] = 0;
+}
 static const char *const NOTE_TXT[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 static int syn_key_idx(int v) { int i = v * 12 / 101; return i < 0 ? 0 : (i > 11 ? 11 : i); }
 static float syn_att_ms(float x) { return 10.0f + x * x * 1490.0f; }     /* STRINGS / CHOIR attack */
@@ -644,6 +656,7 @@ int px_param_text(int b, int t, int k, int v, char *buf)
         if (t == PX_PIT_HARMONY && k == 0) { put_str(buf, HARM_TXT[harm_idx(v)]); return 1; }
         if (t == PX_PIT_WHAMMY && k == 0) { float st = (x - 0.5f) * 48.0f; put_int(buf, (int)(st + (st >= 0 ? 0.5f : -0.5f)), 1); return 1; }
         if (t == PX_PIT_DETUNE && k == 0) { put_int(buf, (int)(3.0f + x * 27.0f + 0.5f), 0); return 1; }
+        if (t == PX_PIT_LOWOCT && k == 0) { lo_note(buf, v); return 1; }
         break;
     case PX_B_SFX:
         if (t == PX_SFX_CRUSH && k == 0) { put_int(buf, 16 - (int)(x * 14.0f + 0.5f), 0); return 1; }
@@ -931,6 +944,16 @@ static void rc_pitch(px_engine *e)
         float r = expf((float)HARM_ST[harm_idx(q[0])] * 0.05776227f);
         e->ps_nv = 1; e->ps_dry = 1.0f; e->ps_lvl[0] = f01(q[1]) * 1.1f;
         e->ps_W[0] = r < 1.0f ? 1400.0f : 1100.0f; e->ps_inc[0] = (1.0f - r) / e->ps_W[0];
+    } break;
+    case PX_PIT_LOWOCT: {                              /* the notes below RANGE an octave down, the rest dry */
+        static const float QB8[4] = {0.5098f, 0.6013f, 0.9000f, 2.5629f};   /* 8th-order Butterworth */
+        const float sd = sr / (float)PX_LO_DEC;
+        bq_lowpass(&e->lo_aa[0], sr, 700.0f, 0.5412f); /* 4th-order Butterworth: nothing folds back at sr / 8 */
+        bq_lowpass(&e->lo_aa[1], sr, 700.0f, 1.3066f);
+        for (int i = 0; i < 4; i++) bq_lowpass(&e->lo_sel[i], sd, lo_fc(q[0]), QB8[i]);   /* steep at RANGE */
+        e->lo_lpk = onepole_k(sr, 1.0f / (2.0f * PI_F * 900.0f));   /* after the x8 interpolation: its images */
+        e->ps_W[0] = LO_W; e->ps_inc[0] = 0.5f / LO_W;
+        e->lo_lvl = f01(q[1]) * 2.0f; e->lo_dry = f01(q[2]);
     } break;
     default: {                                         /* doubler: +c and -c cents */
         float c = 3.0f + f01(q[0]) * 27.0f, m = f01(q[1]);
@@ -2091,6 +2114,47 @@ PX_INL static inline float ps_voice_al(float *buf, int w, float *ph, float *off,
     float s = lfo_sin(a * 0.5f), g = s * s;
     return rd_frac(buf, PX_PS_N - 1, pa) * g + rd_frac(buf, PX_PS_N - 1, pb) * (1.0f - g);
 }
+/* LOW OCTAVE's shifter, at sr / 8: ps_voice_al's -1 octave with a search sized for that rate (one period of the
+ * lowest note, compared over 8.7 ms) */
+#define LO_OFFMAX 80
+#define LO_CORR 48
+static float lo_align(const float *buf, int w, float d_ref, float d_new)
+{
+    int r0 = w - (int)d_ref, best = 0;
+    for (int pass = 0; pass < 2; pass++) {             /* coarse (every 4 offsets, every 2nd sample), then fine */
+        int lo = pass ? best - 3 : 0, hi = pass ? best + 3 : LO_OFFMAX, st = pass ? 1 : 4, b2 = best, js = pass ? 1 : 2;
+        float bc = -1e30f;
+        if (lo < 0) lo = 0;
+        for (int o = lo; o <= hi; o += st) {
+            int c0 = w - (int)(d_new + (float)o);
+            float acc = 0.0f, en = 1e-9f;
+            for (int j = 0; j < LO_CORR; j += js) {
+                float x = buf[(r0 - j) & (PX_PS_N - 1)], y = buf[(c0 - j) & (PX_PS_N - 1)];
+                acc += x * y; en += y * y;
+            }
+            acc = acc / sqrtf(en);
+            if (acc > bc) { bc = acc; b2 = o; }
+        }
+        best = b2;
+    }
+    return (float)best;
+}
+static float lo_voice(px_engine *e)
+{
+    const float *buf = e->ps_buf, W = e->ps_W[0], inc = e->ps_inc[0];
+    const int w = e->ps_w;
+    float *off = e->ps_off[0];
+    float a0 = e->ps_ph[0], a = wrap1(a0 + inc);
+    e->ps_ph[0] = a;
+    float b = a + 0.5f; if (b >= 1.0f) b -= 1.0f;
+    float da = 3.0f + a * W, db = 3.0f + b * W;
+    if (a < a0) off[0] = lo_align(buf, w, db + off[1], da);                 /* tap A restarts (silent) */
+    if (a0 < 0.5f && a >= 0.5f) off[1] = lo_align(buf, w, da + off[0], db); /* tap B restarts (silent) */
+    float pa = (float)w - (da + off[0]); if (pa < 0.0f) pa += (float)PX_PS_N;
+    float pb = (float)w - (db + off[1]); if (pb < 0.0f) pb += (float)PX_PS_N;
+    float s = lfo_sin(a * 0.5f), g = s * s;
+    return rd_frac(buf, PX_PS_N - 1, pa) * g + rd_frac(buf, PX_PS_N - 1, pb) * (1.0f - g);
+}
 
 
 /* ---- SYN: synth / instrument, one sample ---- */
@@ -2507,6 +2571,19 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
                     float u = px_abs(bq_run(&e->oct_bp, x));
                     u = bq_run(&e->oct_uphp, u);
                     x = x * e->oct_dry + s1 * e->oct_s1 + s2 * e->oct_s2 + u * e->oct_up;
+                } else if (pit_t == PX_PIT_LOWOCT) {
+                    float a = bq_run(&e->lo_aa[1], bq_run(&e->lo_aa[0], x));
+                    if (++e->lo_k >= PX_LO_DEC) {          /* every 8th sample: the low band at its own rate */
+                        e->lo_k = 0;
+                        for (int i = 0; i < 4; i++) a = bq_run(&e->lo_sel[i], a);
+                        e->ps_buf[e->ps_w] = a;
+                        float v = lo_voice(e);
+                        if (++e->ps_w >= PX_PS_N) e->ps_w = 0;
+                        e->lo_y0 = e->lo_y1; e->lo_y1 = v;
+                    }
+                    float o = e->lo_y0 + (e->lo_y1 - e->lo_y0) * ((float)e->lo_k * (1.0f / (float)PX_LO_DEC));
+                    e->lo_lp += (o - e->lo_lp) * e->lo_lpk;
+                    x = x * e->lo_dry + e->lo_lp * e->lo_lvl;
                 } else {
                     e->ps_buf[e->ps_w] = x;
                     if (pit_t == PX_PIT_WHAMMY) {
