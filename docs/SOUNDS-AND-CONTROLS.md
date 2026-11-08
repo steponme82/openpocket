@@ -139,7 +139,7 @@ block type, with its knobs at noon, keeps the loudness when switched on; each pr
 ## Controls
 | Control | Action |
 |---|---|
-| KNOB (PARA) | PLAY: pick the block · EDIT page: pick the line · editing: change the value (turn fast = steps of 5) |
+| KNOB (PARA) | PLAY: pick the block · EDIT page: pick the line, top to bottom (ON/OFF, model, settings; the page opens on the model) · editing: change the value (turn fast = steps of 5) |
 | PUSH (knob) | PLAY → open the block's EDIT page · model/setting line → edit · ON/OFF → toggle · editing → confirm |
 | PUSH **double-click** (PLAY) | **MOVE** the selected block: knob = move it, PUSH = drop, HOME = put it back |
 | PUSH **long press (0.8 s)** | **SAVE**: store the current sound (see below) |

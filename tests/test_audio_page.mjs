@@ -84,7 +84,7 @@ ok(near(dry, level + 20 * Math.log10(0.64), 1), `bypass passes the dry input, at
 ok(!near(dry, wet, 1), `and it differs from the chain (${wet.toFixed(1)} dB)`);
 await page.uncheck("#bypass");
 ok(await until(async () => (await state()).dsp.bypass === 0), "bypass comes off");
-await post("press/amp"); await post("knob/2"); await post("press/push"); await post("knob/-100");
+await post("press/amp"); await post("knob/1"); await post("press/push"); await post("knob/-100");
 await settle(600);
 const low = await loudest("#out-meter");
 await post("knob/100");

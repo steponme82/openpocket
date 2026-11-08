@@ -56,7 +56,7 @@ ok((await state()).slot === 0, "footswitch down: back to slot 1");
 await act("/api/press/amp");
 s = await state();
 ok(s.mode === "block" && s.block === 5, "AMP button: the AMP page");
-await act("/api/knob/2");
+await act("/api/knob/1");
 await act("/api/press/push");
 s = await state();
 const gain = s.preset.p[5][0];
