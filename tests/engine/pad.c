@@ -58,7 +58,7 @@ static void run(const px_preset_t *p, float *y, const float *press, int np, floa
         float t = (float)k / SR;
         while (pi < np && press[pi] <= t) { px_pad_press(&e); pi++; }
         if (!stopped && stop_t > 0.0f && stop_t <= t) { px_pad_stop(&e); stopped = 1; }
-        px_engine_process(&e, in + k, y + k, 64);
+        px_engine_process(&e, in + k, y + k, N - k < 64 ? N - k : 64);   /* N is not a multiple of 64 */
     }
 }
 static float rms(const float *y, float t0, float t1)
@@ -98,7 +98,7 @@ int main(void)
     preset(&p, 1, 30, 30, 0); run(&p, out, P1, 1, 0);
     float md = 0; for (int k = 0; k < N; k++) { float d = fabsf(out[k] - dry[k]); if (d > md) md = d; }
     preset(&p, 1, 30, 30, 50); run(&p, out, 0, 0, 0);
-    float mn = 0; for (int k = 0; k < N; k++) { float d = fabsf(out[k] - dry[k]); if (d > md) mn = d > mn ? d : mn; }
+    float mn = 0; for (int k = 0; k < N; k++) { float d = fabsf(out[k] - dry[k]); if (d > mn) mn = d; }
     ok(md < 1e-9f && mn < 1e-9f, "MIX 0: the guitar as it is; no press: no pad");
 
     /* a chord caught, then silence after 4 s */
@@ -224,7 +224,7 @@ int main(void)
         px_engine_set(&e, &s2);
         px_pad_press(&e);
         px_engine_set(&e, &p);
-        for (int k = 0; k < N; k += 64) px_engine_process(&e, in + k, out + k, 64);
+        for (int k = 0; k < N; k += 64) px_engine_process(&e, in + k, out + k, N - k < 64 ? N - k : 64);
         preset(&p, 0, 30, 30, 50); run(&p, dry, 0, 0, 0);
         pad_only();
         ok(rms(pad, 2.0f, 6.0f) < 1e-6f, "a press made before choosing PAD is forgotten");
