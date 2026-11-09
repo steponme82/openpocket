@@ -146,7 +146,7 @@ ok(s.volume === 100, "MASTER in focus: End is 100");
 await page.locator("#master").blur();
 
 await post("/api/press/amp");
-await post("/api/knob/2");
+await post("/api/knob/1");
 await post("/api/press/push");
 s = await until((x) => x.mode === "edit");
 const gain = s.preset.p[5][0], k0 = s.knob, pb = await box("#para");
