@@ -2115,6 +2115,7 @@ void px_engine_set(px_engine *e, const px_preset_t *p)
 static const uint32_t GL_F[] = {
     GLF_(cmp_make), GLF_(cmp_mix), GLF_(cmp_k),
     GLF_(oct_dry), GLF_(oct_s1), GLF_(oct_s2), GLF_(oct_up), GLF_(ps_dry), GLF_(ps_lvl[0]), GLF_(ps_lvl[1]),
+    GLF_(lo_dry), GLF_(lo_lvl), GLF_(lo_g), GLF_(lo_gk), GLF_(lo_gn), GLF_(lo_c),   /* LOW OCTAVE */
     GLF_(sfx_mix), GLF_(sfx_c), GLF_(sfx_d),
     GLF_(syn_dry), GLF_(syn_out), GLF_(syn_d8), GLF_(syn_plvl), GLF_(syn_lvl[0]), GLF_(syn_lvl[1]), GLF_(syn_lvl[2]),
     GLF_(drv_gain), GLF_(drv_level), GLF_(drv_blend), GLF_(drv_mix), GLF_(drv_shelf_lo),

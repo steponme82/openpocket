@@ -13,7 +13,9 @@
  *   - COMP: a note 20 dB softer comes out less than 8 dB softer at COMP 100; hum at -80 dB is not raised above -70 dB
  *   - a 30 Hz rumble mostly stays out of the octave; GROWL 0 changes nothing, GROWL up adds harmonics, not level
  *   - RANGE's text: LOWEST at 0, then the note at the crossover, D#2 at 1, G4 at 100; the other knobs in plain values:
- *     OCT -1 and DRY in dB against the note, GROWL its drive in dB, COMP its ratio, OFF at 0 */
+ *     OCT -1 and DRY in dB against the note, GROWL its drive in dB, COMP its ratio, OFF at 0
+ *   - v38's knob path: a turn of OCT -1, DRY, GROWL or COMP glides (a smaller step than set at once) and ends where a
+ *     full set puts the engine; RANGE is a knob change too */
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -203,6 +205,36 @@ int main(void)
         float f1 = amp_at(out, 41.2f, from), f3 = amp_at(out, 123.6f, from), c1 = amp_at(ref, 41.2f, from), c3 = amp_at(ref, 123.6f, from);
         printf("   GROWL 100: octave %.3f (clean %.3f), its 3rd harmonic %.0f%% (clean %.1f%%)\n", f1, c1, 100.0f * f3 / f1, 100.0f * c3 / c1);
         ok(f3 > 0.1f * f1 && c3 < 0.01f * c1 && f1 > 0.5f * c1 && f1 < 2.0f * c1, "GROWL 100: harmonics on the octave, about the same level");
+    }
+
+    {   /* v38's knob path: OCT -1, DRY, GROWL and COMP glide (no click), and end where a full set puts them */
+        static px_engine e2;
+        static float y2[N];
+        tones(82.41f, 0);
+        const int at = N / 2 / 64 * 64;
+        px_preset_t p0, p1;
+        preset(&p0, 1, RDEF, 50, 100);
+        p1 = p0; p1.p[PX_B_PITCH][1] = 100; p1.p[PX_B_PITCH][2] = 40; p1.p[PX_B_PITCH][3] = 60; p1.p[PX_B_PITCH][4] = 70;
+        px_engine_init(&e, SR); px_engine_set(&e, &p0);
+        px_engine_init(&e2, SR); px_engine_set(&e2, &p0);
+        const int ch = px_engine_change(&e, &p1);
+        for (int k = 0; k < N; k += 64) {
+            if (k == at) { px_engine_prepare(&e, &p1); px_engine_knobs(&e, &p1); px_engine_set(&e2, &p1); }
+            px_engine_process(&e, in + k, out + k, 64); px_engine_process(&e2, in + k, y2 + k, 64);
+        }
+        float ca = 0, cb = 0, base = 0;                 /* the largest third difference: before, and 30 ms after */
+        for (int k = at - 1323; k < at + 1323; k++) {
+            float da = fabsf(out[k] - 3 * out[k - 1] + 3 * out[k - 2] - out[k - 3]);
+            float db = fabsf(y2[k] - 3 * y2[k - 1] + 3 * y2[k - 2] - y2[k - 3]);
+            if (k < at) { if (da > base) base = da; } else { if (da > ca) ca = da; if (db > cb) cb = db; }
+        }
+        const int same = e.lo_lvl == e2.lo_lvl && e.lo_dry == e2.lo_dry && e.lo_g == e2.lo_g && e.lo_gk == e2.lo_gk &&
+                         e.lo_gn == e2.lo_gn && e.lo_c == e2.lo_c && e.gl_left == 0;
+        printf("   a knob turn: sorted %s; the step after it %.1fx the one before (%.1fx set at once)\n",
+               ch == PX_CH_KNOBS ? "KNOBS" : "FULL", ca / base, cb / base);
+        ok(ch == PX_CH_KNOBS && same && ca < 0.5f * cb, "knobs glide (v38): fewer clicks, they end where a full set does");
+        p1 = p0; p1.p[PX_B_PITCH][0] = 70;
+        ok(px_engine_change(&e2, &p1) == PX_CH_KNOBS, "RANGE is a knob too (no stop, no fade out)");
     }
 
     px_param_text(PX_B_PITCH, PX_PIT_LOWOCT, 0, 0, t);
