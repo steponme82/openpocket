@@ -86,6 +86,11 @@ static struct {
 static void ui_invalidate(void) { uc.full = 1; }
 static int ui_np(void) { return px_nparams((int)ui_blk, PRESET.type[ui_blk]); }
 static int ui_nitems(void) { return 2 + ui_np(); }     /* 0 = type, 1 = on/off, 2.. = parameters */
+/* The knob walks the EDIT page from top to bottom, as it is drawn: ON/OFF (item 1, in the band at the top), the model
+ * (item 0, where the page opens), then the settings, and round again. It used to go model, ON/OFF, settings: one
+ * detent from the model jumped up to the band, the next one down past the model to the first setting. */
+static int ui_row_of(uint32_t it) { return it == 1u ? 0 : it == 0u ? 1 : (int)it; }
+static uint32_t ui_item_at(int row) { return row == 0 ? 1u : row == 1 ? 0u : (uint32_t)row; }
 static void ui_order_fix(void) { if (!px_order_valid(PRESET.order)) px_order_default(PRESET.order); }
 static int ui_pos_of(uint32_t b) { for (int i = 0; i < PX_NBLK; i++) if (PRESET.order[i] == b) return i; return 0; }
 
@@ -379,8 +384,8 @@ static void ui_knob(int dd, int fast)
         int i = ui_pos_of(ui_blk), j = i + (dd > 0 ? 1 : -1);
         if (j >= 0 && j < PX_NBLK) { uint8_t t = PRESET.order[i]; PRESET.order[i] = PRESET.order[j]; PRESET.order[j] = t; }
     } else if (ui_mode == M_BLOCK) {
-        int n = ui_nitems();
-        ui_item = (uint32_t)(((int)ui_item + n + dd) % n);
+        int n = ui_nitems(), r = (ui_row_of(ui_item) + dd % n + n) % n;
+        ui_item = ui_item_at(r);
     } else if (ui_mode == M_EDIT) {
         if (ui_item == 0u) {
             int nt = px_ntypes((int)ui_blk);
