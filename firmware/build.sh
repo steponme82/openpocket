@@ -76,7 +76,7 @@ RAM_DSP="px_engine_process px_engine_part px_wet_run px_wet_swap dly_block rv_bl
   pxn_process pxn_block pxn_issue pxn_layers_pipe pxn_direct pxn_post_part pxn_rows pxn_rows_cpu pxn_gather pxn_range_cpu
   pxn_serve pxn_srv_begin pxn_srv_end pxn_srv_active pxn_srv_block pxn_help_job pxn_vstart pxn_vwait pxn_kick pxn_venq
   pxn_need pxn_hneed pxn_hstart pxn_hend pxn_layer_block pxn_dual pxn_dot3x4_c pxn_dot4_c pxn_dot1_c pxn_rdot_c pxn_rdl_c
-  pxn_post_c pxn_gcopy_c lo_fast"
+  pxn_post_c pxn_gcopy_c lo_fast pad_run pad_step pad_grain_new pad_flatten"
 RAM_FW="a_enc a_dec a_collect a_commit dsp_block dsp_out dsp_load dsp_job post_job pipe_job dsp_pipe dsp_pipe_run
   fm1_alnk0_irq tn_capture fm1_cpu1_run fm1_cpu1_wait fm1_cpu1_retire a_hrun a_hwait b_ticks memcpy memset"
 python3 "$HERE/../tools/ramcode.py" "$O/px_dsp.o" --plain $RAM_DSP

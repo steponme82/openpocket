@@ -12,6 +12,7 @@
  *   - the footswitch held (px_pad_stop): the pad fades over RELEASE
  *   - pressed first, strummed 150 ms later: the pad holds the ringing chord, not the silence or the pick
  *   - no clicks: the pad never jumps more than its own level from one sample to the next
+ *   - v38's knob path: MIX and TONE turned while the pad holds: it goes on, MIX glides to where a full set puts it
  *   - the knobs in plain values (seconds, Hz, cents, dB) */
 #include <math.h>
 #include <stdio.h>
@@ -214,6 +215,31 @@ int main(void)
                sqrt(e0 / 2048), sqrt(e1 / 2048), sqrt(e2 / 2048), mx, r, g_after, a_after);
         ok(e0 > 1e6 && e1 > 1e6 && e2 > 1e6 && d01 > 1e5, "chords in quick succession: the three slices used");
         ok(mx < 0.3f * r && g_after > 10.0f * a_after, "chords in quick succession: no clicks (30%), the last one held");
+    }
+    {   /* v38's knob path: MIX and TONE turned while the pad holds a chord: no restart, MIX glides, no click */
+        static px_engine e2;
+        memset(in, 0, sizeof in); strum(AM, 0.1f, 0.12f);
+        for (int k = (int)(4.5f * SR); k < N; k++) in[k] = 0.0f;
+        preset(&p, 0, 30, 30, 50); run(&p, dry, 0, 0, 0);
+        px_preset_t p0, p1;
+        preset(&p0, 1, 30, 30, 50);
+        p1 = p0; p1.p[PX_B_SYN][4] = 25; p1.p[PX_B_SYN][2] = 40;
+        px_engine_init(&e, SR); px_engine_set(&e, &p0);
+        const int at = (int)(6.0f * SR) / 64 * 64;
+        int ch = -1;
+        for (int k = 0; k < N; k += 64) {
+            if (k == (int)(0.3f * SR) / 64 * 64) px_pad_press(&e);
+            if (k == at) { ch = px_engine_change(&e, &p1); px_engine_prepare(&e, &p1); px_engine_knobs(&e, &p1); }
+            px_engine_process(&e, in + k, out + k, N - k < 64 ? N - k : 64);
+        }
+        pad_only();
+        px_engine_init(&e2, SR); px_engine_set(&e2, &p1);
+        float before = rms(pad, 5.0f, 6.0f), after = rms(pad, 8.0f, 12.0f), mx = 0;
+        for (int k = at - 2048; k < at + 2048; k++) { float d = fabsf(pad[k] - pad[k - 1]); if (d > mx) mx = d; }
+        printf("   MIX 0 DB -> -6 DB and TONE turned while held: %.1f dB, largest step %.3f against %.3f\n",
+               20.0f * log10f(after / before), mx, before);
+        ok(ch == PX_CH_KNOBS && after > 0.35f * before && after < 0.7f * before && mx < 0.5f * before &&
+           e.pad_mix == e2.pad_mix && e.gl_left == 0, "knobs turned while held (v38): the pad goes on, MIX glides, no click");
     }
     {   /* a press made while the block was another synth: forgotten when PAD is chosen */
         memset(in, 0, sizeof in); strum(AM, 0.1f, 0.12f);
