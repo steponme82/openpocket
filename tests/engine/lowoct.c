@@ -220,7 +220,8 @@ int main(void)
         const int ch = px_engine_change(&e, &p1);
         for (int k = 0; k < N; k += 64) {
             if (k == at) { px_engine_prepare(&e, &p1); px_engine_knobs(&e, &p1); px_engine_set(&e2, &p1); }
-            px_engine_process(&e, in + k, out + k, 64); px_engine_process(&e2, in + k, y2 + k, 64);
+            const int m = N - k < 64 ? N - k : 64;          /* (N is not a multiple of 64) */
+            px_engine_process(&e, in + k, out + k, m); px_engine_process(&e2, in + k, y2 + k, m);
         }
         float ca = 0, cb = 0, base = 0;                 /* the largest third difference: before, and 30 ms after */
         for (int k = at - 1323; k < at + 1323; k++) {
