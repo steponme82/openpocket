@@ -75,6 +75,11 @@ The file buttons (**Add .nam files**, an empty slot's button, **Replace with a f
 labels of real file inputs with no type filter, so iOS offers `.nam` files instead of greying them out; each file is
 checked by its name and its content after it is picked.
 
+**Names (the Bluetooth test image, test build 40).** A capture taken from TONE3000 gets the tone's first words before a
+short model name, 11 characters at most ("VOX AC30 VX", "KLON GAIN 2" instead of "VX" or "GAIN 2"; `docs/pxlib.js`
+`smartName`). And **Rename…** works on any capture in a pedal with editor protocol 5: the pedal renames the slot itself
+(`NAM_RENAME`), so a capture loaded from another browser or from the phone can get a name you read.
+
 **The library.** The pedal stores a capture but cannot send it back. So the editor keeps every capture you add in the
 browser (IndexedDB, on that computer only), with where it came from. That is what lets it rename a capture, move it to
 another slot or swap two (the presets that use them are rewritten to follow), and keep more captures than the pedal has

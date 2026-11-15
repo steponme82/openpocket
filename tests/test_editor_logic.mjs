@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { webcrypto } from "node:crypto";
 import { ccParam, ccOn, ccToggle, ccType, ccTarget, toCc, fromCc, typeToCc, typeFromCc, decode, learn, resolve, action, cleanMappings, NBLK, NPAR,
   pedalDst, pedalTarget, pedalLearn, switchMode, PEDAL_MAP_N, MAP_PRESS, MAP_EACH, MAP_VALUE, CC_NEXT, CC_PREV } from "../docs/pxmidi.js";
-import { knobIndex, indexKnob, slotRef, presetSlot, retarget, usage, packedName, renamePacked, cleanSlotName, Library, pedalKey, planMove } from "../docs/pxlib.js";
+import { knobIndex, indexKnob, slotRef, presetSlot, retarget, usage, packedName, renamePacked, cleanSlotName, Library, pedalKey, planMove, smartName } from "../docs/pxlib.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const check = async (what, fn) => { await fn(); console.log(`${what.padEnd(76)} ok`); };
@@ -224,5 +224,17 @@ await check("moving a slot's file: to an empty slot, two changing places, and wh
   assert.equal(pedalLearn(full, 100, { kind: "on", b: 0 }, MAP_PRESS), null);   // full: nothing learned
   assert.equal(pedalLearn(empty, 128, { kind: "on", b: 0 }, MAP_PRESS), null);  // not a controller number
   assert.equal(CC_NEXT, 118);
+}
+// ---- test build 40: a name a player reads for a TONE3000 capture (docs/pxlib.js smartName) ----
+{
+  assert.equal(smartName("Vox AC30 Top Boost", "VX"), "VOX AC30 VX");
+  assert.equal(smartName("Fender Deluxe Reverb", "FD"), "FENDER FD");
+  assert.equal(smartName("Marshall JCM800 2203 capture pack", "CH1"), "JCM800 CH1");   // a first word too long is passed over
+  assert.equal(smartName("Klon Centaur", "Gain 2"), "KLON GAIN 2");
+  assert.equal(smartName("", "VX"), "VX");
+  assert.equal(smartName("NAM A2 Pack", "G6"), "G6");                               // words that name nothing are left out
+  assert.equal(smartName("Friedman BE-100", ""), "FRIEDMAN");
+  assert.equal(smartName("", ""), "MODEL");
+  for (const [t, m] of [["A very long title of many words", "and a long model name"], ["X", "Y"]]) assert.ok(smartName(t, m).length <= 11);
 }
 console.log("editor logic test passed");

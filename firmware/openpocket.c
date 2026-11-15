@@ -18,7 +18,7 @@
 #endif
 #define FELUCCA_ID "FM-1_900"
 /* the Bluetooth audio test build (docs/BT-AUDIO-TEST.md): its boot text and its id for the second core's bar (app_main) */
-#define BT_TEST_BUILD 39
+#define BT_TEST_BUILD 40
 #define BT_STR_(x) #x
 #define BT_STR(x) BT_STR_(x)
 #define BT_TEST_BUILD_TEXT BT_STR(BT_TEST_BUILD)
@@ -596,6 +596,8 @@ static const int8_t QDEC[16] = {0,-1,1,0, 1,0,0,-1, -1,0,0,1, 0,1,-1,0};
 void ble_test_poll(void);
 #define UI_IDLE() ble_test_poll()
 #define UI_MS() ms_now()
+static void bt_power_apply(void);   /* test build 40: SETTINGS' BT POWER, applied by the Bluetooth task (bt/bt_a2dp.c) */
+#define PX_BT_POWER_APPLY() bt_power_apply()
 #endif
 #include "ui.h"
 #include "px_lights.h"      /* the button lights follow the blocks (issue #8; px_leds.h drives them) */

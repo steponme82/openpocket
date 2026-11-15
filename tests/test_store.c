@@ -12,6 +12,8 @@
 #if PX_OWN_FX
 static int a_in_gain_n;                                  /* test build 39: INPUT applied (px_audio.h's, counted here) */
 static void a_in_gain_apply(void) { a_in_gain_n++; }
+static int a_tails_n;                                    /* test build 40: TAILS to the engine (px_audio.h's, counted here) */
+static void a_tails_apply(void) { a_tails_n++; }
 #endif
 
 static uint8_t nor[0x100000];
@@ -366,16 +368,22 @@ int main(void)
         CHECK(st_save(6, &q) == 0, "INPUT: a preset save");
         reboot();
         CHECK(px_in_db == -7, "INPUT: still there after a preset save");
-        {   /* a byte out of range (another firmware's use of the byte): clamped */
+        {   /* a value out of range in the byte: INPUT 15 is clamped to +10 dB, BT POWER 3 (none) is HIGH */
             st_hdr_t hh;
             memcpy(&hh, nor + st_cur, sizeof hh);
-            hh.pad[2] = 100;
+            hh.pad[2] = 0x0F | 0x60;
             memcpy(nor + st_cur, &hh, sizeof hh);
             reboot();
-            CHECK(px_in_db == PX_IN_DB_MAX, "INPUT: a stored value out of range is clamped to +10 dB");
+            CHECK(px_in_db == PX_IN_DB_MAX && px_bt_pwr == 0 && !px_tails, "INPUT: out of range clamped to +10 dB; BT POWER 3 read as HIGH");
         }
-        px_in_db = 0;
-        CHECK(st_commit() == 0, "INPUT: back to 0 dB");
+        /* test build 40: TAILS and BT POWER beside INPUT in the same byte, applied at boot */
+        px_in_db = -3; px_tails = 1; px_bt_pwr = 2;
+        CHECK(st_commit() == 0, "TAILS, BT POWER: a commit");
+        a_tails_n = 0;
+        reboot();
+        CHECK(px_in_db == -3 && px_tails == 1 && px_bt_pwr == 2 && a_tails_n >= 1, "TAILS on, BT POWER LOW and INPUT -3 dB survive a power cycle (TAILS applied at boot)");
+        px_in_db = 0; px_tails = 0; px_bt_pwr = 0;
+        CHECK(st_commit() == 0, "INPUT, TAILS, BT POWER: back to the defaults");
     }
 #endif
     loader_bytes_clear();

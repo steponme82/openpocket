@@ -610,30 +610,35 @@ static void save_confirm(void)
  * last one, leaves; HOME leaves. The settings are saved (a flash write, as SAVE) only if something changed.
  * v42: a fourth row, USB AUDIO (docs/USB-AUDIO.md): the row shows mi_ua, and the setting (px_ua_on) follows only on
  * leaving, because a change takes the pedal off USB for a second. */
-/* test build 39 (PX_OWN_FX): the page is SETTINGS, with two more rows: SWITCH, how CC 8..19 flip a block: MOMENT (a switch
- * that sends 127, then 0 when let go: the flip comes on the 0) or LATCH (a switch that alternates 127 and 0, one message a
- * press: every message flips); and INPUT, the guitar's level into the chain, -10..+10 dB (heard at once, saved on leaving).
- * The controls learned on the pedal are counted on the USB line (the web editor's MIDI section learns them, px_midi.h). */
+/* test build 39 (PX_OWN_FX): the page is SETTINGS, with more rows: SWITCH, how CC 8..19 flip a block: MOMENT (a switch that
+ * sends 127, then 0 when let go: the flip comes on the 0) or LATCH (a switch that alternates 127 and 0, one message a press:
+ * every message flips); INPUT, the guitar's level into the chain, -10..+10 dB; and (test build 40) TAILS, the delay and the
+ * reverb ring out when they go off and across a preset change, and BT POWER, the radio's transmit power (HIGH as before,
+ * MID, LOW). Each is heard or applied at once and saved on leaving. The controls learned on the pedal are counted on the
+ * USB line (the web editor's MIDI section learns them, px_midi.h). */
 #if OP_UAUDIO
 enum { MI_CHAN, MI_SEND, MI_CLOCK, MI_UAUDIO,
 #else
 enum { MI_CHAN, MI_SEND, MI_CLOCK,
 #endif
 #if PX_OWN_FX
-       MI_EACH, MI_INPUT,
+       MI_EACH, MI_INPUT, MI_TAILS, MI_BTPWR,
 #endif
        MI_ROWS };
+#if PX_OWN_FX && !defined(PX_BT_POWER_APPLY)
+#define PX_BT_POWER_APPLY() ((void)0)    /* (no Bluetooth here: the setting is only kept) */
+#endif
 static uint32_t mi_row, mi_shown_hash = ~0u;
 static uint8_t mi_orig, mi_ua;
 #if PX_OWN_FX
-static int8_t mi_in_orig;
+static uint8_t mi_set_orig;
 #endif
 static void midi_persist(void);                 /* openpocket.c: writes the settings to the store */
 static void midi_open(void)
 {
     ui_mode = M_MIDI; mi_row = 0; mi_shown_hash = ~0u; mi_orig = px_midi_cfg_pack(&mid_cfg); mi_ua = px_ua_on;
 #if PX_OWN_FX
-    mi_in_orig = px_in_db;
+    mi_set_orig = px_set_pack();
 #endif
     lcd_rect(0, 0, 240, 240, UI_BG);
     lcd_rect(0, 0, 240, 4, UI_ACC); lcd_rect(0, 27, 240, 3, UI_ACC); lcd_rect(0, 4, 8, 23, UI_ACC);
@@ -652,7 +657,7 @@ static void midi_draw(void)
     h ^= (uint32_t)mid_c1_off * 0x27D4EB2Fu;
 #if PX_OWN_FX
     for (uint32_t i = 0; i < PXM_MAP_N; i++) h ^= ((uint32_t)mid_map[i].src << 16 | (uint32_t)mid_map[i].dst << 8 | mid_map[i].mode) * (0x9E3779B1u + i);
-    h ^= (uint32_t)(uint8_t)px_in_db * 0x85EBCA6Bu;
+    h ^= (uint32_t)px_set_pack() * 0x85EBCA6Bu;
 #endif
     if (h == mi_shown_hash) return;
     mi_shown_hash = h;
@@ -661,7 +666,7 @@ static void midi_draw(void)
                                               "USB AUDIO",
 #endif
 #if PX_OWN_FX
-                                              "SWITCH", "INPUT",
+                                              "SWITCH", "INPUT", "TAILS", "BT POWER",
 #endif
     };
     char v[MI_ROWS][8];
@@ -680,17 +685,20 @@ static void midi_draw(void)
     v[MI_INPUT][0] = 0;
     if (px_in_db > 0) b_str(v[MI_INPUT], "+"); else if (px_in_db < 0) b_str(v[MI_INPUT], "-");
     b_num(v[MI_INPUT], (uint32_t)(px_in_db < 0 ? -px_in_db : px_in_db)); b_str(v[MI_INPUT], " DB");
+    v[MI_TAILS][0] = 0;
+    b_str(v[MI_TAILS], px_tails ? "ON" : "OFF");
+    v[MI_BTPWR][0] = 0;
+    b_str(v[MI_BTPWR], px_bt_pwr == 2u ? "LOW" : px_bt_pwr == 1u ? "MID" : "HIGH");
 #endif
 #if PX_OWN_FX
-    /* (rows of 30 px up to four, 25 for five, 21 for six with USB AUDIO too: the USB line stays at 162; the values in the
-     * small font in rows under 25 px) */
-    const uint32_t rh = MI_ROWS > 5u ? 21u : MI_ROWS > 4u ? 25u : 30u;
+    /* (the rows share 126 px, 30 at most each, so the USB line stays at 162; the values in the small font in rows under 25) */
+    const uint32_t rh = MI_ROWS > 4u ? (126u / MI_ROWS < 25u ? 126u / MI_ROWS : 25u) : 30u;
     for (uint32_t r = 0; r < MI_ROWS; r++) {
         uint32_t y = 36u + r * rh;
         uint16_t bg = r == mi_row ? C_CARD : UI_BG;
-        lcd_rect(0, y, 240, rh - 2u, bg);
-        ft_box(8, y + (rh == 30u ? 6u : rh == 25u ? 4u : 2u), 130, NAME[r], &FT_SM, r == mi_row ? UI_TXT : UI_DIM, bg, 0);
-        ft_box(140, y + (rh == 30u ? 2u : rh == 25u ? 0u : 2u), 92, v[r], rh >= 25u ? &FT_MD : &FT_SM, r == mi_row ? UI_ACC : UI_TXT, bg, 2);
+        lcd_rect(0, y, 240, rh - 1u, bg);
+        ft_box(8, y + (rh == 30u ? 6u : (rh - 15u) / 2u), 130, NAME[r], &FT_SM, r == mi_row ? UI_TXT : UI_DIM, bg, 0);
+        ft_box(140, y + (rh == 30u ? 2u : rh >= 25u ? 0u : (rh - 15u) / 2u), 92, v[r], rh >= 25u ? &FT_MD : &FT_SM, r == mi_row ? UI_ACC : UI_TXT, bg, 2);
     }
 #else
     for (uint32_t r = 0; r < MI_ROWS; r++) {       /* (v42: four rows of 30 px; three of 36 before) */
@@ -729,7 +737,7 @@ static void midi_close(void)
 {
     ui_mode = M_CHAIN; ui_item = 0;
 #if PX_OWN_FX
-    if (px_midi_cfg_pack(&mid_cfg) != mi_orig || mi_ua != px_ua_on || px_in_db != mi_in_orig) { px_ua_on = mi_ua; midi_persist(); }
+    if (px_midi_cfg_pack(&mid_cfg) != mi_orig || mi_ua != px_ua_on || px_set_pack() != mi_set_orig) { px_ua_on = mi_ua; midi_persist(); }
 #else
     if (px_midi_cfg_pack(&mid_cfg) != mi_orig || mi_ua != px_ua_on) { px_ua_on = mi_ua; midi_persist(); }
 #endif
@@ -745,6 +753,8 @@ static void midi_knob(int dd)
 #if PX_OWN_FX
     else if (mi_row == MI_EACH) mid_cfg.each ^= 1u;
     else if (mi_row == MI_INPUT) { px_in_db = (int8_t)px_in_db_clamp(px_in_db + (dd > 0 ? 1 : -1)); a_in_gain_apply(); }   /* heard at once */
+    else if (mi_row == MI_TAILS) { px_tails ^= 1u; a_tails_apply(); }
+    else if (mi_row == MI_BTPWR) { px_bt_pwr = (uint8_t)((px_bt_pwr + (dd > 0 ? 1u : 2u)) % 3u); PX_BT_POWER_APPLY(); }
 #endif
     else mi_ua ^= 1u;
 }

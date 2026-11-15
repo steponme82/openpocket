@@ -128,7 +128,7 @@ let s = sim(["--dump", flash1]);
 await s.ready;
 let ed = new Editor(s.access);
 const info = await ed.connect();
-ok(info && info.proto === (FX ? 5 : 4) && info.version === (FX ? "v39 FX" : "v39") && info.identity === "PocketX_939", `INFO: ${info && `${info.version} ${info.identity}`}`);
+ok(info && info.proto === (FX ? 5 : 4) && info.version === (FX ? "v39 FX2" : "v39") && info.identity === "PocketX_939", `INFO: ${info && `${info.version} ${info.identity}`}`);
 ok(info && info.nblk === 12 && info.npar === 5 && info.nslot === 52 && info.nameMax === 13, "INFO: 12 blocks, 5 parameters, 52 slots, names of 13");
 const t0 = Date.now();
 const cat = await ed.catalog();
@@ -278,7 +278,8 @@ ok(oldDly.preset.p[dl][0] === 40 && oldDly.warn.length === 1 && newDly.preset.p[
 if (FX) {
   const eq = cat.blocks.findIndex((b) => b.label === "EQ"), dly = cat.blocks.findIndex((b) => b.label === "DLY");
   let m = await ed.pedalMap();
-  ok(ed.hasPedalLearn && m.rc === 0 && !m.each && m.inputDb === 0 && m.entries.length === PEDAL_MAP_N && m.entries.every((e) => !e), "MAP: nothing learned, SWITCH MOMENT, INPUT 0 dB, 8 places");
+  ok(ed.hasPedalLearn && m.rc === 0 && !m.each && m.inputDb === 0 && !m.tails && m.btPower === 0 && m.entries.length === PEDAL_MAP_N && m.entries.every((e) => !e),
+     "MAP: nothing learned, SWITCH MOMENT, INPUT 0 dB, TAILS off, BT POWER HIGH, 8 places");
   const got = [];
   ed.onMidiIn = (x) => got.push(x);
   ok(await ed.watch(true) === 3, "WATCH 3: the pedal also pushes what a controller sends it");
@@ -309,8 +310,8 @@ if (FX) {
   const bad = await ed.setPedalMap(false, [{ src: 90, dst: 3, mode: 0 }, null, null, null, null, null, null, null]);
   const dup = await ed.setPedalMap(false, [{ src: 90, dst: 15, mode: 0 }, { src: 90, dst: 16, mode: 0 }, null, null, null, null, null, null]);
   ok(bad.rc === 1 && dup.rc === 1 && bad.entries.filter(Boolean).length === 4, "MAP: a number the pedal does not read, or one controller number twice, is refused (the table kept)");
-  m = await ed.setPedalMap(true, m.entries, 4);
-  ok(m.rc === 0 && m.each && m.inputDb === 4, "MAP: SWITCH set to LATCH (the flip numbers act at every message), INPUT +4 dB");
+  m = await ed.setPedalMap(true, m.entries, 4, true, 2);
+  ok(m.rc === 0 && m.each && m.inputDb === 4 && m.tails && m.btPower === 2, "MAP: SWITCH LATCH, INPUT +4 dB, TAILS on, BT POWER LOW");
   ed.onMidiIn = null;
 }
 await bleCheck(s);
@@ -331,7 +332,8 @@ list = await ed.list();
 }
 if (FX) {
   const m = await ed.pedalMap();
-  ok(m.rc === 0 && m.each && m.inputDb === 4 && m.entries.filter(Boolean).length === 4 && m.entries[0].src === 80, "power cycle: the controls learned on the pedal, LATCH and INPUT are still there");
+  ok(m.rc === 0 && m.each && m.inputDb === 4 && m.tails && m.btPower === 2 && m.entries.filter(Boolean).length === 4 && m.entries[0].src === 80,
+     "power cycle: the controls learned on the pedal, LATCH, INPUT, TAILS and BT POWER are still there");
 }
 
 // ---- 7. v37: NAM models (an A2 file -> a user slot -> the AMP block's NAM type) ----
@@ -370,6 +372,14 @@ if (FX) {
   ok(await ed.setParam(amp, 0, kv) === kv && (await ed.state()).preset.type[amp] === nt, "NAM: a sound uses it");
   const bad = packModel(m.name, m.weights, lv); bad[64 + 100] ^= 0x55;           // a weight changed: the CRC no longer matches
   ok(await ed.namUpload(5, bad) === 1 && !(await ed.namList()).models[12 + 5].used, "NAM: a damaged model is refused, the slot stays empty");
+  if (FX) {                                       // test build 40 (protocol 5): NAM_RENAME, on the pedal itself
+    ok(ed.hasNamRename && await ed.namRename(4, "VOX AC30 VX") === 0 && (await ed.namList()).models[12 + 4].name === "VOX AC30 VX",
+       "NAM_RENAME: user slot 5 renamed on the pedal (no re-upload)");
+    const st4 = await ed.state();
+    ok(st4.preset.type[amp] === nt && st4.preset.p[amp][0] === kv, "NAM_RENAME: the sound using it is unchanged");
+    ok(await ed.namRename(6, "NOTHING") === 1, "NAM_RENAME: an empty slot is refused");
+    ok(await ed.namRename(4, "") === 1 && (await ed.namList()).models[12 + 4].name === "VOX AC30 VX", "NAM_RENAME: an empty name is refused, the name kept");
+  }
   ok(await ed.namErase(4) === 0 && !(await ed.namList()).models[12 + 4].used, "NAM: the slot is cleared again");
 }
 // ---- 8. v38: cabinet IRs (a WAV file -> an IR slot -> the CAB block's USER IR type) ----

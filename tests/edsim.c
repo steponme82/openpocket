@@ -136,6 +136,8 @@ static float tuner_hz;
 #if PX_OWN_FX
 static int a_in_gain_n;                                  /* test build 39: INPUT applied (px_audio.h's, counted here) */
 static void a_in_gain_apply(void) { a_in_gain_n++; }
+static int a_tails_n;                                    /* test build 40: TAILS to the engine (px_audio.h's, counted here) */
+static void a_tails_apply(void) { a_tails_n++; }
 #endif
 static void midi_persist(void) { }
 static void b_num(char *d, uint32_t v) { char t[12]; int n = 0; while (*d) d++; do { t[n++] = (char)('0' + v % 10u); v /= 10u; } while (v); while (n) *d++ = t[--n]; *d = 0; }

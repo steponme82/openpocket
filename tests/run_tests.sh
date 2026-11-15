@@ -11,7 +11,10 @@
 #    (tests/ownfx_equiv.sh, 5,460 runs); the engine tests built with that image's flags; its own effects (docs/OWN-FX.md):
 #    LOW OCTAVE (PIT), low notes get their octave, high ones and the dry signal stay as they are (tests/engine/lowoct.c);
 #    SYN PAD, a caught chord held steady, swell, crossing to a new chord, fade, stomp-then-strum, no clicks (tests/engine/pad.c);
-#    the expression pedal (test build 25): volume before the delay with its hold, wah sweep, whammy to SHIFT (tests/engine/exp.c)
+#    the expression pedal (test build 25): volume before the delay with its hold, wah sweep, whammy to SHIFT (tests/engine/exp.c);
+#    TAILS (test build 40): a delay or reverb switched off, or off in the next preset, rings out, inline and in its lane
+#    (tests/engine/tails.c); TREBLE BOOST (test build 40): its knobs, RANGE's shape, lopsided clipping, BOOST, its level at
+#    noon matching the dry guitar's loudness over the DI loops (tests/engine/treble.c)
 #  - changes without clicks (v38): knob changes glide to exactly where a full set goes, blocks on / off fade, fewer clicks
 #  - USER IR (v38): the partitioned FFT convolution against the direct FIR, slots, names
 #  - wet lanes (v39): the delay through its lane as inline bit for bit, the reverb's tail lag frames later, the pipeline
@@ -74,11 +77,12 @@ sh tests/ownfx_equiv.sh
 FX="-DPX_OWN_FX=1 -DPXN_LEAN=1 -DPXN_HOT_RAM=0 -DPX_RUNS=0 -DPX_LOOP_GUARD=1 -DPX_DLY_SHORT=1"   # (firmware/build.sh's DSPDEF under OP_BT)
 $CC -O2 $FX -Iengine tests/engine/sweep2.c engine/px_dsp.c firmware/px_math.c -lm -o build/sweep_fx && build/sweep_fx | tail -1
 $CC -O2 $FX -Iengine tests/engine/pipe_test.c engine/px_dsp.c firmware/px_math.c -lm -o build/pipe_fx && build/pipe_fx | tail -1
-$CC -O2 $FX -Iengine tests/engine/long.c engine/px_dsp.c firmware/px_math.c -lm -o build/long_fx && build/long_fx "LOW OCTAVE" PAD | tail -1
-echo "== the Bluetooth audio image's own effects: LOW OCTAVE (PIT) and SYN PAD (docs/OWN-FX.md)"
+$CC -O2 $FX -Iengine tests/engine/long.c engine/px_dsp.c firmware/px_math.c -lm -o build/long_fx && build/long_fx "LOW OCTAVE" PAD "TREBLE BOOST" | tail -1
+echo "== the Bluetooth audio image's own effects: LOW OCTAVE (PIT), SYN PAD, TREBLE BOOST (DRV) (docs/OWN-FX.md)"
 for D in "$FX" "-DPX_OWN_FX=1"; do                     # as the image builds the engine, and with the host's defaults (PX_RUNS 1)
-  for t in lowoct pad exp nam_keep; do                  # (exp: test build 25's expression pedal; nam_keep: test build 28's
-                                                        # factory models left out, PXN_KEEP below)
+  for t in lowoct pad exp nam_keep tails treble; do     # (exp: test build 25's expression pedal; nam_keep: test build 28's
+                                                        # factory models left out, PXN_KEEP below; tails, treble: test build
+                                                        # 40's TAILS and TREBLE BOOST)
     $CC -O2 $D -Iengine tests/engine/$t.c engine/px_dsp.c firmware/px_math.c -lm -o build/$t
     build/$t > build/$t.log || { cat build/$t.log; exit 1; }; tail -1 build/$t.log
   done

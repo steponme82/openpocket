@@ -41,7 +41,8 @@ static uint32_t rnd(void) { rs = rs * 1664525u + 1013904223u; return rs >> 8; }
 static int ntypes_old(int b)                           /* the models both builds have: PX_OWN_FX's own come last */
 {
     int n = px_ntypes(b);
-    while (n > 0 && (!strcmp(px_type_name(b, n - 1), "LOW OCTAVE") || !strcmp(px_type_name(b, n - 1), "PAD"))) n--;
+    while (n > 0 && (!strcmp(px_type_name(b, n - 1), "LOW OCTAVE") || !strcmp(px_type_name(b, n - 1), "PAD") ||
+                     !strcmp(px_type_name(b, n - 1), "TREBLE BOOST"))) n--;
     return n;
 }
 static uint64_t H(uint64_t h, const float *o, int n)
@@ -268,14 +269,14 @@ int main(int argc, char **argv)
     }
     if (strchr(sec, 'K')) {
         static const uint8_t KV[5] = {0, 25, 50, 75, 100};
-        for (int t = 0; t < PX_DRV_COUNT; t++) for (int i = 0; i < 625; i++) {
+        for (int t = 0; t < ntypes_old(PX_B_DRIVE); t++) for (int i = 0; i < 625; i++) {
             px_preset_t p; alone(&p, PX_B_DRIVE);
             p.type[PX_B_DRIVE] = (uint8_t)t;
             const uint8_t k[5] = {KV[i % 5], KV[(i / 5) % 5], KV[(i / 25) % 5], KV[(i / 125) % 5], 50};
             memcpy(p.p[PX_B_DRIVE], k, 5);
             printf("K drv %d knobs %d %d %d %d %016llx\n", t, k[0], k[1], k[2], k[3], (unsigned long long)run(&p, 0, 11025, 64)); n++;
         }
-        for (int t = 0; t < PX_DRV_COUNT; t++) for (int a = 0; a < PX_AMP_COUNT; a++) for (int s = 0; s < 2; s++) {
+        for (int t = 0; t < ntypes_old(PX_B_DRIVE); t++) for (int a = 0; a < PX_AMP_COUNT; a++) for (int s = 0; s < 2; s++) {
             px_preset_t p; px_preset_factory(&p, 9);
             for (int z = 0; z < PX_NBLK; z++) p.on[z] = (z == PX_B_AMP || z == PX_B_CAB || z == PX_B_DRIVE);
             p.type[PX_B_DRIVE] = (uint8_t)t; p.type[PX_B_AMP] = (uint8_t)a; memcpy(p.p[PX_B_DRIVE], V[5 + s], 5);

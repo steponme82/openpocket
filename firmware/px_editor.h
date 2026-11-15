@@ -43,7 +43,8 @@ enum { ED_INFO = 1, ED_CAT_BLOCK, ED_CAT_TYPE, ED_TEXTS, ED_STATE, ED_SET, ED_OR
        ED_NAM_LIST, ED_NAM_WRITE, ED_NAM_COMMIT, ED_NAM_ERASE, ED_DIAG,
        ED_IR_LIST, ED_IR_WRITE, ED_IR_COMMIT, ED_IR_ERASE,     /* v38: 24..27 */
        ED_USB_AUDIO,                                           /* v42: 28 */
-       ED_MIDI_IN, ED_MAP };                                   /* test build 39 (PX_OWN_FX): 29, pushed while watched; 30 */
+       ED_MIDI_IN, ED_MAP,                                     /* test build 39 (PX_OWN_FX): 29, pushed while watched; 30 */
+       ED_NAM_RENAME };                                        /* test build 40 (PX_OWN_FX): 31 */
 
 #ifndef ED_OUT_BYTES
 #define ED_OUT_BYTES 1024u   /* a reply's bytes at most (an image with longer DIAG lines sets more) */
@@ -175,10 +176,11 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
     ed_begin(cmd);
     switch (cmd) {
     case ED_INFO:
-#if PX_OWN_FX   /* the Bluetooth audio image's own models (LOW OCTAVE, PAD): a version text of its own, "v42 FX", because the web
-                 * editor keeps each firmware's catalogue under its identity and version (docs/pxedit.js) and would otherwise
-                 * show a v42 pedal's, without them */
-        ed_b(ED_PROTO); ed_str(OP_VERSION " FX", 15); ed_str(FELUCCA_ID_PTR, 27);
+#if PX_OWN_FX   /* the Bluetooth audio image's own models (LOW OCTAVE, PAD, TREBLE BOOST): a version text of its own, because
+                 * the web editor keeps each firmware's catalogue under its identity and version (docs/pxedit.js) and would
+                 * otherwise show a v42 pedal's, without them. "v42 FX2" since test build 40 (TREBLE BOOST): an editor that
+                 * kept build 38's "v42 FX" catalogue reads it again */
+        ed_b(ED_PROTO); ed_str(OP_VERSION " FX2", 15); ed_str(FELUCCA_ID_PTR, 27);
 #else
         ed_b(ED_PROTO); ed_str(OP_VERSION, 15); ed_str(FELUCCA_ID_PTR, 27);
 #endif
@@ -343,6 +345,17 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
         nm_changed(a[0]);                              /* a sound playing that slot reloads it */
         ed_b(a[0]); ed_b((uint32_t)rc);
         break;
+#if PX_OWN_FX
+    case ED_NAM_RENAME: {                              /* test build 40: slot, the name (0-ended, 11 characters at most) */
+        char nm[12];
+        if (n < 2u) return;
+        for (i = 0; i < 11u && 1u + i < n && a[1u + i]; i++) nm[i] = (char)a[1u + i];
+        nm[i] = 0;
+        rc = nm_rename(a[0], nm, i);                   /* (the weights as they were: nothing to reload) */
+        ed_b(a[0]); ed_b((uint32_t)rc);
+        break;
+    }
+#endif
     case ED_IR_LIST: {                                 /* v38: the cabinet IR slots */
         char nm[12];
         ed_b(PX_IR_N);
@@ -382,14 +395,16 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
 #endif
         break;
 #if PX_OWN_FX
-    case ED_MAP: {                                     /* test build 39: the controls learned on the pedal, SWITCH, INPUT */
+    case ED_MAP: {                                     /* test build 39: the controls learned on the pedal, SWITCH, INPUT; 40:
+                                                        * TAILS, BT POWER */
         rc = 0;
-        if (n >= 1u && a[0] == 1u) {                   /* 1, each, INPUT + 10, then PXM_MAP_N x (present, src, dst, mode) */
+        if (n >= 1u && a[0] == 1u) {                   /* 1, each, INPUT + 10, flags (bit 0 TAILS, bits 1-2 BT POWER), then
+                                                        * PXM_MAP_N x (present, src, dst, mode) */
             static px_map_t mq[PXM_MAP_N];
-            uint32_t want = 3u + PXM_MAP_N * 4u;
-            if (n < want || a[2] > (uint32_t)(PX_IN_DB_MAX - PX_IN_DB_MIN)) rc = 1;
+            uint32_t want = 4u + PXM_MAP_N * 4u;
+            if (n < want || a[2] > (uint32_t)(PX_IN_DB_MAX - PX_IN_DB_MIN) || ((a[3] >> 1) & 3u) > 2u) rc = 1;
             for (k = 0; !rc && k < PXM_MAP_N; k++) {
-                const uint8_t *e = a + 3u + k * 4u;
+                const uint8_t *e = a + 4u + k * 4u;
                 mq[k].src = e[0] ? e[1] : 0xFFu; mq[k].dst = e[2]; mq[k].mode = e[3];
                 if (!e[0]) mq[k].dst = mq[k].mode = 0xFFu;
                 if (!px_midi_map_valid(&mq[k])) rc = 1;
@@ -402,12 +417,15 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
                 mid_cfg.each = a[1] ? 1u : 0u;
                 px_in_db = (int8_t)((int)a[2] + PX_IN_DB_MIN);
                 a_in_gain_apply();                     /* (heard at once) */
+                if ((a[3] & 1u) != px_tails) { px_tails = (uint8_t)(a[3] & 1u); a_tails_apply(); }
+                if (((a[3] >> 1) & 3u) != px_bt_pwr) { px_bt_pwr = (uint8_t)((a[3] >> 1) & 3u); PX_BT_POWER_APPLY(); }
                 st_midi = px_midi_cfg_pack(&mid_cfg);
                 if (st_commit()) rc = 2;               /* (it stays in RAM and works: the next save writes it) */
                 st_gen++;
             }
         }
-        ed_b((uint32_t)rc); ed_b(mid_cfg.each); ed_b((uint32_t)(px_in_db - PX_IN_DB_MIN)); ed_b(PXM_MAP_N);
+        ed_b((uint32_t)rc); ed_b(mid_cfg.each); ed_b((uint32_t)(px_in_db - PX_IN_DB_MIN)); ed_b(px_tails | (uint32_t)px_bt_pwr << 1);
+        ed_b(PXM_MAP_N);
         for (k = 0; k < PXM_MAP_N; k++) {
             const px_map_t *e = &mid_map[k];
             const int on = e->src != 0xFFu;

@@ -99,7 +99,7 @@ The editor's **MIDI** section ([`docs/editor.html`](editor.html), `docs/edmidi.j
 
 CHANNEL, SEND and CLOCK > DELAY stay on the pedal's MIDI page: the editor protocol has no command for them.
 
-## Learned on the pedal (the Bluetooth test image, test build 39)
+## Learned on the pedal (the Bluetooth test image, test build 40)
 
 A footswitch linked to the pedal over Bluetooth (the M-VAVE Chocolate) talks to the pedal, not to the computer or phone that
 runs the editor, so the editor's learned controls above never hear it, and they would work only while the page is open anyway.
@@ -124,10 +124,11 @@ Also in this image:
 | 64 | at 64 and up: a SYN PAD catches the chord (test build 22) |
 | 116 | at 64 and up: a tap of the delay's tempo (test build 24) |
 | 117 | the expression pedal: WHAMMY, else AUTO WAH, else the volume (test build 25) |
-| 118, 119 | at 64 and up: the next, the previous preset, as the footswitches (test build 39) |
+| 118, 119 | at 64 and up: the next, the previous preset, as the footswitches (test build 40) |
 
-and two more rows on the MIDI page, which this image calls **SETTINGS**: **INPUT** (-10 to +10 dB, the guitar's level into
-the chain, as the official firmware's Input Gain) and **SWITCH** (MOMENT, LATCH): how the flip numbers 8 to 19 act. MOMENT (the default) flips on
+and more rows on the MIDI page, which this image calls **SETTINGS**: **INPUT** (-10 to +10 dB, the guitar's level into the
+chain, as the official firmware's Input Gain), **TAILS**, **BT POWER** and **SWITCH** (MOMENT, LATCH): how the flip numbers 8
+to 19 act. MOMENT (the default) flips on
 value 0, for a switch that sends 127, then 0 when let go; LATCH flips at every message, for a switch that alternates 127 and 0
 (the Chocolate's CC mode does). The page's USB line also counts the controls learned on the pedal ("LEARNED 2").
 
@@ -149,12 +150,16 @@ follow a tempo with another note value, set the delay's own TIME; this is not a 
 | SEND | ON, OFF | ON |
 | CLOCK > DELAY | ON, OFF | OFF |
 | USB AUDIO | ON, OFF | OFF |
-| SWITCH (the Bluetooth test image, test build 39) | MOMENT, LATCH | MOMENT |
-| INPUT (the Bluetooth test image, test build 39) | -10 DB to +10 DB, steps of 1 dB | 0 DB |
+| SWITCH (the Bluetooth test image, test build 40) | MOMENT, LATCH | MOMENT |
+| INPUT (the Bluetooth test image, test build 40) | -10 DB to +10 DB, steps of 1 dB | 0 DB |
+| TAILS (the Bluetooth test image, test build 40) | OFF, ON | OFF |
+| BT POWER (the Bluetooth test image, test build 40) | HIGH, MID, LOW | HIGH |
 
 In the Bluetooth test image the page's title is **SETTINGS**: it also holds INPUT, the guitar's level into the chain, as the
 official firmware's Input Gain (a digital gain at the input, heard at once while you turn it; the input meters of the
-diagnostics page show the level before it, so the converter's clipping still shows).
+diagnostics page show the level before it, so the converter's clipping still shows); TAILS, the delay and the reverb ringing
+out when they go off or the next preset has them off (as the official firmware's Delay Tail and Reverb Tail, one switch for
+both); and BT POWER, the radio's transmit power. The editor's MIDI section sets them too.
 
 The knob changes the row, PUSH goes to the next one (after the last it leaves), HOME leaves. The page also shows whether a
 host is connected and the last Program or Control Change received ("LAST: CC 25 = 127"), which is what to look at first when

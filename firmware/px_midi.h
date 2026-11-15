@@ -54,13 +54,30 @@ static void px_midi_cfg_unpack(px_midi_cfg_t *c, uint8_t b)
 #endif
 static uint8_t px_ua_on;
 #if PX_OWN_FX
-/* test build 39: INPUT, the guitar's level into the chain, -10..+10 dB in steps of 1 dB, as the official firmware's Input
- * Gain (a digital multiply there too). The MIDI page's row and the editor (MAP) set it; the preset store's header keeps it
- * (pad[2], a signed byte: 0 = 0 dB, what every earlier save wrote); px_audio.h applies it to the input. */
+/* test build 40: three settings of the page FX opens (SETTINGS) and of the editor (MAP), kept together in the preset store's
+ * header (pad[2]; 0 in every earlier save = 0 dB, TAILS off, BT POWER HIGH):
+ *   bits 0-4  INPUT, the guitar's level into the chain, -10..+10 dB (5-bit two's complement), as the official firmware's
+ *             Input Gain (a digital multiply there too): px_audio.h applies it to the input
+ *   bits 5-6  BT POWER: 0 HIGH (the SDK's levels, as before), 1 MID, 2 LOW: the radio's transmit power (bt/bt_a2dp.c)
+ *   bit 7     TAILS: the delay and the reverb ring out when they go off and across a preset change (engine/px_dsp.c) */
 #define PX_IN_DB_MIN (-10)
 #define PX_IN_DB_MAX 10
 static int8_t px_in_db;
+static uint8_t px_bt_pwr, px_tails;
 static int px_in_db_clamp(int v) { return v < PX_IN_DB_MIN ? PX_IN_DB_MIN : v > PX_IN_DB_MAX ? PX_IN_DB_MAX : v; }
+static uint8_t px_set_pack(void)
+{
+    return (uint8_t)(((unsigned)px_in_db & 0x1Fu) | (unsigned)(px_bt_pwr & 3u) << 5 | (px_tails ? 0x80u : 0u));
+}
+static void px_set_unpack(uint8_t b)
+{
+    int v = b & 0x1F;
+    if (v & 0x10) v -= 32;
+    px_in_db = (int8_t)px_in_db_clamp(v);
+    px_bt_pwr = (uint8_t)((b >> 5) & 3u);
+    if (px_bt_pwr > 2u) px_bt_pwr = 0;
+    px_tails = (uint8_t)(b >> 7);
+}
 #endif
 /* the pedal's MIDI state, shared by the screen (ui.h) and the glue (px_midi_io.h) */
 static px_midi_cfg_t mid_cfg;           /* all-zero until the store is read: omni, send on, clock off */

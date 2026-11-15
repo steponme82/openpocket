@@ -136,6 +136,19 @@ static uint32_t bt_end;                                         /* the last link
 static int16_t bt_frame[BT_SBC_MAX_SAMPLES];
 
 static void bt_cmd(uint32_t bit) { bt_cmd_bits |= bit; os_sem_post(bt_cmd_sem); }
+/* test build 40: BT POWER (px_midi.h px_bt_pwr), the radio's highest transmit levels: classic, page, inquiry, LE. HIGH is the
+ * SDK's (10, 5, 8, 9), as every earlier build; MID and LOW lower them, for a pedal whose guitar sound ticks while the radio
+ * works and players a metre or two from it. Set in the Bluetooth task only (after btstack_init, and on bt_cmd 4) */
+static const uint8_t BT_PWR[3][4] = {{10, 5, 8, 9}, {6, 4, 6, 6}, {3, 3, 3, 3}};
+static volatile uint8_t bt_pwr_set_n;                           /* times applied (the log: how many) */
+static void bt_pwr_now(void)
+{
+    const uint8_t *l = BT_PWR[px_bt_pwr < 3u ? px_bt_pwr : 0u];
+    bt_max_pwr_set(l[0], l[1], l[2], l[3]);
+    bt_pwr_set_n++;
+}
+static volatile uint8_t bt_cmd_up;                              /* the semaphore exists (Bluetooth started; not with REV held) */
+static void bt_power_apply(void) { if (bt_cmd_up) bt_cmd(4u); }  /* (not started yet: the task applies it at its start) */
 
 /* ---- the phone's packets (test build 12), taken where the controller shows each one to the A2DP code before it chooses
  * between the app and the host: lmp.c lmp_rx_handler (the controller's task) -> a2dp_media_codec.c acl_u_packet_analyse ->
@@ -304,7 +317,7 @@ static void bt_app_task(void *arg)
     BT_CRUMB("btstack_init returned");
     if (rc) { ble_judge_start(rc, 1); bt_st = BT_FAILED; return; }
     ble_stage_set(BLE_STAGE_READY);
-    bt_max_pwr_set(10, 5, 8, 9);                                /* after the controller's own init (the SDK's values) */
+    bt_pwr_now();                                               /* after the controller's own init: SETTINGS' BT POWER */
     bt_t_init = ble_ms();
     for (;;) {
         os_sem_pend(bt_cmd_sem, 0);
@@ -315,6 +328,10 @@ static void bt_app_task(void *arg)
             user_send_cmd_prepare(USER_CTRL_WRITE_CONN_ENABLE, 0, 0);
             bt_scans++;
             bt_scan_ms = ms_now();
+        }
+        if (bt_cmd_bits & 4u) {                                 /* test build 40: SETTINGS' BT POWER changed */
+            bt_cmd_bits &= ~4u;
+            bt_pwr_now();
         }
         if (bt_cmd_bits & 2u) {                                 /* test build 18: the last phone, called back (ble_test_poll) */
             bt_cmd_bits &= ~2u;
@@ -439,6 +456,7 @@ void ble_test_start(void)
     bt_ring_init(&bt_ring, bt_ring_mem);
     bt_fq = bt_fq_mem;                                          /* the phone's packets (test build 24: no longer from the heap) */
     os_sem_create(bt_cmd_sem, 0);
+    bt_cmd_up = 1;
     __set_simple_pair_flag(1);                                  /* Secure Simple Pairing ... */
     __set_simple_pair_param(3, 0, 2);                           /* ... no display or keys, no OOB, 2 = HCI "no MITM, dedicated bonding": Just Works */
     __set_a2dp_auto_play_flag(1);

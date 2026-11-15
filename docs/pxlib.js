@@ -55,6 +55,28 @@ export function packedName(bytes) {
   return s;
 }
 export const cleanSlotName = (s) => String(s || "").toUpperCase().replace(/[^ -~]/g, "?").trim().slice(0, 11).trim();
+// test build 40: a name a player reads, 11 characters at most, for a capture taken from a TONE3000 tone. A tone's models are
+// often named by short codes ("VX", "FD", "CH1"): the tone's first words that fit go before the model's name ("VOX AC30 VX",
+// "KLON GAIN 2"). Whole words only; words that name nothing (AMP, CAPTURE, NAM, PACK...) are left out.
+const NAME_NOISE = new Set(["THE", "A", "AN", "OF", "BY", "AND", "WITH", "AMP", "AMPS", "AMPLIFIER", "CAPTURE", "CAPTURES", "NAM",
+  "A1", "A2", "PACK", "PROFILE", "PROFILES", "TONE", "TONES", "DI", "MODEL", "MODELS", "FULL", "RIG", "COLLECTION", "SET"]);
+export function smartName(title, model) {
+  const up = (x) => String(x || "").toUpperCase().replace(/[^ -~]/g, " ");
+  const mw = up(model).trim().split(/\s+/).filter(Boolean);
+  let m = "";
+  for (const w of mw) { const t = m ? `${m} ${w}` : w; if (t.length > 11) break; m = t; }   /* whole words, 11 at most */
+  if (!m && mw.length) m = mw[0].slice(0, 11);
+  const words = up(title).split(/[\s_|/,:;()[\]]+/).filter((w) => w && /[A-Z0-9]/.test(w) && !NAME_NOISE.has(w) && w !== m);
+  const room = 11 - (m ? m.length + 1 : 0);
+  let pre = "";
+  for (const w of words) {                     /* whole words in a row; a first one too long for the room is passed over */
+    const t = pre ? `${pre} ${w}` : w;
+    if (t.length <= room) pre = t;
+    else if (pre) break;
+  }
+  if (pre) return m ? `${pre} ${m}` : pre;
+  return m || cleanSlotName(words[0] || "MODEL");
+}
 export function renamePacked(bytes, name) {
   const out = Uint8Array.from(bytes), nm = cleanSlotName(name);
   for (let i = 0; i < 12; i++) out[8 + i] = i < nm.length ? nm.charCodeAt(i) : 0;

@@ -83,6 +83,7 @@ static float a_in[A_FR], a_out[A_FR];
 /* test build 39: INPUT (px_midi.h px_in_db) as the input's scale: the interrupt reads one float, set from the main loop */
 static volatile float a_in_k = 0.5f / 8388608.0f;
 static void a_in_gain_apply(void) { a_in_k = (0.5f / 8388608.0f) * powf(10.0f, (float)px_in_db * 0.05f); }
+static void a_tails_apply(void) { px_engine_tails(&g_eng, px_tails); }   /* test build 40: TAILS (px_midi.h) */
 #endif
 #if OP_BT_AUDIO
 /* output, 24-bit right-aligned, in the RAM code window's free end (app-bt.ld .bss_hi), where test builds 12 and 13 kept two

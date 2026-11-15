@@ -51,6 +51,7 @@ button:disabled{opacity:.45;cursor:default}
 // access token stays in this page's memory: it ends when the page goes back.
 import { t3kHere, t3kSignIn, t3kSignOut, t3kTone, t3kModels, t3kDownload, t3kSource, t3kNote } from "./pxt3k.js";
 import { namEntry, readDi } from "./pxnam.js";
+import { smartName } from "./pxlib.js";
 
 const box = document.getElementById("m");
 const el = (tag, attrs, ...kids) => { const e = document.createElement(tag); Object.assign(e, attrs || {}); e.append(...kids.filter((k) => k !== null && k !== undefined)); return e; };
@@ -85,7 +86,7 @@ async function here(q) {
         const text = await t3kDownload(m);
         show(el("h1", { textContent: tone.title || "TONE3000" }), line(`Measuring the level of ${name}…`, "dim"));
         await new Promise((res) => setTimeout(res, 20));        // (the line shows before the work)
-        const made = namEntry(text, `${m.name || tone.title || "MODEL"}.nam`, di);
+        const made = namEntry(text, `${smartName(tone.title, m.name)}.nam`, di);   // (test build 40: a name a player reads)
         captures.push({ name: made.name, bytes: b64(made.bytes), detail: made.detail, source: t3kSource(tone, m) });
       }
       show(line(`Back to the editor with ${captures.map((c) => c.name).join(", ")}…`));

@@ -52,7 +52,11 @@ enum { PX_PIT_OCTAVER, PX_PIT_POLYOCT, PX_PIT_WHAMMY, PX_PIT_HARMONY, PX_PIT_DET
 enum { PX_PIT_OCTAVER, PX_PIT_POLYOCT, PX_PIT_WHAMMY, PX_PIT_HARMONY, PX_PIT_DETUNE, PX_PIT_COUNT };
 #endif
 enum { PX_SFX_AUTOWAH, PX_SFX_LFOWAH, PX_SFX_RING, PX_SFX_CRUSH, PX_SFX_SLICER, PX_SFX_LOFI, PX_SFX_SYNTH, PX_SFX_COUNT };
+#if PX_OWN_FX   /* test build 40: TREBLE BOOST, a germanium treble booster (BOOST, RANGE FULL / MID / TREBLE, LEVEL) */
+enum { PX_DRV_TS9, PX_DRV_KLON, PX_DRV_M77, PX_DRV_HM2, PX_DRV_TREBLE, PX_DRV_COUNT };
+#else
 enum { PX_DRV_TS9, PX_DRV_KLON, PX_DRV_M77, PX_DRV_HM2, PX_DRV_COUNT };
+#endif
 enum { PX_AMP_TWIN, PX_AMP_AC15, PX_AMP_JCM900, PX_AMP_JCM2000, PX_AMP_MARK4, PX_AMP_SHIRLEY, PX_AMP_PROMOD,
        PX_AMP_5150, PX_AMP_COUNT };
 /* v37: Neural Amp Modeler A2-Lite (px_nam.c) as one more AMP type, after the 8 fitted amps. Its 5 settings: MODEL,
@@ -398,6 +402,12 @@ extern uint32_t (*px_clock)(void);      /* v38: set by the firmware: px_engine.p
  *     while the chain runs. */
 #define PX_WL_N 128
 void px_wet_mode(px_engine *e, int on, int lag);
+#if PX_OWN_FX
+/* test build 40: TAILS (px_dsp.c px_tl): a DELAY or REVERB that goes off rings out with what it had. on 0 stops any tail.
+ * (a tail ringing then fades out over 0.25 s). px_engine_ringing: bit 0 the delay rings, bit 1 the reverb (tests, the log) */
+void px_engine_tails(px_engine *e, int on);
+int  px_engine_ringing(const px_engine *e);
+#endif
 void px_wet_swap(px_engine *e);
 int  px_wet_run(px_engine *e, uint32_t deadline, volatile const uint8_t *stop);
 #if PX_LOOP_GUARD   /* test build 13, the Bluetooth audio image only (px_dsp.c PX_LOOP_CAP): the reverb's loop cut at

@@ -61,13 +61,14 @@ static uint64_t run(const px_preset_t *p, int wet, int frames, int bs)
     }
     return h;
 }
-/* the Bluetooth audio image's own types (engine/px_dsp.h PX_OWN_FX: LOW OCTAVE, PAD), appended to their blocks' lists, are
+/* the Bluetooth audio image's own types (engine/px_dsp.h PX_OWN_FX: LOW OCTAVE, PAD, TREBLE BOOST), appended to their blocks' lists, are
  * left out of every section: an engine built with them plays exactly the runs of one built without (tests/equiv.sh with
  * EQUIV_CFLAGS="-DPX_OWN_FX=1 ...", against the commit before them) */
 static int nt_stock(int b)
 {
     int n = px_ntypes(b);
-    while (n > 1 && (!strcmp(px_type_name(b, n - 1), "LOW OCTAVE") || !strcmp(px_type_name(b, n - 1), "PAD"))) n--;
+    while (n > 1 && (!strcmp(px_type_name(b, n - 1), "LOW OCTAVE") || !strcmp(px_type_name(b, n - 1), "PAD") ||
+                     !strcmp(px_type_name(b, n - 1), "TREBLE BOOST"))) n--;
     return n;
 }
 static void rnd_preset(px_preset_t *p, int nam)

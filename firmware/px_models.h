@@ -130,6 +130,27 @@ static int nm_commit(uint32_t s)
     return rc;
 }
 
+#if PX_OWN_FX
+/* test build 40: NAM_RENAME: slot s's name only, so any capture can get a name a player reads, from any browser (the web
+ * editor could rename only a capture its own library held). The slot is read back into the staging buffer (the audio held
+ * meanwhile, as for any read of a model), checked as a commit checks it, the name set, and written again by nm_commit.
+ * An upload in progress would lose its staged pieces: the editor does one thing at a time. 0 ok, 1 invalid (an empty or
+ * damaged slot, an empty name), 2 flash */
+static int nm_rename(uint32_t s, const char *name, uint32_t n)
+{
+    nm_hdr_t *h = (nm_hdr_t *)nm_stage;
+    uint32_t i;
+    if (s >= PX_NAM_NUSER || !n || !name[0]) return 1;
+    st_audio_hold(1);
+    const int rd = ota_fread(NM_BASE + s * NM_SLOT, nm_stage, NM_BYTES);
+    st_audio_hold(0);
+    if (rd || !nm_hdr_ok(h) || (uint16_t)ota_crc16(nm_stage + NM_HDR, PXN_NW * 4u, 0) != h->crc) return 1;
+    for (i = 0; i < sizeof h->name; i++) h->name[i] = 0;
+    for (i = 0; i < 11u && i < n && name[i]; i++) h->name[i] = name[i];
+    return nm_commit(s);
+}
+#endif
+
 /* NAM_ERASE: slot s emptied. 0 ok, 1 invalid, 2 flash */
 static int nm_erase(uint32_t s)
 {

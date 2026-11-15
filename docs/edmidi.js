@@ -133,7 +133,7 @@ async function finishCatch() {
     return;
   }
   try {
-    const r = await app.ed.setPedalMap(pmap.each, next, pmap.inputDb);
+    const r = await app.ed.setPedalMap(pmap.each, next, pmap.inputDb, pmap.tails, pmap.btPower);
     if (r.rc === 0) {
       pmap = r;
       const e = r.entries.find((y) => y && y.src === c.src);
@@ -144,9 +144,9 @@ async function finishCatch() {
   catching = null;
   renderMap();
 }
-async function savePmap(entries, each = pmap.each, inputDb = pmap.inputDb) {
+async function savePmap(entries, each = pmap.each, inputDb = pmap.inputDb, tails = pmap.tails, btPower = pmap.btPower) {
   try {
-    const r = await app.ed.setPedalMap(each, entries, inputDb);
+    const r = await app.ed.setPedalMap(each, entries, inputDb, tails, btPower);
     if (r.rc === 0) pmap = r; else say(r.rc === 2 ? "The pedal could not save it (flash)." : "The pedal refused it.", "err");
   } catch (e) { say(`Not changed: ${e.message}`, "err"); }
   renderMap();
@@ -155,7 +155,7 @@ async function loadPmap() {
   pmap = null;
   if (app.conn !== "ready" || !app.ed || !app.ed.hasPedalLearn) return;
   try { pmap = await app.ed.pedalMap(); } catch (_) { pmap = null; }
-  if (app.view === "midi") renderMap();
+  if (app.view === "midi") { renderConn(); renderMap(); }
 }
 
 // a knob turned on the controller sends a stream: the sections redraw once per frame
@@ -237,7 +237,8 @@ function renderConn() {
         h("button", { type: "button", class: "btn small", id: "uabtn", text: ua.on ? "Turn off" : "Turn on", onclick: uaToggle }))),
     ua && h("p", { class: "dim", id: "uanote", text: "With USB audio on, the pedal is also a USB sound card, with no driver to install (stereo, 16 bit, 44.1 kHz). The computer records the pedal's sound, and what the computer plays comes out of the pedal's output." }),
     h("p", { class: "dim" }, "The pedal's own MIDI settings are on the pedal: ", h("b", { text: "hold FX for 0.8 s" }),
-      " for CHANNEL (OMNI or 1 to 16), SEND and CLOCK > DELAY", pmap ? " (and SWITCH, which this page shows under Controls)" : "", ". The editor cannot read or change them. ",
+      pmap ? " (SETTINGS) for CHANNEL (OMNI or 1 to 16), SEND and CLOCK > DELAY. SWITCH, INPUT, TAILS and BT POWER are also under Controls below; the editor cannot read or change the first three. "
+        : " for CHANNEL (OMNI or 1 to 16), SEND and CLOCK > DELAY. The editor cannot read or change them. ",
       h("a", { href: "https://github.com/isod89/openpocket/blob/main/docs/MIDI.md", target: "_blank", rel: "noopener" }, "The MIDI reference ", icon("ext"))));
 }
 
@@ -317,12 +318,20 @@ function renderPmap() {
   const inp = h("select", { id: "pmapinput", "aria-label": "The guitar's input level", onchange: () => savePmap(pmap.entries, pmap.each, +inp.value) },
     Array.from({ length: 21 }, (_, i) => i - 10).map((d) => h("option", { value: String(d), text: `${d > 0 ? "+" : d < 0 ? "−" : ""}${Math.abs(d)} dB` })));
   inp.value = String(pmap.inputDb);
+  const tl = h("input", { type: "checkbox", id: "pmaptails", checked: pmap.tails, onchange: () => savePmap(pmap.entries, pmap.each, pmap.inputDb, tl.checked) });
+  const bp = h("select", { id: "pmapbt", "aria-label": "The radio's transmit power", onchange: () => savePmap(pmap.entries, pmap.each, pmap.inputDb, pmap.tails, +bp.value) },
+    h("option", { value: "0", text: "High (as before)" }), h("option", { value: "1", text: "Medium" }), h("option", { value: "2", text: "Low" }));
+  bp.value = String(pmap.btPower);
   const used = pmap.entries.map((e, i) => [e, i]).filter(([e]) => e);
   return h("div", { class: "learned", id: "pmap" },
     h("div", { class: "lrow" }, h("span", { text: "The flip numbers, CC 8 to 19, act" }), sw, h("span", { class: "grow" }),
       h("span", { class: "dim small", text: "(on the pedal: SETTINGS, SWITCH)" })),
     h("div", { class: "lrow" }, h("span", { text: "The guitar's input level" }), inp, h("span", { class: "grow" }),
       h("span", { class: "dim small", text: "(on the pedal: SETTINGS, INPUT)" })),
+    h("div", { class: "lrow" }, h("label", { class: "tick" }, tl, " Tails"),
+      h("span", { class: "grow" }), h("span", { class: "dim small", text: "(SETTINGS, TAILS: the delay and the reverb ring out when they go off and across a preset change)" })),
+    h("div", { class: "lrow" }, h("span", { text: "Bluetooth transmit power" }), bp, h("span", { class: "grow" }),
+      h("span", { class: "dim small", text: "(SETTINGS, BT POWER: lower it if the guitar ticks while the radio works)" })),
     used.length ? used.map(([e, i]) => {
       const t = pedalTarget(e.dst), isValue = e.mode === MAP_VALUE || (t && (t.kind === "param" || t.kind === "type" || t.kind === "exp" || t.kind === "master"));
       const mode = !isValue && h("select", { "aria-label": `How CC ${e.src} acts`, onchange: () => {

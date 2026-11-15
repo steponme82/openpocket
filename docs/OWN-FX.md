@@ -1,22 +1,24 @@
-# LOW OCTAVE and SYN PAD: the Bluetooth audio image's own effects
+# LOW OCTAVE, SYN PAD and TREBLE BOOST: the Bluetooth audio image's own effects
 
-Two effects that only the **Bluetooth audio image** has ([BT-AUDIO-TEST.md](BT-AUDIO-TEST.md), `make bt`). The release
+Three effects that only the **Bluetooth audio image** has ([BT-AUDIO-TEST.md](BT-AUDIO-TEST.md), `make bt`). The release
 firmware, the BLE MIDI image and the simulator do not have them: their engine is v42's, unchanged.
 
 | Block | Model | Settings | What it does |
 |---|---|---|---|
 | PIT | LOW OCTAVE (the 6th) | RANGE, OCT -1, DRY, GROWL, COMP | an octave under the low notes only, the rest of the guitar untouched |
 | SYN | PAD (the 12th) | ATTACK, RELEASE, TONE, MOTION, MIX | the chord you catch on the left footswitch, held as a smooth pad until the next one |
+| DRV | TREBLE BOOST (the 5th, test build 40) | BOOST, RANGE, LEVEL | a germanium treble booster of the Rangemaster kind, in front of the amp |
 
-Both come after their block's other models, so every preset keeps its meaning. A preset saved with one of them plays
-something else in the other images: there LOW OCTAVE becomes OCTAVER and PAD becomes ORGAN, with the same knob values (and a
-pedal running them refuses such a preset from the web editor). Over MIDI, the Control Change that picks PIT's model (54)
-divides 0-127 among 6 models in this image and 5 in the others, and SYN's (63) among 12 and 11, so a value stored in a
-controller may pick a different model in each image ([MIDI.md](MIDI.md)).
+They come after their block's other models, so every preset keeps its meaning. A preset saved with one of them plays
+something else in the other images: there LOW OCTAVE becomes OCTAVER, PAD becomes ORGAN and TREBLE BOOST becomes TS9, with
+the same knob values (and a pedal running them refuses such a preset from the web editor). Over MIDI, the Control Change
+that picks PIT's model (54) divides 0-127 among 6 models in this image and 5 in the others, SYN's (63) among 12 and 11 and
+DRV's (56) among 5 and 4, so a value stored in a controller may pick a different model in each image ([MIDI.md](MIDI.md)).
 
-The web editor shows both, with their settings in plain values: it reads the models from the pedal. It keeps each
-firmware's list under the version the pedal reports, so this image reports `v42 FX` (the editor's status line shows it),
-and the editor asks for its list instead of reusing the one of a v42 pedal it met before.
+The web editor shows them, with their settings in plain values: it reads the models from the pedal. It keeps each
+firmware's list under the version the pedal reports, so this image reports a version of its own (the editor's status line
+shows it): `v42 FX2` since test build 40 (`v42 FX` before, without TREBLE BOOST). The editor asks for its list instead of
+reusing the one of a v42 pedal, or of an earlier build, it met before.
 
 ## LOW OCTAVE
 
@@ -107,6 +109,42 @@ Settings to start from (worked out from what the settings do, not yet tried on a
 | Slow swells, ambient | `3.0 S` (70) | `5.0 S` (70) | `690 HZ` (40) | `9 CT` (60) | `-3 DB` (35) |
 | Following the song's chords | `0.3 S` (20) | `1.1 S` (30) | `1290 HZ` (70) | `3 CT` (20) | `0 DB` (50) |
 
+## TREBLE BOOST
+
+A one-transistor germanium booster of the Rangemaster kind. In front of an amp on the edge of breakup (a NAM capture of a
+Vox or a Marshall) it cuts the lows that make it woolly, lifts the upper mids and the top, and pushes the amp harder: it
+breaks up sooner and the notes cut through. It is made by hand from what the circuit does, not fitted to a capture as the
+other four drives are (`engine/px_dsp.c`, its row of `DV` and `TB_HZ`, `TB_DB`):
+
+- the input capacitor's high-pass, picked by RANGE: TREBLE at 1.6 kHz (the original's), MID at 450 Hz, FULL at 90 Hz;
+- the guitar's resonance with that capacitor: a broad peak, +2.5 dB at 2.6 kHz;
+- the transistor's soft, lopsided clipping (one half of the wave goes first: even harmonics), with BOOST setting 12 to
+  36 dB into it;
+- its rolled-off top, from 6.5 kHz.
+
+| Setting | Screen | What it sets |
+|---|---|---|
+| BOOST | 0 to 100 | how hard it pushes. At noon as loud as the guitar without it; 0: -12 dB; 100: +8 to +10 dB, the transistor clipping more |
+| RANGE | `FULL` (0 to 33), `MID` (34 to 66), `TREBLE` (67 to 100) | the low cut: a full-range boost, a mid boost, the treble booster |
+| LEVEL | 0 to 100 | its output: noon as above, 100 is +6 dB more |
+
+Its level was measured as `tools/calib_levels.py` measures the other models: the five DI loops of `assets/loops` at the
+pedal's level, in front of TWIN at noon and the 1x12 US OPEN, BS.1770 loudness. With LEVEL at noon:
+
+| BOOST | 0 | 25 | 50 | 75 | 100 |
+|---|---|---|---|---|---|
+| FULL | -11.4 dB | -5.5 dB | 0 dB | +4.8 dB | +8.4 dB |
+| MID | -11.6 dB | -5.7 dB | 0 dB | +5.2 dB | +9.2 dB |
+| TREBLE | -11.8 dB | -5.8 dB | 0 dB | +5.4 dB | +9.8 dB |
+
+Settings to start from (worked out from what the settings do, not yet tried on a stage):
+
+| Sound | BOOST | RANGE | LEVEL | In front of |
+|---|---|---|---|---|
+| The classic treble-boosted lead | 75 to 100 | `TREBLE` | 50 | a Vox or Plexi capture on the edge of breakup |
+| A thicker lead, more crunch | 60 to 75 | `MID` | 50 | the same |
+| A boost for the solo, about +6 dB | 50 | `FULL` | 100 | any amp; DRV on and off by Control Change 24 |
+
 ## What they cost, and where it comes from
 
 The Bluetooth image had almost no memory left (test build 14: 40 bytes free in the engine's own RAM region, the POOL, and
@@ -118,8 +156,12 @@ an estimated 1 to 4 KB in the RAM code window). The two effects are paid for ins
   the drive modes none of the four drives uses (and MUFF's buffer, 1 KB). Every existing model gives the same output, bit
   for bit (`tests/ownfx_equiv.sh`, 5,460 runs).
 - **The delay ring 456 ticks shorter.** The effects' state (912 bytes) sits where the delay ring ended, so the engine keeps
-  its size and every other part of it its place. The longest delay is still 2.0 s (TIME 100): every delay plays as before.
+  its size and every other part of it its place. The longest delay was still 2.0 s (TIME 100). Since test build 24 the
+  image stops every delay at 780 ms (REVERSE at 390 ms), for another reason: the ring's memory went to BLE MIDI
+  ([BT-AUDIO-TEST.md](BT-AUDIO-TEST.md), "Test build 24").
 - Their hot code runs from RAM, like the rest of the audio path.
+- TREBLE BOOST (test build 40) is one more row of the drive table and a few lines for its RANGE and its level: it runs the
+  drive code the other four run, so on the pedal it costs what TS9 costs.
 
 Estimates from a stand-in compiler (CI's build prints the real figures: `hi RAM`, `pool tail`, `RAM`): against test build
 14, RAM code 3.3 to 4.1 KB less (the effects about +3.8 KB, the code left out about -7.1 KB) and the RAM code window's data
@@ -151,6 +193,10 @@ does its one-off work in a single block.
   chords in quick succession; MIX and TONE turned while held; a press made before PAD was chosen is forgotten.
 - Both effects give v40's output bit for bit (LOW OCTAVE 48 runs, PAD 24: settings, block sizes 64, 48, 16 and 1, knob
   turns, catches, a stop).
+- `tests/engine/treble.c` (7 checks, the same builds): the model and its knobs, RANGE's texts; small signals, 3 kHz over
+  200 Hz: TREBLE +19.2 dB, MID +9.9 dB, FULL +2.9 dB; driven hard, the 2nd harmonic 28 dB and the 3rd 10 dB under the
+  note; BOOST raises the level and the harmonics at each step; at noon, at every RANGE, the loudness of the guitar without
+  it within 0.5 dB.
 - `tests/ownfx_equiv.sh`: every existing model in this image's engine against the same engine without `PX_OWN_FX`, 5,460
   runs bit for bit (every block x model x 8 settings, random chains, NAM chains through the two cores' pipeline, the 52
   factory presets, every delay over a TIME x FEEDBACK x TONE x WOW grid, turned while playing and at the top for 6 s, every

@@ -444,6 +444,8 @@ a.tone-u[href] { text-decoration: underline; }
 .learned { display: grid; }
 .lrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-block-size: 48px; padding-block: 6px; border-block-start: 1px solid var(--line-soft); font-size: 0.875rem; }
 .lrow .arrow { color: var(--faint); }
+.lrow label.tick { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }
+.lrow label.tick input { inline-size: 18px; block-size: 18px; margin: 0; }
 .mon { list-style: none; margin: 0; padding: 0; display: grid; max-block-size: 280px; overflow-y: auto; font-size: 0.8125rem; }
 .mon li { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 0 12px; padding-block: 5px; border-block-start: 1px solid var(--line-soft); }
 .mon-w { font-weight: 700; white-space: nowrap; }

@@ -7,7 +7,7 @@ import { app, $, h, fill, icon, on, emit, slotName, say, task, sleep, confirmDia
 import { writeSlots, entry, selectPreset } from "./edpresets.js";
 import { namEntry, readDi, SLOT_BYTES } from "./pxnam.js";
 import { parseWav, prepareIr, packIr, irName } from "./pxir.js";
-import { Library, KINDS, slotRef, usage, retarget, renamePacked, cleanSlotName, pedalKey, planMove, indexKnob, presetSlot } from "./pxlib.js";
+import { Library, KINDS, slotRef, usage, retarget, renamePacked, cleanSlotName, smartName, pedalKey, planMove, indexKnob, presetSlot } from "./pxlib.js";
 import { t3kReady, t3kSelect, t3kSelectHere, t3kNoteRead, t3kSignIn, t3kSignedIn, t3kSignOut, t3kTone, t3kModels, t3kDownload, t3kSource, t3kUser, t3kList, t3kA2Count, t3kLink, t3kPicture, T3K_LISTS } from "./pxt3k.js";
 
 let lib = null, namDi = null;
@@ -157,14 +157,24 @@ async function removeFromPedal(kind, s) {
   if (!(await confirmDialog({ title: `Remove ${s.name} from ${tag(kind, s.slot)}?`, body, confirm: "Remove from the pedal", danger: true }))) return;
   await task(`Emptying ${tag(kind, s.slot)}`, async () => { await leave(kind, s.slot); await refreshAssets(kind); return `${tag(kind, s.slot)} is empty.`; });
 }
+// test build 40 (editor protocol 5): a NAM capture is renamed on the pedal itself (NAM_RENAME), so any slot can be, from any
+// browser; a capture this browser's library holds is renamed there too. Older firmware: through the library only (re-sent).
+const canRenameOnPedal = (kind) => kind === "nam" && !!(app.ed && app.ed.hasNamRename);
 async function renameSlot(kind, s) {
-  const e = app.held[kind].get(s.slot);
-  const name = await promptDialog({ title: `Rename ${s.name}`, label: "Name on the pedal (11 characters at most)", value: s.name, max: 11, hint: "The pedal shows this name in the block's settings. Presets keep using the slot." });
+  const e = app.held[kind].get(s.slot), onPedal = canRenameOnPedal(kind);
+  if (!e && !onPedal) return;
+  const name = await promptDialog({ title: `Rename ${s.name}`, label: "Name on the pedal (11 characters at most)", value: s.name, max: 11, hint: "The pedal shows this name in the block's settings and on the PLAY page. Presets keep using the slot." });
   const nm = name === null ? "" : cleanSlotName(name);
   if (!nm || nm === s.name) return;
   await task(`Renaming ${s.name}`, async (progress) => {
-    const next = await lib.put({ ...e, name: nm, bytes: renamePacked(e.bytes, nm) });
-    await put(kind, s.slot, next, progress);
+    if (onPedal) {
+      const rc = await app.ed.namRename(s.slot, nm);
+      if (rc) throw new Error(rc === 2 ? "the pedal could not write it to its flash" : "the pedal found no capture to rename in that slot");
+      if (e) await lib.put({ ...e, name: nm, bytes: renamePacked(e.bytes, nm) });
+    } else {
+      const next = await lib.put({ ...e, name: nm, bytes: renamePacked(e.bytes, nm) });
+      await put(kind, s.slot, next, progress);
+    }
     await refreshAssets(kind);
     return `${tag(kind, s.slot)} is ${nm} now.`;
   });
@@ -259,7 +269,7 @@ function render(kind) {
           h("span", { class: "nm" }, h("b", { text: s.name }), sourceLine(e)),
           usageChip(kind, s.slot, use),
           h("button", { type: "button", class: "btn icon small", "aria-label": `Actions for ${tag(kind, s.slot)} ${s.name}`, "aria-haspopup": "menu", onclick: (ev) => menu(ev.currentTarget, [
-            { label: "Rename…", run: () => renameSlot(kind, s), disabled: !e, why: "Not in this browser's library: load its file again to rename it." },
+            { label: "Rename…", run: () => renameSlot(kind, s), disabled: !e && !canRenameOnPedal(kind), why: "Not in this browser's library: load its file again to rename it." },
             { label: "Move to another slot…", run: () => moveSlot(kind, s), disabled: !e, why: "Not in this browser's library: load its file again to move it." },
             { label: "Replace with a file…", file: B.input, aim: () => aimAt(kind, s.slot) },
             "-",
@@ -354,7 +364,7 @@ function getModels(models) {
       part(0.05, `Downloading ${m.name || "the capture"}…`);
       const text = await t3kDownload(m);
       part(0.2, `Measuring the level of ${m.name || "the capture"}…`);
-      const made = await BANKS.nam.prepare(text, `${m.name || tone.title || "MODEL"}.nam`);
+      const made = await BANKS.nam.prepare(text, `${smartName(tone.title, m.name)}.nam`);   /* (test build 40: a name a player reads) */
       const e = await lib.add({ kind: "nam", name: made.name, bytes: made.bytes, detail: made.detail, source: t3kSource(tone, m) });
       const slot = into === "lib" ? -1 : into === "free" || models.length > 1 ? freeSlot("nam", taken) : +into;
       if (slot < 0) { kept++; continue; }

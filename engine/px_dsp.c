@@ -430,9 +430,18 @@ static const tdef T_SYN[PX_SYN_COUNT] = {
 
 /* drives: each knob has a role; the name shown comes from the role */
 enum { R_DRIVE, R_DIST, R_FUZZ, R_SUST, R_BOOST, R_TONE, R_TREBLE, R_LEVEL, R_BASS, R_VOICE, R_GATE, R_BIAS,
+#if PX_OWN_FX
+       R_LOW, R_HIGH, R_TIGHT, R_BRIGHT, R_BLEND, R_RANGE, R_NROLE };
+#else
        R_LOW, R_HIGH, R_TIGHT, R_BRIGHT, R_BLEND, R_NROLE };
+#endif
 static const char *const ROLE_NAME[R_NROLE] = {"DRIVE", "DIST", "FUZZ", "SUSTAIN", "BOOST", "TONE", "TREBLE", "LEVEL",
+#if PX_OWN_FX
+                                               "BASS", "VOICE", "GATE", "BIAS", "LOW", "HIGH", "TIGHT", "BRIGHT", "BLEND",
+                                               "RANGE"};
+#else
                                                "BASS", "VOICE", "GATE", "BIAS", "LOW", "HIGH", "TIGHT", "BRIGHT", "BLEND"};
+#endif
 
 /* ============================================================== drives ===== */
 enum { CL_SOFT, CL_ASYM, CL_HARD, CL_GE, CL_LED, CL_MOS, CL_MUFF, CL_FUZZ, CL_OCTA, CL_BOOST };
@@ -462,7 +471,22 @@ static const drv_v DV[PX_DRV_COUNT] = {
     {"KLON", L3(R_DRIVE, R_TREBLE, R_LEVEL), 11.65f, 239.6f, 0.0f, 449.9f, 2.0f, 11.21f, 18.99f, 52.99f, CL_GE, TM_LP, 842.3f, 4717.0f, 0.0f, 0.0f, 2.468f, 0.0f, 0.0f},  /* Keith B klone_g6_t6_o5 */
     {"M77 OD", L3(R_DRIVE, R_TONE, R_LEVEL), 10.0f, 1111.0f, 0.0f, 0.0f, 0.0f, 7.0f, 39.88f, 67.88f, CL_ASYM, TM_LP, 1249.0f, 4995.0f, 0.0f, 0.0f, 0.09043f, 0.06363f, 0.0f},  /* Tudor N MXR M77 Custom Badass Modified OD Tone@6.5_Output@10 */
     {"SWEDE HM-2", L4(R_DIST, R_LOW, R_HIGH, R_LEVEL), 49.27f, 0.0f, 0.0f, 0.0f, 0.0f, 7.0f, 36.83f, 61.83f, CL_HARD, TM_HM2, 100.1f, 1265.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},  /* Peter N HM-2_SWEDE_Std_ESR-0.0034 */
+#if PX_OWN_FX
+    /* test build 40, made by hand (no capture): a one-transistor germanium treble booster of the Rangemaster kind. The
+     * input capacitor's high-pass (RANGE: TB_HZ, FULL / MID / TREBLE as the three-way switch of the later clones), the
+     * guitar's resonance with it (a broad peak at 2.6 kHz), the transistor's soft, lopsided clipping (bias: the top half
+     * goes first, even harmonics), its rolled-off top (6.5 kHz). BOOST 12..36 dB into it; the level: TB_LEVEL */
+    {"TREBLE BOOST", L3(R_BOOST, R_RANGE, R_LEVEL), 1600.0f, 0.0f, 0.0f, 2600.0f, 2.5f, 8.0f, 12.0f, 36.0f, CL_ASYM, TM_LP, 6500.0f, 6500.0f, 0.0f, 0.0f, 0.0f, 30.0f, 0.0f},
+#endif
 };
+#if PX_OWN_FX
+static const float TB_HZ[3] = {90.0f, 450.0f, 1600.0f};          /* RANGE: FULL, MID, TREBLE (the input capacitor) */
+static const char *const TB_TXT[3] = {"FULL", "MID", "TREBLE"};
+static int tb_pos(int v) { return v < 34 ? 0 : (v < 67 ? 1 : 2); }
+/* its level with BOOST and LEVEL at noon, per RANGE: the loudness of the guitar without it (as tools/calib_levels.py
+ * does for the others: in front of TWIN at noon + 1x12 US OPEN; measured by tests/engine/treble.c) */
+static const float TB_DB[3] = {-23.36f, -21.81f, -20.19f};
+#endif
 
 /* =============================================================== amps ====== */
 typedef struct {
@@ -801,6 +825,11 @@ int px_param_text(int b, int t, int k, int v, char *buf)
         if (t == PX_SFX_RING && k == 0) { put_int(buf, (int)(20.0f * powf(100.0f, x) + 0.5f), 0); return 1; }
         if (t == PX_SFX_SLICER && k == 2) { buf[0] = 'P'; put_int(buf + 1, 1 + (int)(x * 7.99f), 0); return 1; }
         break;
+#if PX_OWN_FX
+    case PX_B_DRIVE:
+        if (t == PX_DRV_TREBLE && k == 1) { put_str(buf, TB_TXT[tb_pos(v)]); return 1; }
+        break;
+#endif
     case PX_B_EQ:
         if (t == PX_EQ_PARAM && k == 1) { put_int(buf, (int)(150.0f * powf(33.0f, x) + 0.5f), 0); return 1; }
         if (t == PX_EQ_PARAM && k == 3) { int q = (int)((0.4f + x * 5.6f) * 10.0f + 0.5f);
@@ -1205,6 +1234,9 @@ static void rc_drive(px_engine *e)
 
     /* pre-clip, base rate */
     float hp = (float)d->hp;
+#if PX_OWN_FX
+    for (int k = 0; k < d->np; k++) if (d->role[k] == R_RANGE) hp = TB_HZ[tb_pos(q[k])];
+#endif
     bq_hp1(&e->drv_hp, sr, hp);
     e->drv_pre = 0;
     if (d->shelf) {                                    /* TS-style: lows bypass the clipping gain */
@@ -1274,6 +1306,9 @@ static void rc_drive(px_engine *e)
 #ifdef PX_FIT
     if (px_fit_drv_on) { e->drv_level = px_fit_drv_trim * 2.0f * level; return; }
 #endif
+#if PX_OWN_FX
+    if (t == PX_DRV_TREBLE) { e->drv_level = 2.0f * level * powf(10.0f, TB_DB[tb_pos(q[1])] * 0.05f); return; }
+#endif
     e->drv_level = DRV_TRIM[t] * 2.0f * level * powf(10.0f, DRV_DB[t] * 0.05f);   /* (v36 trim: before the amp) */
 }
 
@@ -1282,7 +1317,9 @@ static int px_may_load = 1;                            /* v38: 0 in px_engine_kn
 #include "px_nam_factory.h"                            /* the factory models (tools/mk_nam_factory.py) */
 /* test build 28 (px_nam_factory.h PXN_KEEP): the factory model that plays for model m, m itself when it is built in, else
  * the closest kept one (PXN_FALL: the cleans to TWIN, the Marshalls and the crunch to JCM900, the high gains to MARK IV),
- * else the first kept; and its row in PXN_FW. With every model built in (the default), m and m */
+ * else the first kept; and its row in PXN_FW. Compiled only when some are left out: with every model built in (the
+ * release, the BLE image, the simulator) the code is v42's, byte for byte (test build 40) */
+#if PXN_KEEP != 0xFFFu
 static const int8_t PXN_FALL[PX_NAM_NFACT] = {0, 1, 0, 0, 4, 4, 4, 7, 4, 7, 7, 7};
 static int pxn_fact(int m)
 {
@@ -1297,6 +1334,7 @@ static int pxn_row(int m)
     for (int i = 0; i < m; i++) r += (int)PXN_KB(i);
     return r;
 }
+#endif
 #if defined(__PI32V2__) && !defined(PX_NAM_POOL)       /* the pedal: the big piece in its "POOL" RAM region */
 #define PX_NAM_POOL __attribute__((section(".pool")))
 #endif
@@ -1332,7 +1370,11 @@ int px_nam_name(int m, char *buf)
 {
     int i = 0;
     if (m >= 0 && m < PX_NAM_NFACT) {
+#if PXN_KEEP != 0xFFFu
         const char *s = PXN_FNAME[pxn_fact(m)];       /* (test build 28: a model left out shows the one that plays) */
+#else
+        const char *s = PXN_FNAME[m];
+#endif
         while (s[i] && i < 11) { buf[i] = s[i]; i++; }
         buf[i] = 0;
         return 1;
@@ -1360,7 +1402,11 @@ static int nam_load(int m, float *level_db)
 {
     const float *w = 0;
     *level_db = 0.0f;
+#if PXN_KEEP != 0xFFFu
     if (m >= 0 && m < PX_NAM_NFACT) { const int k = pxn_fact(m); w = PXN_FW[pxn_row(k)]; *level_db = PXN_FLVL[k]; }
+#else
+    if (m >= 0 && m < PX_NAM_NFACT) { w = PXN_FW[m]; *level_db = PXN_FLVL[m]; }
+#endif
     else if (m >= PX_NAM_NFACT && m < PX_NAM_N) {
         char nm[12];
         float *tmp = (float *)px_nam_r0;
@@ -2280,9 +2326,37 @@ static void px_recalc(px_engine *e)
     e->patch_g = powf(10.0f, ((float)p->p[PX_B_GATE][PX_PATCH_LEVEL] - 50.0f) * 0.3f * 0.05f);
 }
 
+#if PX_OWN_FX
+/* ---- test build 40: TAILS (the page FX opens, firmware/px_midi.h px_tails) ----
+ * A DELAY or a REVERB that goes off, by a switch or by a preset change, stops taking the guitar but rings on with the type and
+ * the settings it had, until it is quiet (or for 15 s at most, faded out over 0.25 s). While it rings it stays in the blocks
+ * that run (px_engine_part) and keeps its type and settings in cur (px_engine_set, px_engine_knobs); with TAILS on, the
+ * settings of a DELAY or REVERB that is off both in the sound playing and in the new one are not compared (px_engine_change):
+ * they matter once it is on again. The state is one engine's, the pedal's (as px_exp's). */
+static struct {
+    uint8_t on, ring[2];                               /* TAILS; lane L (0 the delay, 1 the reverb) ringing */
+    float g[2], f[2];                                  /* its send (1 -> 0 over 256 samples); its fade at the cap */
+    uint32_t n[2], q[2];                               /* samples rung; quiet samples in a row */
+} px_tl;
+static float px_tl_x[PX_MAX_BLOCK];                    /* (the send, without lanes) */
+#define PX_TL_CAP (15u * 44100u)
+#define PX_TL_QUIET 1e-4f                              /* -80 dBFS, for longer than the line can still give back */
+void px_engine_tails(px_engine *e, int on)
+{
+    (void)e;
+    px_tl.on = (uint8_t)(on != 0);
+    if (!on) for (int L = 0; L < 2; L++) if (px_tl.ring[L] && px_tl.n[L] <= PX_TL_CAP) px_tl.n[L] = PX_TL_CAP + 1u;   /* a tail
+                                                        * ringing: faded out over 0.25 s, as at the cap (a cut clicks) */
+}
+int px_engine_ringing(const px_engine *e) { (void)e; return px_tl.ring[0] | px_tl.ring[1] << 1; }
+static void px_tl_start(int L, float g) { px_tl.ring[L] = 1; px_tl.g[L] = g; px_tl.f[L] = 1.0f; px_tl.q[L] = 0; px_tl.n[L] = 0; }
+#endif
 void px_engine_init(px_engine *e, float sr)
 {
     memset(e, 0, sizeof(*e));
+#if PX_OWN_FX
+    px_tl.ring[0] = px_tl.ring[1] = 0;                 /* (TAILS itself, a setting, stays) */
+#endif
     e->sr = sr;
     e->oct_ff = 1.0f; e->oct_ff2 = 1.0f;
     e->dly_type = -1;
@@ -2296,7 +2370,23 @@ void px_engine_init(px_engine *e, float sr)
 static void wl_clear(px_engine *e);
 void px_engine_set(px_engine *e, const px_preset_t *p)
 {
+#if PX_OWN_FX
+    /* TAILS: a DELAY or REVERB playing (or still ringing) that the new sound has off rings on with what it had */
+    const px_preset_t was = e->cur;
+    int ring[2] = {0, 0};
+    if (px_tl.on) for (int L = 0; L < 2; L++) {
+        const int b = L ? PX_B_REVERB : PX_B_DELAY;
+        ring[L] = (e->run.on[b] || px_tl.ring[L]) && !p->on[b];
+    }
+#endif
     e->cur = *p;
+#if PX_OWN_FX
+    for (int L = 0; L < 2; L++) if (ring[L]) {
+        const int b = L ? PX_B_REVERB : PX_B_DELAY;
+        e->cur.type[b] = was.type[b];
+        memcpy(e->cur.p[b], was.p[b], PX_NPAR);
+    }
+#endif
     if (px_order_valid(p->order)) for (int i = 0; i < PX_NBLK; i++) e->ord[i] = p->order[i];
     else px_order_default(e->ord);
     px_recalc(e);
@@ -2304,6 +2394,9 @@ void px_engine_set(px_engine *e, const px_preset_t *p)
     wl_clear(e);                                       /* v39: the lanes start empty (the output fades in) */
     e->gl_left = 0;
     for (int b = 0; b < PX_NBLK; b++) { e->bf[b] = e->bfa[b] = p->on[b] ? 1.0f : 0.0f; e->bfd[b] = 0; }
+#if PX_OWN_FX
+    for (int L = 0; L < 2; L++) { if (ring[L]) px_tl_start(L, 0.0f); else px_tl.ring[L] = 0; }   /* (the output faded: no send) */
+#endif
 }
 
 /* ---- v38: changes without clicks (px_dsp.h) ---- */
@@ -2352,6 +2445,9 @@ int px_engine_change(const px_engine *e, const px_preset_t *p)
     int k = 0;
     const int nam = c->type[PX_B_AMP] == PX_AMP_NAM;
     for (int b = 0; b < PX_NBLK; b++) {
+#if PX_OWN_FX
+        if (px_tl.on && (b == PX_B_DELAY || b == PX_B_REVERB) && !c->on[b] && !p->on[b]) continue;   /* (TAILS: see px_tl) */
+#endif
         if (c->type[b] != p->type[b]) return PX_CH_FULL;
         if (c->on[b] != p->on[b]) {
             if (b == PX_B_AMP && nam) return PX_CH_FULL;    /* the NAM amp sets how the blocks share the two cores */
@@ -2380,6 +2476,12 @@ void px_engine_knobs(px_engine *e, const px_preset_t *p)
     for (int i = 0; i < GL_N; i++) was[i] = *GLP(e, i);
     const px_preset_t old = e->cur;
     e->cur = *p;
+#if PX_OWN_FX
+    if (px_tl.on) for (int L = 0; L < 2; L++) {        /* TAILS: an off DELAY / REVERB keeps the type and settings it plays */
+        const int b = L ? PX_B_REVERB : PX_B_DELAY;
+        if (!p->on[b]) { e->cur.type[b] = old.type[b]; memcpy(e->cur.p[b], old.p[b], PX_NPAR); }
+    }
+#endif
     px_may_load = 0;                                   /* (nothing read from the flash here: see px_engine_change) */
     if (px_order_valid(p->order)) for (int i = 0; i < PX_NBLK; i++) e->ord[i] = p->order[i];
     for (int b = 0; b < PX_NBLK; b++) {
@@ -2409,6 +2511,16 @@ void px_engine_knobs(px_engine *e, const px_preset_t *p)
     }
     e->gl_left = any ? PX_GLIDE_TICKS : 0;
     if (!any) for (int i = 0; i < GL_N; i++) *GLP(e, i) = e->gl_t[i];
+#if PX_OWN_FX
+    for (int L = 0; L < 2; L++) {                      /* TAILS: switched off, it rings out (no fade: its send goes down) */
+        const int b = L ? PX_B_REVERB : PX_B_DELAY;
+        if (p->on[b]) px_tl.ring[L] = 0;
+        else if (px_tl.on && e->run.on[b]) {
+            px_tl_start(L, e->bf[b]);
+            e->run.on[b] = 0; e->bf[b] = e->bfa[b] = 0.0f; e->bfd[b] = 0;
+        }
+    }
+#endif
     for (int b = 0; b < PX_NBLK; b++) {                /* blocks switched on or off: they fade */
         if (p->on[b] && (e->bfd[b] < 0 || !e->run.on[b] || e->bf[b] < 1.0f)) e->bfd[b] = 1;
         else if (!p->on[b] && e->run.on[b]) e->bfd[b] = -1;
@@ -3931,6 +4043,59 @@ int px_wet_run(px_engine *e, uint32_t deadline, volatile const uint8_t *stop)
     return 1;
 }
 
+#if PX_OWN_FX
+/* TAILS (px_tl): an off DELAY (L 0) or REVERB (L 1) ringing out at its place: its send goes down to nothing over 256 samples,
+ * the dry passes at unity (the reverb's own dry level glides back to it), and its wet is added, with its own trim, until it
+ * has been quiet for longer than an echo could still come; at 15 s it fades out over 0.25 s. Through its lane when the lanes are on, else inline. */
+static void px_tl_run(px_engine *e, int L, float *xb, int n, float strim, int dly_t)
+{
+    const float g0 = px_tl.g[L], g1 = g0 - (float)n * (1.0f / 256.0f) > 0.0f ? g0 - (float)n * (1.0f / 256.0f) : 0.0f;
+    const float dg = L ? 1.0f - 0.4f * e->rv_mix : 1.0f, f0 = px_tl.f[L], gs = (g1 - g0) / (float)n;
+    float pk = 0.0f;
+    if (e->wl_on && e->wl_p[L] + n <= PX_WL_N) {
+        float *bw = px_wl[L][e->wl_b] + e->wl_p[L];
+        const int rd = (int)e->wl_rd[L] - (int)e->wl_p[L];
+        float g = g0;
+        for (int k = 0; k < n; k++) {
+            g += gs;
+            const float x = xb[k], w = (k < rd ? bw[k] : 0.0f) * f0;
+            bw[k] = x * g;
+            xb[k] = x * (1.0f - (1.0f - dg) * g) + w * strim;
+            if (px_abs(w) > pk) pk = px_abs(w);
+        }
+        e->wl_p[L] = (uint16_t)(e->wl_p[L] + n);
+        e->wl_n[L][e->wl_b] = e->wl_p[L];
+    } else {
+        float *const wb = px_wb[L];
+        float g = g0;
+        for (int k = 0; k < n; k++) { g += gs; px_tl_x[k] = xb[k] * g; }
+        if (L) rv_block(e, px_tl_x, wb, n); else dly_block(e, px_tl_x, wb, n, dly_t);
+        g = g0;
+        for (int k = 0; k < n; k++) {
+            g += gs;
+            const float w = wb[k] * f0;
+            xb[k] = xb[k] * (1.0f - (1.0f - dg) * g) + w * strim;
+            if (px_abs(w) > pk) pk = px_abs(w);
+        }
+    }
+    px_tl.g[L] = g1;
+    px_tl.n[L] += (uint32_t)n;
+    if (px_tl.n[L] > PX_TL_CAP) {                      /* the cap: faded out over 0.25 s */
+        const float f = f0 - (float)n * (1.0f / 11025.0f);
+        px_tl.f[L] = f > 0.0f ? f : 0.0f;
+        if (f <= 0.0f) px_tl.ring[L] = 0;
+    } else if (g1 == 0.0f) {                           /* quiet for longer than an echo can still come: over. The delay's
+                                                        * line is dly_len ticks (2 samples each), REVERSE reads up to twice
+                                                        * that back, TAPE a little more: 4 x dly_len samples and 93 ms; the
+                                                        * reverb's pre-delay and first reflections: 186 ms */
+        if (pk < PX_TL_QUIET) {
+            px_tl.q[L] += (uint32_t)n;
+            if (px_tl.q[L] >= (L ? 8192u : 4u * (uint32_t)e->dly_len + 4096u)) px_tl.ring[L] = 0;
+        } else px_tl.q[L] = 0;
+    }
+}
+#endif
+
 /* part: PX_PART_ALL, or (with a NAM amp: px_nam_dual) one stage of the two-core pipeline: PRE the blocks before the
  * amp (in -> out, the network's input), NAM the network and its tone stack (out in place), POST the blocks after it
  * (in: the network's output -> out). PRE and POST touch different blocks: they may run at once on the two cores. */
@@ -3952,7 +4117,11 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
     int ns = 0, ip_drv = -100, ip_amp = -200;
     for (int i = 0; i < PX_NBLK; i++) {
         int b = e->ord[i];
+#if PX_OWN_FX
+        if (b != PX_B_GATE && !p->on[b] && !((b == PX_B_DELAY && px_tl.ring[0]) || (b == PX_B_REVERB && px_tl.ring[1]))) continue;
+#else
         if (b != PX_B_GATE && !p->on[b]) continue;
+#endif
         if (b == PX_B_DRIVE) ip_drv = ns;
         if (b == PX_B_AMP) ip_amp = ns;
         tr[ns] = e->btr[b];
@@ -4108,6 +4277,9 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
                     }
                 }
             }
+#if PX_OWN_FX
+            else { px_tl_run(e, sblk == PX_B_REVERB, xb, n, strim, dly_t); goto faded; }   /* (off in the list: TAILS) */
+#endif
             for (int k = 0; k < n; k++) xb[k] *= strim;
             goto faded;
         }

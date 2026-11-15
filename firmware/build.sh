@@ -65,7 +65,7 @@ DSPDEF="-DPX_SR=44100.0f -DPX_OVERSAMPLE=4"
 HOTRAM=1; [ -n "$OP_BT" ] && HOTRAM=0
 [ -n "$OP_BLE" ] && DSPDEF="$DSPDEF -DPXN_LEAN=1 -DPXN_HOT_RAM=$HOTRAM -DPX_RUNS=0"
 [ -n "$OP_BT" ] && DSPDEF="$DSPDEF -DPX_LOOP_GUARD=1 -DPX_TABLES_RAM=1 -DPX_DLY_SHORT=1"   # test build 13: the reverb's loop ends at PX_MAX_BLOCK, counted; test build 20: the second core's tables in RAM (engine/px_dsp.c)
-# the Bluetooth audio image's own engine (engine/px_dsp.h PX_OWN_FX): its own effects, LOW OCTAVE and SYN PAD (docs/OWN-FX.md),
+# the Bluetooth audio image's own engine (engine/px_dsp.h PX_OWN_FX): its own effects, LOW OCTAVE, SYN PAD, TREBLE BOOST (docs/OWN-FX.md),
 # paid for by the drive and delay code no model reaches (left out: the same sound) and by the delay ring (456 ticks shorter).
 # In DSPDEF, so that openpocket.c (g_eng, px_audio.h) and px_dsp.c see one px_engine
 [ -n "$OP_BT" ] && DSPDEF="$DSPDEF -DPX_OWN_FX=1"

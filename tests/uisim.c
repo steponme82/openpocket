@@ -16,6 +16,8 @@
 #if PX_OWN_FX
 static int a_in_gain_n;                                  /* test build 39: INPUT applied (px_audio.h's, counted here) */
 static void a_in_gain_apply(void) { a_in_gain_n++; }
+static int a_tails_n;                                    /* test build 40: TAILS to the engine (px_audio.h's, counted here) */
+static void a_tails_apply(void) { a_tails_n++; }
 #endif
 
 #include "simlcd.h"
@@ -400,20 +402,23 @@ static int pad_gestures(const char *d)
     CHECK(cur_preset == 8 && n_catch == 0, "another SYN model on: the left footswitch steps back");
     pad_start(1); tap(FSL); hold(0, 200); tap(FSL); hold(0, 200);
     CHECK(n_catch == 2 && cur_preset == 9, "PAD on: two presses 0.2 s apart: two catches (the next chord)");
-    {   /* every value text of PAD's and LOW OCTAVE's settings fits the EDIT page's value box (FT_MD, 90 px) */
+    {   /* every value text of PAD's, LOW OCTAVE's and TREBLE BOOST's settings fits the EDIT page's value box (FT_MD, 90 px) */
         char b[16]; uint32_t wmax = 0; int bad = 0;
-        static const int BT[2][2] = {{PX_B_SYN, PX_SYN_PAD}, {PX_B_PITCH, PX_PIT_LOWOCT}};
-        for (int i = 0; i < 2; i++) for (int k = 0; k < 5; k++) for (int v = 0; v <= 100; v++) {
+        static const int BT[3][2] = {{PX_B_SYN, PX_SYN_PAD}, {PX_B_PITCH, PX_PIT_LOWOCT}, {PX_B_DRIVE, PX_DRV_TREBLE}};
+        for (int i = 0; i < 3; i++) for (int k = 0; k < 5; k++) for (int v = 0; v <= 100; v++) {
             if (!px_param_text(BT[i][0], BT[i][1], k, v, b)) continue;
             uint32_t w = ft_width(&FT_MD, b); if (w > wmax) wmax = w; if (w > 90u) { bad++; if (bad < 4) printf("too wide: %s (%u px)\n", b, w); }
         }
-        CHECK(!bad && wmax > 0, "PAD's and LOW OCTAVE's value texts fit the EDIT page's box");
+        CHECK(!bad && wmax > 0, "PAD's, LOW OCTAVE's and TREBLE BOOST's value texts fit the EDIT page's box");
     }
     /* their pages, drawn whole: the model, the settings in plain values */
     pad_start(1); ui_blk = PX_B_SYN; ui_mode = M_BLOCK; ui_item = 0; full(); shot(d, "edit_syn_pad");
     load_preset(9); PRESET.on[PX_B_PITCH] = 1; PRESET.type[PX_B_PITCH] = PX_PIT_LOWOCT;
     { static const uint8_t K[5] = {40, 70, 100, 33, 50}; memcpy(PRESET.p[PX_B_PITCH], K, 5); }
     ui_blk = PX_B_PITCH; ui_mode = M_BLOCK; ui_item = 0; full(); shot(d, "edit_pitch_low_octave");
+    load_preset(9); PRESET.on[PX_B_DRIVE] = 1; PRESET.type[PX_B_DRIVE] = PX_DRV_TREBLE;   /* test build 40 */
+    { static const uint8_t K[5] = {75, 100, 50, 0, 0}; memcpy(PRESET.p[PX_B_DRIVE], K, 5); }
+    ui_blk = PX_B_DRIVE; ui_mode = M_BLOCK; ui_item = 0; full(); shot(d, "edit_drive_treble_boost");
     ui_home(); load_preset(9); full();
     return 0;
 }
@@ -476,6 +481,18 @@ int main(int argc, char **argv)
         if (px_in_db != PX_IN_DB_MIN) { printf("midi: INPUT must stop at -10 dB\n"); return 1; }
         midi_draw(); shot(d, "midi_input_minus10");
         px_in_db = 3;
+    }
+    {   /* test build 40: TAILS (ON / OFF, to the engine at once) and BT POWER (HIGH, MID, LOW, round) */
+        const int t0 = a_tails_n;
+        midi_push(); midi_knob(1);
+        if (!px_tails || a_tails_n != t0 + 1) { printf("midi: TAILS must turn on and go to the engine\n"); return 1; }
+        midi_push(); midi_knob(1);
+        if (px_bt_pwr != 1u) { printf("midi: BT POWER must step HIGH -> MID\n"); return 1; }
+        midi_knob(1); midi_knob(1);
+        if (px_bt_pwr != 0u) { printf("midi: BT POWER must go round LOW -> HIGH\n"); return 1; }
+        midi_knob(-1);
+        if (px_bt_pwr != 2u) { printf("midi: BT POWER must step back HIGH -> LOW\n"); return 1; }
+        midi_draw(); shot(d, "midi_tails_on_bt_low");
     }
 #endif
     midi_push(); poison(); uc.screen = -1; ui_invalidate(); ui_render(); status();

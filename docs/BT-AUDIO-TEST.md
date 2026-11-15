@@ -5,7 +5,8 @@ phone as **`OpenPocket`**, pairs with no PIN, and the phone's music plays **mixe
 
 It is a test image, its own build target (`make bt`). The normal firmware and the installer's packages are unchanged.
 
-> **Status: test build 27** (the web editor over Bluetooth, below). Up to test build 14: builds 1 to 10 ran on a pedal: the
+> **Status: test build 40** (below; build 38 is the one played longest, about 2 hours of music). Test build 27 brought the web
+> editor over Bluetooth. Up to test build 14: builds 1 to 10 ran on a pedal: the
 > radio starts, a phone sees the pedal and links, but no phone
 > could pair, and the guitar crackled. Build 11 paired an iPhone (below, "Test build 11"), but no music came out, and the guitar
 > still crackled with Bluetooth on. Build 12 takes the phone's packets where the controller first shows them, sends the output
@@ -22,13 +23,17 @@ It is a test image, its own build target (`make bt`). The normal firmware and th
   **before** the output's soft knee. The phone's own volume sets its level. It keeps playing in bypass and in the tuner.
 - **In since test build 14:** the pairing remembered after a power-off (a phone paired once connects again without being
   paired again), kept in two flash sectors of the pedal's own (below, "The pairing kept").
-- **Its own effects** ([OWN-FX.md](OWN-FX.md)): LOW OCTAVE, a 6th PITCH model (an octave under the low strings only), and
-  SYN PAD, a 12th SYN model (a chord caught on the left footswitch and held under you). Only this image has them; the
-  release's engine is unchanged.
+- **Its own effects** ([OWN-FX.md](OWN-FX.md)): LOW OCTAVE, a 6th PITCH model (an octave under the low strings only),
+  SYN PAD, a 12th SYN model (a chord caught on the left footswitch and held under you), and since test build 40 TREBLE
+  BOOST, a 5th DRV model (a germanium treble booster). Only this image has them; the release's engine is unchanged.
 - **In since test build 24:** Bluetooth MIDI (BLE MIDI) beside the music, for a Chocolate (below, "Test build 24"); since
   test build 27 the web editor over Bluetooth too, on a second LE link beside the Chocolate's (below, "Test build 27: the web
   editor over Bluetooth"); since test build 28 the regular Chocolate too, the pedal as its central (below, "Test build 28").
 - **Not in:** stereo, play/pause from the pedal (AVRCP), a level setting on the pedal.
+- **Left out to make room** (the release image has them): USB audio, the pedal as a USB sound card (v42; `OP_UAUDIO` 0);
+  8 of the 12 factory NAM models, since test build 28 (it keeps TWIN, AC15, JCM900 and MARK IV; a preset with another one
+  plays a kept one; the capture slots the editor fills are all there); delay times over 780 ms, since test build 24 (TIME
+  stops at 780 ms, REVERSE at 390 ms, against 2 s and 1 s).
 
 ## Build
 
@@ -585,7 +590,7 @@ On top of test build 14 the image has two effects of its own (their knobs, the P
 start from: [OWN-FX.md](OWN-FX.md)), built only here (`engine/px_dsp.h` `PX_OWN_FX`, which `firmware/build.sh` sets under
 `OP_BT`). Their room is paid for in this image: the drive and delay code no model reaches is left out (the same sound, bit
 for bit) and the delay ring is 456 ticks shorter (the longest delay is still 2.0 s). Every other model sounds as before.
-The web editor sees the image as `v42 FX`.
+The web editor sees the image as `v42 FX` (`v42 FX2` since test build 40, with TREBLE BOOST).
 
 What changes on the pedal:
 
@@ -1021,9 +1026,10 @@ safe in an interrupt.
 - **The HCI line's words**: `TS used/peak` and `TU used/peak` the two tables, `TF` adds refused, `TI` adds from an interrupt,
   `TR` usr timeouts run, `TB` the waits.
 
-## Test build 39: the footswitch learned on the pedal, and the preset level in the editor
+## Test build 40: the footswitch learned on the pedal, TAILS, INPUT, BT POWER, TREBLE BOOST, readable model names
 
-Build 38 is the gig build (tag `bt-test-38`). Build 39 is build 38 with three things a player asked for after using it:
+Build 38 is the gig build (tag `bt-test-38`). Build 40 is build 38 with what a player asked for after using it (build 39 was
+never released: its work is in 40):
 
 - **Controls learned on the pedal.** The Chocolate talks to the pedal, so the editor's own learning (for controllers plugged
   into the computer) never heard it. Now, in the editor's MIDI section, click a control (a block's on/off, the next or the
@@ -1032,13 +1038,28 @@ Build 38 is the gig build (tag `bt-test-38`). Build 39 is build 38 with three th
   page open, in every preset. A switch is learned "press" (it sends 127, then 0: it acts on the press) or "each" (it
   alternates 127 and 0: every message acts), told apart while learning and changeable in the list. docs/MIDI.md, "Learned on
   the pedal"; `firmware/px_midi.h` `px_midi_map_in`, `firmware/px_store.h` (in each copy, with its own mark and CRC).
-- **SWITCH on the MIDI page** (hold FX): MOMENT (as before: CC 8 to 19 flip on value 0) or LATCH (they flip at every message,
-  for the Chocolate's CC mode, which alternates 127 and 0). The editor shows it with the learned controls. And **CC 118 / 119**:
-  the next / the previous preset, for a footswitch in its CC mode, which sends no Program Change.
-- **INPUT**, the guitar's level into the chain, -10 to +10 dB, as the official firmware's Input Gain: a row of the page FX
-  opens (now titled SETTINGS) and a menu in the editor's MIDI section. Heard at once, kept in the store's header.
-- **The preset level beside the preset's name** in the editor (the GT page's PRESET LVL on the pedal, -15 to +15 dB): only the
-  editor changed for it.
+- **The page FX opens is SETTINGS**, with four more rows (`firmware/ui.h`), all also in the editor's MIDI section:
+  - **SWITCH**: MOMENT (as before: CC 8 to 19 flip on value 0) or LATCH (they flip at every message, for the Chocolate's CC
+    mode, which alternates 127 and 0);
+  - **INPUT**: the guitar's level into the chain, -10 to +10 dB, as the official firmware's Input Gain (heard at once);
+  - **TAILS**: OFF (as before) or ON: a DELAY or REVERB that goes off, by a switch or because the next preset has it off,
+    stops taking the guitar but rings out with the type and settings it had, until it is quiet (15 s at most, then faded out
+    over 0.25 s); a full preset change still dips the sound for its ~12 ms fade, the tail goes on after it
+    (`engine/px_dsp.c` `px_tl`, `tests/engine/tails.c`);
+  - **BT POWER**: HIGH (the SDK's levels, as every earlier build), MID or LOW, the radio's highest transmit levels
+    (`bt/bt_a2dp.c` `BT_PWR`), for a pedal whose guitar sound ticks while the radio works.
+- **CC 118 / 119**: the next / the previous preset, for a footswitch in its CC mode, which sends no Program Change.
+- **NAM capture names**: a capture can be renamed on the pedal itself from the editor (`NAM_RENAME`, editor protocol 5), from
+  any browser; and a capture taken from TONE3000 gets the tone's first words before a short model name ("VOX AC30 VX" instead
+  of "VX"; `docs/pxlib.js` `smartName`).
+- **The preset level beside the preset's name** in the editor (the GT page's PRESET LVL on the pedal, -15 to +15 dB).
+- **TREBLE BOOST**, a fifth DRV model: a germanium treble booster of the Rangemaster kind, to put in front of the amp (a NAM
+  capture of a Vox or a Marshall): BOOST, RANGE (FULL, MID, TREBLE: the three-way switch of the later clones), LEVEL. At
+  noon it is as loud as the guitar without it; BOOST pushes the amp harder (-12 to +9 dB around noon) and makes it clip
+  more. Made by hand, not fitted to a capture ([OWN-FX.md](OWN-FX.md), `tests/engine/treble.c`). The editor reads the new
+  model from the pedal, which reports `v42 FX2`, so an editor that met build 38 asks for the list again.
+- **The release image is v42's again, byte for byte**: test build 28's fallback for the factory models left out
+  (`engine/px_dsp.c` `pxn_fact`) is compiled only when some are left out (`PXN_KEEP`).
 
 ### What to check
 
@@ -1046,16 +1067,26 @@ Build 38 is the gig build (tag `bt-test-38`). Build 39 is build 38 with three th
    gets louder or softer. Save, then load another preset and come back.
 2. INPUT: hold FX (SETTINGS), PUSH to the INPUT row, turn the knob while playing: the guitar gets louder into the amp at
    once. HOME saves it; power off and on: it is kept.
-3. The Chocolate in its CC mode (CubeSuite), linked to the pedal: open the pedal's SETTINGS page (hold FX), press each switch
+3. TAILS: set it ON (SETTINGS, or the editor's MIDI section). Play with a delay and a reverb on, switch the delay off: its
+   echoes ring out. Change to a preset with the delay off: the echoes go on after the short dip of the change.
+4. BT POWER: if the guitar ticks with Bluetooth on, try MID, then LOW, with the Chocolate and the phone at their usual
+   distance: the ticks should get rarer, and the links must hold. When it ticks, the diagnostics page (hold HOME 1.4 s) says
+   whether the audio ran late (`LATE` rising: the timing) or not (the radio itself, heard through the input).
+5. The Chocolate in its CC mode (CubeSuite), linked to the pedal: open the pedal's SETTINGS page (hold FX), press each switch
    and read `LAST: CC n = v`: that is the number the switch sends.
-4. Learn: in the editor's MIDI section, click EQ's **On / off**, press the Chocolate's switch once and let go. The editor says
+6. Learn: in the editor's MIDI section, click EQ's **On / off**, press the Chocolate's switch once and let go. The editor says
    what it learned and lists it under **Learned by the pedal**; the pedal's SETTINGS page counts it (`LEARNED 1`). Close the
    editor: the switch still switches the EQ, in every preset. Power the pedal off and on: it still does.
-5. A switch for the next preset: click **Next preset**, press another switch.
-6. The log, with the pedal on USB, for the record:
+7. A switch for the next preset: click **Next preset**, press another switch.
+8. A capture's name: in the editor's Models section, **Rename…** on a capture the browser did not load: the pedal shows the
+   new name at once.
+9. TREBLE BOOST: DRV on, model TREBLE BOOST, in front of a NAM capture on the edge of breakup. RANGE TREBLE, BOOST from 0 to
+   100: the amp goes from clean to driven, the low strings stay tight. RANGE MID and FULL: fuller, then a plain boost.
+   Switching DRV on at noon keeps the loudness.
+10. The log, with the pedal on USB, for the record (from the repository's folder):
 
 ```bash
-cd "/Users/steponme/Lavori ext/mvave-blackbox-firmware/.claude/worktrees/goofy-fermat-9c0c07" && make log
+make log
 ```
 
 ## Checked on a computer

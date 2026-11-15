@@ -10,7 +10,7 @@ const H = [0x7D, 0x4F, 0x50];
 export const C = { INFO: 1, CAT_BLOCK: 2, CAT_TYPE: 3, TEXTS: 4, STATE: 5, SET: 6, ORDER: 7, NAME: 8, PUT: 9, SELECT: 10,
   FOCUS: 11, LIST: 12, SLOT_GET: 13, SLOT_PUT: 14, COMMIT: 15, SAVE: 16, WATCH: 17, PING: 18,
   NAM_LIST: 19, NAM_WRITE: 20, NAM_COMMIT: 21, NAM_ERASE: 22, DIAG: 23, IR_LIST: 24, IR_WRITE: 25, IR_COMMIT: 26, IR_ERASE: 27,
-  USB_AUDIO: 28, MIDI_IN: 29, MAP: 30 };
+  USB_AUDIO: 28, MIDI_IN: 29, MAP: 30, NAM_RENAME: 31 };
 export const NAM_CHUNK = 112;     // bytes per NAM_WRITE (firmware/px_models.h NM_CHUNK)
 export const P_SIZE = 110;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -269,6 +269,13 @@ export class Editor {
     return rc;
   }
   async namErase(slot) { return (await this.request(C.NAM_ERASE, [slot], 6000))[1]; }
+  // test build 40 (protocol 5): a user slot's name only, on the pedal (11 characters at most) -> rc (0 ok, 1 nothing to
+  // rename, 2 flash)
+  get hasNamRename() { return !!(this.info && this.info.proto >= 5); }
+  async namRename(slot, name) {
+    const b = [...String(name).slice(0, 11)].map((c) => c.charCodeAt(0) & 0x7F);
+    return (await this.request(C.NAM_RENAME, [slot, ...b, 0], 6000))[1];
+  }
   // v38 (protocol 3): cabinet IRs. list -> [{ slot, used, name }]
   get hasIr() { return !!(this.info && this.info.proto >= 3); }
   async irList() {
@@ -308,20 +315,20 @@ export class Editor {
   }
   // the CAB USER IR type's IR texts name the slots, which change: always asked again (not cached)
   // test build 39 (protocol 5, the Bluetooth audio image): controls learned on the pedal (firmware/px_midi.h mid_map) and
-  // SWITCH (CC 8..19 flip on every message: "each") and INPUT (-10..+10 dB). pedalMap() reads them; setPedalMap(each,
-  // entries, inputDb) writes all of them and the flash (the sound holds a moment, as a save). entries: PEDAL_MAP_N of
-  // { src, dst, mode } or null; mode 0 press, 1 each, 2 value (docs/pxmidi.js). -> { rc (0 ok, 1 invalid, 2 flash), each,
-  // inputDb, entries }
+  // SWITCH (CC 8..19 flip on every message: "each"), INPUT (-10..+10 dB) and (test build 40) TAILS and BT POWER. pedalMap()
+  // reads them; setPedalMap(each, entries, inputDb, tails, btPower) writes all of them and the flash (the sound holds a
+  // moment, as a save). entries: PEDAL_MAP_N of { src, dst, mode } or null; mode 0 press, 1 each, 2 value (docs/pxmidi.js).
+  // -> { rc (0 ok, 1 invalid, 2 flash), each, inputDb, tails, btPower, entries }
   get hasPedalLearn() { return !!(this.info && this.info.proto >= 5); }
   _map(r) {
-    const q = new Reader(r), rc = q.b(), each = !!q.b(), inputDb = q.b() - 10, n = q.b(), entries = [];
+    const q = new Reader(r), rc = q.b(), each = !!q.b(), inputDb = q.b() - 10, fl = q.b(), n = q.b(), entries = [];
     for (let i = 0; i < n; i++) { const on = q.b(), src = q.b(), dst = q.b(), mode = q.b(); entries.push(on ? { src, dst, mode } : null); }
-    return { rc, each, inputDb, entries };
+    return { rc, each, inputDb, tails: !!(fl & 1), btPower: (fl >> 1) & 3, entries };
   }
   async pedalMap() { return this._map(await this.request(C.MAP)); }
-  // inputDb: the MIDI page's INPUT, -10..+10 dB (the guitar's level into the chain)
-  async setPedalMap(each, entries, inputDb = 0) {
-    const a = [1, each ? 1 : 0, Math.max(0, Math.min(20, Math.round(inputDb) + 10))];
+  // inputDb: SETTINGS' INPUT, -10..+10 dB (the guitar's level into the chain); tails: TAILS; btPower: 0 HIGH, 1 MID, 2 LOW
+  async setPedalMap(each, entries, inputDb = 0, tails = false, btPower = 0) {
+    const a = [1, each ? 1 : 0, Math.max(0, Math.min(20, Math.round(inputDb) + 10)), (tails ? 1 : 0) | (Math.max(0, Math.min(2, btPower | 0)) << 1)];
     for (const e of entries) a.push(...(e ? [1, e.src, e.dst, e.mode] : [0, 0, 0, 0]));
     return this._map(await this.request(C.MAP, a, 4000));
   }
