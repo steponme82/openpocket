@@ -1,0 +1,42 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     OpenPocket: does this browser open a file picker, and how? A diagnostic for in-app browsers (MIDIWeb on an iPhone, where
+     the editor's "Add .nam files" opened nothing): three ways the editor could ask for a file, each showing what it got. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>File picker test</title>
+<style>
+  body { font: 17px -apple-system, system-ui, sans-serif; margin: 20px; background: #121212; color: #eee; }
+  h1 { font-size: 22px; }
+  .b { display: inline-block; padding: 12px 18px; margin: 6px 0 14px; background: #f5b941; color: #111; border: 0;
+       border-radius: 8px; font: inherit; }
+  .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  #out { margin-top: 18px; padding: 12px; background: #222; border-radius: 8px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>File picker test</h1>
+<p>1. A plain file field:</p>
+<input type="file" id="f1">
+<p>2. A button that is the field's label (the editor's new way):</p>
+<label class="b" for="f2">Choose a file</label>
+<input type="file" id="f2" class="vh">
+<p>3. A button that clicks a hidden field from a script (the editor's old way):</p>
+<button type="button" class="b" id="b3">Choose a file</button>
+<input type="file" id="f3" hidden>
+<div id="out">Nothing chosen yet.</div>
+<script>
+  const out = document.getElementById("out");
+  const show = (k) => (e) => {
+    const f = e.target.files && e.target.files[0];
+    out.textContent = f ? `Way ${k} works: ${f.name}, ${f.size} bytes` : `Way ${k}: no file came back`;
+  };
+  document.getElementById("f1").onchange = show(1);
+  document.getElementById("f2").onchange = show(2);
+  document.getElementById("f3").onchange = show(3);
+  document.getElementById("b3").onclick = () => document.getElementById("f3").click();
+</script>
+</body>
+</html>
