@@ -211,11 +211,27 @@ static void ui_status(const char *s, int kind)
     int ld = kind == UI_ST_LOADING && uc.screen == 0;     /* on a block page the MODEL row says it instead */
     ft_box(ST_X, uc.screen ? F_Y + 3u : 3u, ST_W, ld ? "LOADING" : s, &FT_SM, kind == UI_ST_LATE ? RED : ld || kind == UI_ST_HIGH ? UI_ACC : UI_DIM, UI_PANEL, 2);
 }
+#if PX_OWN_FX
+/* test build 41: the USB footswitch's news on the footer, in place of the hint (px_usbhost.h pxu_note: CONNECTED, NO MIDI and
+ * LOW SPEED for 3 s, LOST until the footswitch is back); an overload's instruction goes first. The includer gives the note
+ * (openpocket.c: px_uh_note) */
+#ifndef PX_UI_NOTE
+#define PX_UI_NOTE() 0u
+#endif
+static const char *const UI_NOTE[PXU_LOST + 1] = {"", "", "USB: NO MIDI INTERFACE", "USB: LOW SPEED DEVICE", "USB FOOTSW CONNECTED",
+                                                  "USB FOOTSW LOST"};
+#endif
 static void draw_hint(int force)
 {
     int h = (int)ui_mode, alert = uc.status_kind == UI_ST_BYPASS;
     int save = !alert && h == M_CHAIN && uc.dirty;       /* EDITED shows on PLAY: the footer names SAVE */
+#if PX_OWN_FX
+    uint32_t note = alert ? 0u : PX_UI_NOTE();
+    if (note > PXU_LOST || !UI_NOTE[note][0]) note = 0;
+    int key = h | alert << 4 | save << 5 | (int)note << 6;
+#else
     int key = h | alert << 4 | save << 5;
+#endif
     if (!force && uc.hint == key) return;
     uc.hint = key;
     if (alert) {                                         /* overload: what to do (a block page's whole footer turns red) */
@@ -226,6 +242,13 @@ static void draw_hint(int force)
         ft_box(0, F_Y + 3u, 240, t, &FT_SM, WHT, uc.screen ? C_ALERT : UI_PANEL, 1);
         return;
     }
+#if PX_OWN_FX
+    if (note) {                                          /* (the hint's box: a block page keeps its load figure) */
+        ft_box(0, F_Y + 3u, uc.screen ? ST_X - 2u : 240u, UI_NOTE[note], &FT_SM, note == PXU_OK ? GRN : RED, UI_PANEL,
+               uc.screen ? 0 : 1);
+        return;
+    }
+#endif
     if (save) {
         ft_box(0, F_Y + 3u, 116, "PUSH: EDIT", &FT_SM, UI_DIM, UI_PANEL, 2);
         ft_box(116, F_Y + 3u, 124, "  HOLD: SAVE", &FT_SM, UI_ACC, UI_PANEL, 0);
@@ -615,18 +638,30 @@ static void save_confirm(void)
  * every message flips); INPUT, the guitar's level into the chain, -10..+10 dB; and (test build 40) TAILS, the delay and the
  * reverb ring out when they go off and across a preset change, and BT POWER, the radio's transmit power (HIGH as before,
  * MID, LOW). Each is heard or applied at once and saved on leaving. The controls learned on the pedal are counted on the
- * USB line (the web editor's MIDI section learns them, px_midi.h). */
+ * USB line (the web editor's MIDI section learns them, px_midi.h).
+ * Test build 41: the last row, USB PORT: COMPUTER (the USB device, as always) or FOOTSW (the USB-C port is the USB MIDI host of
+ * a footswitch by cable, px_usbhost.h). Applied at once, so the USB line under the rows shows what the host sees while the
+ * page is open (NOTHING ATTACHED, NO MIDI INTERFACE, LOW SPEED DEVICE, CONNECTED, LOST), and never saved: every power-on is
+ * COMPUTER, and this row (or switching off) is the way back. */
 #if OP_UAUDIO
 enum { MI_CHAN, MI_SEND, MI_CLOCK, MI_UAUDIO,
 #else
 enum { MI_CHAN, MI_SEND, MI_CLOCK,
 #endif
 #if PX_OWN_FX
-       MI_EACH, MI_INPUT, MI_TAILS, MI_BTPWR,
+       MI_EACH, MI_INPUT, MI_TAILS, MI_BTPWR, MI_USB,
 #endif
        MI_ROWS };
 #if PX_OWN_FX && !defined(PX_BT_POWER_APPLY)
 #define PX_BT_POWER_APPLY() ((void)0)    /* (no Bluetooth here: the setting is only kept) */
+#endif
+#if PX_OWN_FX && !defined(PX_USB_MODE_APPLY)
+#define PX_USB_MODE_APPLY() ((void)0)    /* (no USB host here: the row is only shown) */
+#endif
+#if PX_OWN_FX
+#define MI_VW 10u                        /* a value's text: "COMPUTER" and its end */
+#else
+#define MI_VW 8u
 #endif
 static uint32_t mi_row, mi_shown_hash = ~0u;
 static uint8_t mi_orig, mi_ua;
@@ -658,6 +693,7 @@ static void midi_draw(void)
 #if PX_OWN_FX
     for (uint32_t i = 0; i < PXM_MAP_N; i++) h ^= ((uint32_t)mid_map[i].src << 16 | (uint32_t)mid_map[i].dst << 8 | mid_map[i].mode) * (0x9E3779B1u + i);
     h ^= (uint32_t)px_set_pack() * 0x85EBCA6Bu;
+    h ^= ((uint32_t)px_usb_foot << 4 | px_uh.st) * 0xC2B2AE35u;   /* (test build 41: the row, and what the host sees) */
 #endif
     if (h == mi_shown_hash) return;
     mi_shown_hash = h;
@@ -666,10 +702,10 @@ static void midi_draw(void)
                                               "USB AUDIO",
 #endif
 #if PX_OWN_FX
-                                              "SWITCH", "INPUT", "TAILS", "BT POWER",
+                                              "SWITCH", "INPUT", "TAILS", "BT POWER", "USB PORT",
 #endif
     };
-    char v[MI_ROWS][8];
+    char v[MI_ROWS][MI_VW];
     if (mid_cfg.chan) { v[0][0] = (char)(mid_cfg.chan >= 10 ? '0' + mid_cfg.chan / 10 : ' '); v[0][1] = (char)('0' + mid_cfg.chan % 10); v[0][2] = 0; }
     else { v[0][0] = 'O'; v[0][1] = 'M'; v[0][2] = 'N'; v[0][3] = 'I'; v[0][4] = 0; }
     v[1][0] = v[2][0] = 0;
@@ -689,16 +725,20 @@ static void midi_draw(void)
     b_str(v[MI_TAILS], px_tails ? "ON" : "OFF");
     v[MI_BTPWR][0] = 0;
     b_str(v[MI_BTPWR], px_bt_pwr == 2u ? "LOW" : px_bt_pwr == 1u ? "MID" : "HIGH");
+    v[MI_USB][0] = 0;
+    b_str(v[MI_USB], px_usb_foot ? "FOOTSW" : "COMPUTER");
 #endif
 #if PX_OWN_FX
-    /* (the rows share 126 px, 30 at most each, so the USB line stays at 162; the values in the small font in rows under 25) */
+    /* (the rows share 126 px, 30 at most each, so the USB line stays at 162; the values in the small font in rows under 25.
+     * Test build 41: 8 rows of 15 px, the small font's height, in the image; 9 with USB AUDIO, where it builds, of 14) */
     const uint32_t rh = MI_ROWS > 4u ? (126u / MI_ROWS < 25u ? 126u / MI_ROWS : 25u) : 30u;
+    const uint32_t ry = rh > 15u ? (rh - 15u) / 2u : 0u;   /* (rows no taller than the text: no gap line, the rows touch) */
     for (uint32_t r = 0; r < MI_ROWS; r++) {
         uint32_t y = 36u + r * rh;
         uint16_t bg = r == mi_row ? C_CARD : UI_BG;
-        lcd_rect(0, y, 240, rh - 1u, bg);
-        ft_box(8, y + (rh == 30u ? 6u : (rh - 15u) / 2u), 130, NAME[r], &FT_SM, r == mi_row ? UI_TXT : UI_DIM, bg, 0);
-        ft_box(140, y + (rh == 30u ? 2u : rh >= 25u ? 0u : (rh - 15u) / 2u), 92, v[r], rh >= 25u ? &FT_MD : &FT_SM, r == mi_row ? UI_ACC : UI_TXT, bg, 2);
+        lcd_rect(0, y, 240, rh > 15u ? rh - 1u : rh, bg);
+        ft_box(8, y + (rh == 30u ? 6u : ry), 130, NAME[r], &FT_SM, r == mi_row ? UI_TXT : UI_DIM, bg, 0);
+        ft_box(140, y + (rh == 30u ? 2u : rh >= 25u ? 0u : ry), 92, v[r], rh >= 25u ? &FT_MD : &FT_SM, r == mi_row ? UI_ACC : UI_TXT, bg, 2);
     }
 #else
     for (uint32_t r = 0; r < MI_ROWS; r++) {       /* (v42: four rows of 30 px; three of 36 before) */
@@ -711,11 +751,25 @@ static void midi_draw(void)
 #endif
 #if PX_OWN_FX
     {
-        char u[32]; u[0] = 0;
+        char u[48]; u[0] = 0;
         const uint32_t nl = px_midi_map_count();
-        b_str(u, mid_usb_up ? "USB: HOST CONNECTED" : "USB: NO HOST");
-        if (nl) { b_str(u, "  LEARNED "); b_num(u, nl); }
-        ft_box(0, 162, 240, u, &FT_SM, mid_usb_up ? GRN : UI_DIM, UI_BG, 1);
+        uint16_t col = mid_usb_up ? GRN : UI_DIM;
+        if (px_usb_foot) {               /* test build 41: the port is the footswitch's host: what it sees (STARTING: not yet) */
+            static const char *const UST[PXU_LOST + 1] = {"STARTING", "NOTHING ATTACHED", "NO MIDI INTERFACE", "LOW SPEED DEVICE",
+                                                          "CONNECTED", "LOST"};
+            const uint32_t s = px_uh.st <= PXU_LOST ? px_uh.st : PXU_OFF;
+            b_str(u, "FOOTSW: "); b_str(u, UST[s]);
+            col = s == PXU_OK ? GRN : s <= PXU_WAIT ? UI_ACC : RED;
+            if (nl) {                    /* (when it fits) */
+                char k[16]; k[0] = 0;
+                b_str(k, "  LEARNED "); b_num(k, nl);
+                if (ft_width(&FT_SM, u) + ft_width(&FT_SM, k) <= 236u) b_str(u, k);
+            }
+        } else {
+            b_str(u, mid_usb_up ? "USB: HOST CONNECTED" : "USB: NO HOST");
+            if (nl) { b_str(u, "  LEARNED "); b_num(u, nl); }
+        }
+        ft_box(0, 162, 240, u, &FT_SM, col, UI_BG, 1);
     }
 #else
     ft_box(0, 162, 240, mid_usb_up ? "USB: HOST CONNECTED" : "USB: NO HOST", &FT_SM, mid_usb_up ? GRN : UI_DIM, UI_BG, 1);
@@ -755,6 +809,7 @@ static void midi_knob(int dd)
     else if (mi_row == MI_INPUT) { px_in_db = (int8_t)px_in_db_clamp(px_in_db + (dd > 0 ? 1 : -1)); a_in_gain_apply(); }   /* heard at once */
     else if (mi_row == MI_TAILS) { px_tails ^= 1u; a_tails_apply(); }
     else if (mi_row == MI_BTPWR) { px_bt_pwr = (uint8_t)((px_bt_pwr + (dd > 0 ? 1u : 2u)) % 3u); PX_BT_POWER_APPLY(); }
+    else if (mi_row == MI_USB) { px_usb_foot ^= 1u; PX_USB_MODE_APPLY(); }   /* test build 41: at once, never saved */
 #endif
     else mi_ua ^= 1u;
 }

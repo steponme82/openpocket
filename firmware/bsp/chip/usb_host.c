@@ -60,11 +60,16 @@ static uint32_t usb_host_message(void)
 }
 
 /* ------------------------------------------------ main loop: control --- */
+/* What the main loop's waits (uh_wait, uh_csr0) do meanwhile. An application may serve more than the watchdog there, as
+ * OpenPocket's Bluetooth audio image serves its radio (px_usb.h): nothing it calls may touch USB. */
+#ifndef UH_IDLE
+#define UH_IDLE() fm1_wdt_feed()
+#endif
 static void uh_wait(uint32_t ms)                        /* main loop only */
 {
     uint32_t t = fm1_ms;
     while (fm1_ms - t < ms)
-        fm1_wdt_feed();
+        UH_IDLE();
 }
 
 /* CSR0 (host) until want_set bits are all set and want_clr are all clear: >= 0 the CSR0, < 0 a stall / error / timeout */
@@ -85,7 +90,7 @@ static int uh_csr0(uint32_t want_set, uint32_t want_clr)
             return (int)v;
         if (fm1_ms - t > 500u)
             return -3;
-        fm1_wdt_feed();
+        UH_IDLE();
     }
 }
 

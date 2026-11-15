@@ -78,6 +78,13 @@ static void px_set_unpack(uint8_t b)
     if (px_bt_pwr > 2u) px_bt_pwr = 0;
     px_tails = (uint8_t)(b >> 7);
 }
+/* test build 41: the USB-C port's role, SETTINGS' USB PORT row (ui.h): 0 COMPUTER, the USB device as always (the web installer,
+ * the editor over USB, the rescue); 1 FOOTSW, the USB MIDI host of a footswitch by cable (px_usb.h, felucca-bsp's
+ * chip/usb_host.c). Not saved, on purpose: every power-on is COMPUTER (docs/BT-AUDIO-TEST.md, "Test build 41"). px_uh: what
+ * the host sees (px_usbhost.h), for the screen and for px_midi_io.h */
+#include "px_usbhost.h"
+static uint8_t px_usb_foot;
+static pxu_t px_uh;
 #endif
 /* the pedal's MIDI state, shared by the screen (ui.h) and the glue (px_midi_io.h) */
 static px_midi_cfg_t mid_cfg;           /* all-zero until the store is read: omni, send on, clock off */

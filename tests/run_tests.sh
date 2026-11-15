@@ -24,6 +24,10 @@
 #    into notifications, 3,000 of them back whole through a reference reader
 #  - the Bluetooth audio image's controls (PX_OWN_FX): SYN PAD's left footswitch and the tuner on both (tests/uisim.c), CC 64
 #    (tests/midiio.c), the two effects' pages drawn whole
+#  - the Chocolate by cable (test build 41, the pedal its USB MIDI host): felucca-bsp's descriptor parser on the Chocolate's
+#    layout, the packets passed, the screen's state and notes, the host's clock (tests/test_usb_host.c); SETTINGS' USB PORT
+#    row and PLAY's notes (tests/uisim.c); its messages read as a computer's, nothing sent to it, Bluetooth's not read twice
+#    (tests/midiio.c)
 #  - preset store: save / reload / power cut at every step of a save (firmware/px_store.h on a simulated flash)
 #  - the audio callbacks' order (v42, firmware/px_aorder.h): the I2S driver calls the output's callback before the
 #    input's when its interrupt enters late; every output block must still be the sound of that interrupt's guitar block
@@ -129,6 +133,11 @@ done
 $CC -O1 -Wall -Wno-unused-function -DPX_OWN_FX=1 -DPX_DLY_SHORT=1 -DED_BT=1 -Iengine -Ifirmware -o build/midiio_fx tests/midiio.c engine/px_dsp.c firmware/px_math.c -lm
 build/midiio_fx > build/midiio_fx.log || { grep FAIL build/midiio_fx.log; exit 1; }
 tail -1 build/midiio_fx.log
+# test build 41: the Chocolate by cable, the pedal its USB MIDI host (bsp/chip/usb_host_desc.h, firmware/px_usbhost.h): the
+# descriptor parser on the Chocolate's layout, which packets pass, what the screen says, the host's clock across TIMER4's wrap
+$CC -O1 -Wall -Wno-unused-function -o build/test_usb_host tests/test_usb_host.c
+build/test_usb_host > build/test_usb_host.log || { grep FAIL build/test_usb_host.log; exit 1; }
+tail -1 build/test_usb_host.log
 echo "== LED map and the lights driver (LED_PROBE build, issue #8)"
 mkdir -p build/lp && $CC -O1 -Wall -Wno-unused-function -Ifirmware -o build/lpsim tests/lpsim.c && build/lpsim build/lp
 echo "== button lights in the normal firmware (px_lights.h, issue #8)"

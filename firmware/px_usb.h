@@ -14,11 +14,29 @@
  * pedal is then a class-compliant USB sound card as well (USB Audio Class 1, felucca-bsp's streams in usb.c, both on
  * endpoint 4, isochronous): the computer records the pedal's sound and plays through its output. 16-bit stereo at
  * 44.1 kHz. With the setting off the USB device is the same as before, byte for byte (tests/test_usb_audio.c).
+ *
+ * Test build 41 (the Bluetooth audio image only): the port can also be the USB MIDI host of a footswitch by cable, an M-VAVE
+ * Chocolate (felucca-bsp's chip/usb_host.c; px_usbhost.h; docs/BT-AUDIO-TEST.md). Only while SETTINGS' USB PORT row says
+ * FOOTSW, never at power-on: the installer, the editor over USB and the rescue always find the USB device first.
  */
 #pragma once
 
 #define FELUCCA_OTA 1
 #define FELUCCA_CDC 0
+#if OP_BT_AUDIO
+/* test build 41: felucca-bsp's USB MIDI host (chip/usb_host.c) built in. The port is the USB device at every power-on, as
+ * always; it becomes the host of a footswitch by cable only while SETTINGS' USB PORT row says FOOTSW (px_midi.h px_usb_foot,
+ * not saved; px_usbhost.h; docs/BT-AUDIO-TEST.md, "Test build 41"). The host's waits on the main loop serve the radio as
+ * ui.h's do (UI_IDLE, openpocket.c): the music goes on while a footswitch is found */
+#if !PX_OWN_FX
+#error "the USB footswitch (test build 41) is the Bluetooth audio image's: PX_OWN_FX (px_midi.h px_uh, ui.h's row)"
+#endif
+#define FELUCCA_USB_HOST 1
+#ifdef UI_IDLE
+#define UH_IDLE() do { fm1_wdt_feed(); UI_IDLE(); } while (0)
+#endif
+#include "px_usbhost.h"
+#endif
 #if OP_UAUDIO
 #include "px_uaconf.h"                          /* the streams and their rings (also tests/test_usb_audio.c's) */
 #if OP_UADEV                                    /* the measurement option (px_audio.h): the band and the target set at run time */
@@ -66,6 +84,13 @@ static uint8_t *ota_scratch(void);              /* px_models.h: the upload stagi
 
 static uint8_t px_flash_ok;                     /* the flash is a 1 MiB SPI NOR: the update entry may stage */
 static volatile uint32_t px_t5_sub;
+#if FELUCCA_USB_HOST
+/* the host's clock (px_usbhost.h pxu_ms_add): usb.c's fm1_ms, which chip/usb_host.c's waits and timeouts read, advanced at each
+ * USB poll by the TIMER4 ticks since the last, so it counts milliseconds and never wraps as ms_now does */
+typedef char pxu_msg_check[(UH_MSG_ON == PXU_MSG_ON && UH_MSG_OFF == PXU_MSG_OFF && UH_MSG_MIDI == PXU_MSG_MIDI &&
+                            UH_MSG_NOMIDI == PXU_MSG_NOMIDI && UH_MSG_LOW == PXU_MSG_LOW && UH_MSG_LOST == PXU_MSG_LOST) ? 1 : -1];
+static pxu_ms_t px_uh_clk;
+#endif
 #if OP_UADEV
 static void uad_poll(void);                     /* px_uaudio.h: the gaps between USB polls */
 #endif
@@ -95,6 +120,9 @@ void fm1_timer5_irq(void)                       /* 10 kHz; USB at 2 kHz */
 #endif
     if (++px_t5_sub >= 5u) {
         px_t5_sub = 0;
+#if FELUCCA_USB_HOST
+        fm1_ms += pxu_ms_add(&px_uh_clk, fm1_ticks(), FM1_TICKS_PER_US * 1000u);   /* test build 41: the host's clock (above) */
+#endif
 #if OP_UADEV
         uad_poll();
 #endif
@@ -250,3 +278,19 @@ static void px_usb_service(uint32_t now)        /* every main-loop pass */
         }
     }
 }
+
+#if FELUCCA_USB_HOST
+/* ---- test build 41: the footswitch by cable (px_usbhost.h) ---- */
+static void px_uh_apply(void) { usb_host_switch(px_usb_foot); }   /* SETTINGS' USB PORT row (ui.h): usb_host_task makes the change */
+static uint32_t px_uh_note(void) { return pxu_note(&px_uh, fm1_ms); }   /* PLAY's footer (ui.h draw_hint) */
+/* every main-loop pass, after px_usb_service. In FOOTSW the host finds the footswitch with blocking control transfers on this
+ * loop (some 150 ms when one is plugged in; the radio is served meanwhile, UH_IDLE) and puts its Program and Control Changes in
+ * the ring USB MIDI fills (source 1): px_midi_service reads them as a computer's, the controls learned on the pedal with them.
+ * Nothing is sent to the footswitch (px_midi_io.h). Back in COMPUTER the port is the USB device again within a pass (usb_retry) */
+static void px_uh_service(void)
+{
+    usb_host_task(fm1_ms);                      /* (the host's clock: ms_now's wrap would stop it looking, px_usbhost.h) */
+    pxu_msg(&px_uh, usb_host_message(), fm1_ms);
+    if (usb_host_active()) pxu_line(&px_uh, fm1_usb_line(), fm1_ms);
+}
+#endif

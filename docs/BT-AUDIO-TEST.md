@@ -1089,6 +1089,120 @@ never released: its work is in 40):
 make log
 ```
 
+## Test build 41: the Chocolate by cable (USB MIDI host)
+
+Build 40 with one experiment: the pedal's USB-C port can be the **USB MIDI host** of the M-VAVE Chocolate, so the footswitch
+works by cable instead of Bluetooth. Its Program Change and Control Change go the same way as a computer's USB MIDI and the
+Chocolate's Bluetooth MIDI (`firmware/px_midi_io.h`): presets, blocks, CC 116 (tap), 117 (expression), 118 / 119 (next /
+previous) and the controls learned on the pedal (build 40). The host is felucca-bsp's (`firmware/bsp/chip/usb_host.c`,
+opt-in, never used by OpenPocket before); **its authors have not validated it on real hardware, and neither have we**: this
+build is the first time it runs on a pedal.
+
+### What to connect: the 5 V
+
+The pedal does not put 5 V on its USB-C port (`firmware/bsp/chip/fm1_usb.h`: "Nothing here drives VBUS: the port needs power
+from outside"; the port is built to be powered, as a device's). The Chocolate, like any USB device, shows up only when it sees
+5 V on its cable, battery charged or not. So the 5 V must come from something in between:
+
+- **A USB-C OTG adapter with a charging input** (recommended): a USB-C plug, a USB-A socket and a USB-C socket for a charger
+  (sold as "USB-C OTG adapter with PD charging"). The plug goes into the pedal, the Chocolate's own cable (USB-A to USB-C) into
+  the USB-A socket, a USB charger or a power bank (5 V) into the charging socket. The charger powers the Chocolate and charges
+  the pedal (its battery icon reads `USB`).
+- **Or a USB-C hub with a charging input** (the kind sold for laptops: USB-C plug, USB-A ports, a USB-C PD input), the charger
+  in it, the Chocolate in a USB-A port. The host looks behind one hub. A hub that waits for 5 V from its host (the pedal gives
+  none) stays dark: then use the adapter.
+
+A plain USB-C to USB-C cable between the pedal and the Chocolate does nothing (no 5 V, and both are devices); a plain OTG
+adapter with no charging input neither. If the charger adds hum to the guitar sound, try another charger or a power bank.
+
+### On the pedal: SETTINGS, USB PORT
+
+The port is the normal USB device at every power-on: the web installer, the editor over USB and the rescue paths find the
+pedal as before. It becomes the Chocolate's host only by a choice on the pedal: hold FX (SETTINGS), PUSH to the last row,
+**USB PORT**, turn the knob: **FOOTSW**. It is applied at once, and **not saved**: every power-on is COMPUTER again.
+
+- **Why not saved.** The host code has never run on this pedal. Saved, a fault in it (a hang, a crash) would come back at every
+  power-on, and with the port a host the installer could not reach the pedal to fix it. Not saved, switching off brings back
+  the normal USB device, with nothing to undo. Once the cable has worked through a rehearsal, a later build can keep the
+  choice (bit 1 of the store header's USB settings byte, `firmware/px_store.h` pad[1], is free).
+- **Back to COMPUTER:** the same row (the port is the USB device again within a second), or switch the pedal off and on.
+  While the row says FOOTSW a computer cannot reach the pedal over USB; the web editor over Bluetooth still can.
+
+The line under the rows says what the host sees, while the page is open:
+
+| `FOOTSW: ...` | meaning |
+|---|---|
+| `STARTING` | the port is turning into a host (a moment) |
+| `NOTHING ATTACHED` (amber) | no device on the line: nothing plugged, or the Chocolate has no 5 V (see above) |
+| `CONNECTED` (green) | the Chocolate's MIDI interface found and read (interface 2, behind its HID interface 0) |
+| `NO MIDI INTERFACE` (red) | a device answered but no USB MIDI interface was found in it, or it could not be read: unplug it, wait a second, plug it again |
+| `LOW SPEED DEVICE` (red) | a keyboard, a mouse: not supported |
+| `LOST` (red) | the footswitch was connected and is gone (unplugged, or it stopped answering); the host keeps looking |
+
+On PLAY (and a block page), the footer says it too: `USB FOOTSW CONNECTED` (green, 3 s), `USB: NO MIDI INTERFACE` and
+`USB: LOW SPEED DEVICE` (red, 3 s), and **`USB FOOTSW LOST` (red, it stays** until the footswitch is back or the row is set
+to COMPUTER: a footswitch gone in the middle of a song is not a note to miss).
+
+- **Bluetooth is not read twice.** The pedal is also the Chocolate's Bluetooth central (build 28). While the footswitch on the
+  cable is CONNECTED, Bluetooth's notes and controls are not read, or each press would act twice (a block flipped and flipped
+  back, two presets for one); the editor over Bluetooth is not affected. When the cable is lost, Bluetooth is read again: the
+  spare.
+- **Nothing is sent to the footswitch** (the pedal's own changes, which SEND gives a computer, are not sent to it).
+
+### How it works
+
+- `firmware/px_usb.h` builds felucca-bsp's host in (`FELUCCA_USB_HOST`, this image only) and runs it from the main loop
+  (`px_uh_service`): `usb_host_switch` from the row, `usb_host_task` each pass, its messages (`usb_host_message`) to the
+  screen's state (`firmware/px_usbhost.h`). The host enumerates with blocking control transfers on the main loop (about 150 ms
+  when a footswitch is plugged in), finds the first MIDI streaming interface even behind HID, and the 2 kHz USB interrupt reads
+  its IN endpoint into the ring USB MIDI fills: `px_midi_service` reads it as a computer's.
+- **Its clock.** The host times its waits and timeouts with usb.c's `fm1_ms`, which OpenPocket never advanced, and the main
+  loop's `ms_now()` wraps every 178.9 s (TIMER4 at 24 MHz): given that, the host would stop looking for a device at the first
+  wrap. The USB interrupt now adds TIMER4's ticks to `fm1_ms` at each poll (`pxu_ms_add`). A side effect, in this image only:
+  a computer's USB MIDI now carries its arrival time too. It was always 0, so CLOCK > DELAY and CC 116 taps over USB did
+  nothing (they now work; the release image still has that, to fix separately).
+- **The music goes on.** The host's waits on the main loop serve the radio as the "SAVED" wait does (`UH_IDLE`, test build 26):
+  the music may skip a little at the moment the footswitch is found, not more.
+- Not supported: low-speed devices, a hub behind a hub, sending to the footswitch.
+
+### What to check
+
+Install it from this branch's folder (Chrome or Edge, the computer's USB cable in the pedal), then **Connect**, **Install**;
+the start-up screen reads `v42 BT AUDIO TEST 41`:
+
+```bash
+make serve-bt
+```
+
+1. With the computer's cable in: SETTINGS (hold FX), PUSH to the last row: `USB PORT` reads `COMPUTER`, and the line under the
+   rows `USB: HOST CONNECTED`. HOME.
+2. Unplug the computer. Connect the pedal to the adapter, the charger to the adapter (plugged in, on), the Chocolate's cable
+   to the adapter's USB-A socket and to the Chocolate, the Chocolate on. The pedal's battery icon reads `USB`.
+3. SETTINGS, PUSH to `USB PORT`, turn the knob: `FOOTSW`. The line reads `FOOTSW: NOTHING ATTACHED`, then within a second
+   `FOOTSW: CONNECTED`. If it stays at NOTHING ATTACHED, the Chocolate has no 5 V (check the charger, try the hub or another
+   adapter); NO MIDI INTERFACE: unplug the Chocolate's cable, wait a second, plug it in again, and report it.
+4. Still on SETTINGS, press each Chocolate switch: `LAST: PC n` or `LAST: CC n = v` changes at each press (this page reads
+   them and does not act on them). If the line says CONNECTED but `LAST` does not change, the Chocolate may send its MIDI only
+   over Bluetooth while it is linked that way too, or be in a keyboard (HID) mode: switch the pedal off, then on with REV held
+   (this boot without Bluetooth), choose FOOTSW again and press: report what `LAST` does.
+5. HOME. On PLAY the footer says `USB FOOTSW CONNECTED` for 3 s. Play: the switches change presets, switch blocks and do what
+   they were learned for, as over Bluetooth. Tap tempo (CC 116) sets the delay's TIME.
+6. With the Chocolate also linked by Bluetooth (as usual): each press acts once (a block's switch flips it once; CC 118 steps
+   one preset).
+7. Pull the Chocolate's cable while playing: the footer turns red, `USB FOOTSW LOST`, and stays. If the Chocolate is linked by
+   Bluetooth, its switches work again over Bluetooth. Plug the cable back: `USB FOOTSW CONNECTED`, the cable again.
+8. With the phone's music playing: plug and unplug the Chocolate a few times. The music may skip briefly when it is found; the
+   pedal must not restart, and the Bluetooth links must hold.
+9. Back: SETTINGS, `USB PORT`, `COMPUTER`. Unplug the adapter, plug the computer: the installer and `make log` find the
+   pedal. Then switch the pedal off and on with FOOTSW chosen: it starts as COMPUTER.
+10. The log, for the record (the pedal on COMPUTER and on the computer's cable):
+
+```bash
+make log
+```
+
+If the pedal restarts or hangs in FOOTSW: switch it off and on (it is COMPUTER again), and report what the screen said last.
+
 ## Checked on a computer
 
 - `tests/test_bt_ring.c`: a phone at 44.1 kHz with 15 ms of jitter, the pedal at its real 44,117.6 Hz, 60 s: no underrun, the rate
@@ -1148,6 +1262,16 @@ make log
     image calls three more library functions, all in members it already links (`att_server_notify`,
     `hci_le_get_acl_packet_num`, `stack_run_loop_resume`).
 - `tests/test_log.mjs`: the FIFO line and `W` named, and the nine lines classified and reported, as the log tool prints them.
+- Test build 41, the Chocolate by cable: `tests/test_usb_host.c` (felucca-bsp's descriptor parser on the Chocolate's layout as
+  macOS reads it, configuration 1, HID at interface 0 with its interrupt endpoint, Audio Control at 1, MIDI streaming at 2,
+  with bulk and interrupt endpoints and two numberings, a cut read, no MIDI interface, unusable sizes; the packets passed on,
+  channel messages and clock, not SysEx; the screen's state from the host's messages, an unusable device unplugged, PLAY's
+  notes, LOST kept; the host's clock across TIMER4's wrap and after interrupts held off); `tests/uisim.c` with `PX_OWN_FX`
+  (the USB PORT row last, to the port at once and back, never saved, every line's text whole and in its colour, the notes on
+  PLAY and on a block page beside the load figure, an overload's instruction first); `tests/midiio.c` with the image's flags
+  (the cable's Program Change, a learned switch and CC 118 act as a computer's, nothing is sent to the footswitch, Bluetooth's
+  messages not read while the cable's footswitch is connected and read again when it is lost, COMPUTER as before). Not
+  covered: the host's register sequences (felucca-bsp's, unchanged but for the waits' hook): only the pedal can tell.
 - Test build 13's cut, by hand (it is not in `tests/run_tests.sh`): the engine tests built with `-DPX_LOOP_GUARD=1` print the
   same as without it and leave `W` at 0; `rv_block` called with an n above 64 stops at k 64 in each of its four loops, records n
   and k, and writes nothing past frame 63. With the guard off (the release and BLE images) `engine/px_dsp.c` preprocesses to

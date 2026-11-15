@@ -18,7 +18,7 @@
 #endif
 #define FELUCCA_ID "FM-1_900"
 /* the Bluetooth audio test build (docs/BT-AUDIO-TEST.md): its boot text and its id for the second core's bar (app_main) */
-#define BT_TEST_BUILD 40
+#define BT_TEST_BUILD 41
 #define BT_STR_(x) #x
 #define BT_STR(x) BT_STR_(x)
 #define BT_TEST_BUILD_TEXT BT_STR(BT_TEST_BUILD)
@@ -598,6 +598,10 @@ void ble_test_poll(void);
 #define UI_MS() ms_now()
 static void bt_power_apply(void);   /* test build 40: SETTINGS' BT POWER, applied by the Bluetooth task (bt/bt_a2dp.c) */
 #define PX_BT_POWER_APPLY() bt_power_apply()
+static void px_uh_apply(void);      /* test build 41: SETTINGS' USB PORT, COMPUTER / FOOTSW, to the port (px_usb.h) */
+static uint32_t px_uh_note(void);   /* test build 41: the USB footswitch's note on PLAY's footer (px_usb.h, px_usbhost.h) */
+#define PX_USB_MODE_APPLY() px_uh_apply()
+#define PX_UI_NOTE() px_uh_note()
 #endif
 #include "ui.h"
 #include "px_lights.h"      /* the button lights follow the blocks (issue #8; px_leds.h drives them) */
@@ -1016,6 +1020,9 @@ static void app_main(void)
 #endif
 #if !AUDIO_PROBE
         px_usb_service(now);             /* web installer: handshake, update, UBOOT soft key */
+#if FELUCCA_USB_HOST
+        px_uh_service();                 /* test build 41: the footswitch by cable, while SETTINGS' USB PORT says FOOTSW */
+#endif
         px_midi_service();               /* USB-MIDI: Program / Control Change in, the pedal's own changes out */
         lights_update(&PRESET, ui_mode == M_TUNER, now);   /* the button lights follow the blocks */
         if (ui_mode != M_TUNER) {        /* DSP load in the status corner: "DSP 42%", "PEAK 150%" (bypassed), "SAFE 42%" */

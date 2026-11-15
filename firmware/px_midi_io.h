@@ -3,7 +3,9 @@
  *
  * usb.c (felucca-bsp, unchanged) puts the channel voice messages and the clock / transport bytes of the host into
  * midi_in_q (4-byte USB-MIDI event packets, with the millisecond they arrived) and sends what is put in midi_out_q.
- * SysEx never takes this road: it goes to the update code (ota.c) and the editor (px_editor.h) only.
+ * SysEx never takes this road: it goes to the update code (ota.c) and the editor (px_editor.h) only. Test build 41 (the
+ * Bluetooth audio image): with SETTINGS' USB PORT on FOOTSW, felucca-bsp's host (chip/usb_host.c) puts a footswitch's channel
+ * messages in the same ring, so a Chocolate by cable is read as a computer is; nothing is sent back to it then (px_usbhost.h).
  * The including file provides px_midi.h, usb.c's rings, PRESET, cur_preset, load_preset, master_vol, ui_mode / ui_item /
  * ui_nitems (ui.h), st_midi, st_usb and st_commit (px_store.h), and ms_now; in the Bluetooth audio image (PX_OWN_FX) also
  * ui_pad_on (ui.h) and PX_PAD_PRESS (openpocket.c), for CC 64; CC 116 is a tap of the delay's tempo; PX_EXP_SET (openpocket.c)
@@ -140,7 +142,11 @@ static void px_midi_service(void)
     /* the sound may be changed from the host only while the pedal is on a normal page */
     int free_ui = ui_mode != M_SAVE && ui_mode != M_TUNER && ui_mode != M_MOVE && ui_mode != M_MIDI;
     int touched = 0;
+#if PX_OWN_FX
+    mid_usb_up = (uint8_t)(!px_usb_foot && usb_midi_out_ready());   /* (test build 41: a computer, not the footswitch) */
+#else
     mid_usb_up = (uint8_t)usb_midi_out_ready();
+#endif
     while (mi_r != mi_w) {                      /* usb.c's timer interrupt is the only writer */
         uint32_t at = mi_r % MQ, pkt = midi_in_q[at], ms = midi_in_ms[at];
         RING_PUBLISH();
@@ -148,10 +154,21 @@ static void px_midi_service(void)
         px_midi_in(pkt, ms, free_ui, &touched);
     }
 #if OP_BLE_TEST
+#if PX_OWN_FX
+    if (px_uh.st == PXU_OK) ble_in_r = ble_in_w;   /* test build 41: while the footswitch on the cable is connected, Bluetooth's
+                                                * notes and controls are not read: a Chocolate linked both ways would act twice
+                                                * (a block flipped and flipped back, two presets for one). The editor's SysEx
+                                                * is not in this ring. Cable lost: Bluetooth is read again, the spare */
+#endif
     while (ble_in_r != ble_in_w) px_midi_in(ble_in_q[ble_in_r++ % BLE_MQ], ms_now(), free_ui, &touched);
 #endif
     if (midi_in_overflow && mi_r == mi_w) midi_in_overflow = 0;   /* usb.c stopped queueing on overflow: start over */
     if (touched) px_midi_tx_sync(&mid_tx, &PRESET, cur_preset);   /* what the host sent is not sent back */
+#if PX_OWN_FX
+    if (px_usb_foot) { px_midi_tx_sync(&mid_tx, &PRESET, cur_preset); return; }   /* test build 41: the port is the footswitch's
+                                                * host: nothing is sent to it (a footswitch that never takes its OUT endpoint's
+                                                * packets would be dropped as lost, chip/usb_host.c uh_tx_poll) */
+#endif
     if (!usb_midi_out_ready()) { px_midi_tx_sync(&mid_tx, &PRESET, cur_preset); return; }
     while (midi_out_room()) {
         uint32_t pkt = px_midi_tx_next(&mid_tx, &mid_cfg, &PRESET, cur_preset);

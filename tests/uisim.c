@@ -55,6 +55,10 @@ int px_ir_user(int slot, char *name12, float *h) { (void)h; if (slot != 1 && slo
 static int n_catch, n_fade;
 #define PX_PAD_PRESS() (n_catch++)
 #define PX_PAD_STOP() (n_fade++)
+static int usb_apply_n;                                 /* test build 41: SETTINGS' USB PORT to the port (px_usb.h's, counted) */
+static uint32_t usb_note;                               /* and the footswitch's note the host gives PLAY (px_usbhost.h pxu_note) */
+#define PX_USB_MODE_APPLY() (usb_apply_n++)
+#define PX_UI_NOTE() usb_note
 #endif
 #include "ui_text.h"
 #include "ui.h"
@@ -422,6 +426,36 @@ static int pad_gestures(const char *d)
     ui_home(); load_preset(9); full();
     return 0;
 }
+/* test build 41: the USB footswitch's notes on the footer (px_usbhost.h pxu_note): PLAY across the footer, a block page in the
+ * hint's box beside the load figure; an overload's instruction first; the hint back when the note ends */
+static int usb_notes(const char *d)
+{
+    static const uint32_t N[] = {PXU_OK, PXU_NOMIDI, PXU_LOW, PXU_LOST};
+    static const char *const SHOT[] = {"play_usb_footsw_connected", "play_usb_no_midi", "play_usb_low_speed", "play_usb_footsw_lost"};
+    for (uint32_t i = 0; i < 4u; i++)
+        CHECK(ft_width(&FT_SM, UI_NOTE[N[i]]) <= ST_X - 2u, "a footswitch note fits a block page's hint box");
+    ui_home(); load_preset(9); cur_preset = 9; usb_note = 0; full();
+    const int hint = count_col(0, F_Y + 3u, 240, 15, UI_DIM);
+    for (uint32_t i = 0; i < 4u; i++) {
+        usb_note = N[i]; ui_render(); shot(d, SHOT[i]);
+        CHECK(count_col(0, F_Y + 3u, 240, 15, N[i] == PXU_OK ? GRN : RED) > 0 && count_col(0, F_Y + 3u, 240, 15, UI_DIM) < hint,
+              "PLAY: the note in its colour in place of the hint");
+    }
+    usb_note = 0; ui_render();
+    CHECK(count_col(0, F_Y + 3u, 240, 15, RED) == 0 && count_col(0, F_Y + 3u, 240, 15, UI_DIM) == hint, "PLAY: the note ends, the hint is back");
+    ui_blk = PX_B_DELAY; ui_mode = M_BLOCK; ui_item = 0; full();
+    const int corner = count_col(ST_X, F_Y + 3u, ST_W, 15, UI_DIM);
+    usb_note = PXU_LOST; ui_render(); shot(d, "edit_usb_footsw_lost");
+    CHECK(count_col(0, F_Y + 3u, ST_X - 2u, 15, RED) > 0 && count_col(ST_X, F_Y + 3u, ST_W, 15, UI_DIM) == corner && corner > 0,
+          "a block page: the note in the hint's box, the load figure kept");
+    ui_home(); full(); ui_status("PEAK 150%", UI_ST_BYPASS); ui_render(); shot(d, "play_usb_lost_overload");
+    CHECK(count_col(0, F_Y + 3u, 240, 15, WHT) > 0 && count_col(0, F_Y + 3u, 240, 15, RED) == 0,
+          "an overload's instruction goes before the footswitch's note");
+    ui_status("DSP 42%", UI_ST_NORM); ui_render();
+    CHECK(count_col(0, F_Y + 3u, 240, 15, RED) > 0, "  and the note comes back after it");
+    usb_note = 0; full();
+    return 0;
+}
 #endif
 
 int main(int argc, char **argv)
@@ -494,6 +528,35 @@ int main(int argc, char **argv)
         if (px_bt_pwr != 2u) { printf("midi: BT POWER must step back HIGH -> LOW\n"); return 1; }
         midi_draw(); shot(d, "midi_tails_on_bt_low");
     }
+    {   /* test build 41: USB PORT, the last row: COMPUTER / FOOTSW, to the port at once; in FOOTSW the USB line says what the
+         * host sees, each text whole on the line; the controls learned are counted beside it when they fit */
+        static const uint8_t ST[] = {PXU_OFF, PXU_WAIT, PXU_NOMIDI, PXU_LOW, PXU_OK, PXU_LOST};
+        static const char *const SHOT[] = {"midi_usb_footsw_starting", "midi_usb_footsw_nothing_attached", "midi_usb_footsw_no_midi",
+                                           "midi_usb_footsw_low_speed", "midi_usb_footsw_connected", "midi_usb_footsw_lost"};
+        const int a0 = usb_apply_n;
+        midi_push();
+        if (mi_row != MI_USB || MI_USB != MI_ROWS - 1u) { printf("midi: USB PORT must be the last row\n"); return 1; }
+        midi_draw(); shot(d, "midi_usb_port_computer");
+        if (ft_width(&FT_SM, "COMPUTER") > 92u) { printf("midi: COMPUTER must fit the value's box\n"); return 1; }
+        midi_knob(1);
+        if (!px_usb_foot || usb_apply_n != a0 + 1) { printf("midi: USB PORT must turn to FOOTSW and go to the port at once\n"); return 1; }
+        for (uint32_t i = 0; i < sizeof ST; i++) {
+            char t[48] = "FOOTSW: ";
+            static const char *const UST[] = {"STARTING", "NOTHING ATTACHED", "NO MIDI INTERFACE", "LOW SPEED DEVICE", "CONNECTED", "LOST"};
+            strcat(t, UST[ST[i]]);
+            if (ft_width(&FT_SM, t) > 236u) { printf("midi: \"%s\" does not fit the USB line\n", t); return 1; }
+            px_uh.st = ST[i]; midi_draw(); shot(d, SHOT[i]);
+            const uint16_t want = ST[i] == PXU_OK ? GRN : ST[i] <= PXU_WAIT ? UI_ACC : RED;
+            if (!count_col(0, 162, 240, 15, want)) { printf("midi: the USB line must read \"%s\" in its colour\n", t); return 1; }
+        }
+        px_midi_map_clear();
+        mid_map[0] = (px_map_t){ 80, 8 + PX_B_EQ, PXM_MAP_PRESS }; mid_map[1] = (px_map_t){ 81, PXM_CC_NEXT, PXM_MAP_EACH };
+        px_uh.st = PXU_OK; mid_last[0] = PXM_CC; mid_last[1] = 118; mid_last[2] = 127; midi_draw(); shot(d, "midi_usb_footsw_connected_learned");
+        px_midi_map_clear();
+        midi_knob(-1);
+        if (px_usb_foot || usb_apply_n != a0 + 2) { printf("midi: USB PORT must come back to COMPUTER at once\n"); return 1; }
+        px_uh.st = PXU_OFF;
+    }
 #endif
     midi_push(); poison(); uc.screen = -1; ui_invalidate(); ui_render(); status();
     if (midi_saved != 1 || ui_mode != M_CHAIN) { printf("midi: leaving the page after a change must save once and return to the chain\n"); return 1; }
@@ -502,11 +565,19 @@ int main(int argc, char **argv)
     if (midi_saved != 1) { printf("midi: leaving without a change must not save\n"); return 1; }
     midi_open(); midi_push(); midi_push(); midi_push(); midi_knob(-1); midi_close();   /* (the fourth row: USB AUDIO) */
     if (midi_saved != 2 || px_ua_on) { printf("midi: USB AUDIO off again must save once more\n"); return 1; }
+#if PX_OWN_FX
+    {   /* test build 41: USB PORT alone changed: nothing is saved (every power-on is COMPUTER), and FOOTSW stays after the page */
+        midi_open(); while (mi_row != MI_USB) midi_push();
+        midi_knob(1); midi_close();
+        if (midi_saved != 2 || !px_usb_foot) { printf("midi: USB PORT must not be saved, and must stay FOOTSW after leaving\n"); return 1; }
+        px_usb_foot = 0;
+    }
+#endif
     mid_cfg.chan = 16; midi_open(); midi_knob(1); midi_draw(); shot(d, "midi_channel_wraps_to_omni");
     if (mid_cfg.chan != 0) { printf("midi: channel 16 + 1 must wrap to omni\n"); return 1; }
     midi_knob(-1); if (mid_cfg.chan != 16) { printf("midi: omni - 1 must wrap to 16\n"); return 1; }
 #if PX_OWN_FX
-    return quick_wins(d) || overhaul(d) || pad_gestures(d);
+    return quick_wins(d) || overhaul(d) || pad_gestures(d) || usb_notes(d);
 #else
     return quick_wins(d) || overhaul(d);
 #endif

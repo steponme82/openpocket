@@ -388,6 +388,38 @@ int main(void)
         ui_mode = M_BLOCK;
         ok(all && exp_n == 4 && exp_last == 30, "CC 117 sends every position to the expression pedal (the tuner too), the preset unchanged");
     }
+    {   /* test build 41: the Chocolate by cable (SETTINGS' USB PORT on FOOTSW). chip/usb_host.c puts its packets in usb.c's ring
+         * (source 1), so they act as a computer's, the controls learned on the pedal with them; nothing is sent to it; while it is
+         * connected Bluetooth's musical messages are not read (a Chocolate linked both ways would act twice); lost, Bluetooth is
+         * read again; back on COMPUTER the pedal's changes go out as before */
+        reset();
+        px_usb_foot = 1; px_uh.st = PXU_OK;
+        px_midi_map_clear();
+        mid_map[0] = (px_map_t){ 80, 8 + PX_B_EQ, PXM_MAP_PRESS };
+        midi_enqueue(pc(0, 11), 1); px_midi_service();
+        int pcok = cur_preset == 11, eq = PRESET.on[PX_B_EQ];
+        midi_enqueue(cc(0, 80, 127), 2); midi_enqueue(cc(0, 80, 0), 3); px_midi_service();
+        int learned = PRESET.on[PX_B_EQ] == !eq;
+        steps = step_n = 0;
+        midi_enqueue(cc(0, PXM_CC_NEXT, 127), 4); midi_enqueue(cc(0, PXM_CC_NEXT, 0), 5); px_midi_service();
+        ok(pcok && learned && step_n == 1 && steps == 1, "FOOTSW: the cable's Program Change, a learned switch and CC 118 act as a computer's");
+        cur_preset = 9; load_preset(9); PRESET.on[PX_B_DELAY] ^= 1;   /* the pedal's own changes, SEND on */
+        px_midi_service();
+        ok(pop_out() == 0 && mid_usb_up == 0, "FOOTSW: nothing is sent to the footswitch, and no computer is shown on SETTINGS");
+        uint8_t ble_on[] = {0x80, 0x80, 0xB0, (uint8_t)(PXM_CC_ON0 + PX_B_DRIVE), 127};
+        PRESET.on[PX_B_DRIVE] = 0;
+        px_midi_ble_write(ble_on, sizeof ble_on); px_midi_service();
+        ok(PRESET.on[PX_B_DRIVE] == 0 && ble_in_r == ble_in_w, "connected by cable: Bluetooth's Control Change is not read, its ring emptied");
+        px_uh.st = PXU_LOST;
+        px_midi_ble_write(ble_on, sizeof ble_on); px_midi_service();
+        ok(PRESET.on[PX_B_DRIVE] == 1, "the cable's footswitch lost: Bluetooth's is read again (the spare)");
+        px_usb_foot = 0; px_uh.st = PXU_OFF;
+        px_midi_service(); (void)pop_out();
+        cur_preset = 12; load_preset(12);
+        px_midi_service();
+        ok(pop_out() == pc(0, 12) && pop_out() == 0, "COMPUTER again: a preset change on the pedal is sent, as before");
+        px_midi_map_clear();
+    }
 #endif
     printf("\n%s\n", failed ? "MIDI glue tests FAILED" : "all MIDI glue tests passed");
     return failed ? 1 : 0;
