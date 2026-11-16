@@ -18,7 +18,8 @@
 #    (test build 42): the reverb's tail the same with it on and off, its 41 Hz whole, the right channel alone, bit for bit
 #    on two cores, fades, the volume pedal, its level against the amps' (tests/engine/bassout.c); USB RETURN (test build
 #    43): the computer's sound into the chain before any block, skipping the ones before it, mixed or with the guitar cut,
-#    following the preset's order, bit for bit on two cores (tests/engine/usbret.c)
+#    following the preset's order, bit for bit on two cores (tests/engine/usbret.c); test build 44: SHIMMER's octave in tune,
+#    BARITONE three times sooner, MONO SYNTH's tracker, SITAR and STRINGS rebuilt, TAPE FLUTE (tests/engine/synfix.c)
 #  - changes without clicks (v38): knob changes glide to exactly where a full set goes, blocks on / off fade, fewer clicks
 #  - USER IR (v38): the partitioned FFT convolution against the direct FIR, slots, names
 #  - wet lanes (v39): the delay through its lane as inline bit for bit, the reverb's tail lag frames later, the pipeline
@@ -88,10 +89,12 @@ $CC -O2 $FX -Iengine tests/engine/pipe_test.c engine/px_dsp.c firmware/px_math.c
 $CC -O2 $FX -Iengine tests/engine/long.c engine/px_dsp.c firmware/px_math.c -lm -o build/long_fx && build/long_fx "LOW OCTAVE" PAD "TREBLE BOOST" | tail -1
 echo "== the Bluetooth audio image's own effects: LOW OCTAVE (PIT), SYN PAD, TREBLE BOOST (DRV) (docs/OWN-FX.md)"
 for D in "$FX" "-DPX_OWN_FX=1"; do                     # as the image builds the engine, and with the host's defaults (PX_RUNS 1)
-  for t in lowoct pad exp nam_keep tails treble bassout usbret; do   # (exp: test build 25's expression pedal; nam_keep:
-                                                        # test build 28's factory models left out, PXN_KEEP below; tails,
-                                                        # treble: test build 40's TAILS and TREBLE BOOST; bassout: test build
-                                                        # 42's LOW OCTAVE out of the chain; usbret: test build 43's USB RETURN)
+  for t in lowoct pad exp nam_keep tails treble bassout usbret synfix; do   # (exp: test build 25's expression pedal;
+                                                        # nam_keep: test build 28's factory models left out, PXN_KEEP below;
+                                                        # tails, treble: test build 40's TAILS and TREBLE BOOST; bassout: test
+                                                        # build 42's LOW OCTAVE out of the chain; usbret: test build 43's USB
+                                                        # RETURN; synfix: test build 44's SHIMMER, BARITONE, MONO SYNTH, SITAR,
+                                                        # STRINGS, TAPE FLUTE)
     $CC -O2 $D -Iengine tests/engine/$t.c engine/px_dsp.c firmware/px_math.c -lm -o build/$t
     build/$t > build/$t.log || { cat build/$t.log; exit 1; }; tail -1 build/$t.log
   done

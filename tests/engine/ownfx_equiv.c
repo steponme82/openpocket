@@ -42,8 +42,17 @@ static int ntypes_old(int b)                           /* the models both builds
 {
     int n = px_ntypes(b);
     while (n > 0 && (!strcmp(px_type_name(b, n - 1), "LOW OCTAVE") || !strcmp(px_type_name(b, n - 1), "PAD") ||
-                     !strcmp(px_type_name(b, n - 1), "TREBLE BOOST"))) n--;
+                     !strcmp(px_type_name(b, n - 1), "TREBLE BOOST") || !strcmp(px_type_name(b, n - 1), "TAPE FLUTE"))) n--;
     return n;
+}
+/* test build 44: the Bluetooth image changes these on purpose (engine/px_dsp.c; tests/engine/synfix.c): SHIMMER's octave voice
+ * (here its amount, SHIMMER, is 0: the reverb type itself, its tank and its other knobs, is still compared bit for bit), and
+ * SYN's STRINGS and SITAR (rebuilt), MONO SYNTH (its tracker) and BARITONE (its shifter): here an ORGAN in their place */
+static int syn_changed(int t) { return t == PX_SYN_STRINGS || t == PX_SYN_MONO || t == PX_SYN_SITAR || t == PX_SYN_BARI; }
+static void no_shim(px_preset_t *p)
+{
+    if (p->type[PX_B_REVERB] % PX_REV_COUNT == PX_REV_SHIMMER) p->p[PX_B_REVERB][3] = 0;
+    if (syn_changed(p->type[PX_B_SYN] % PX_SYN_COUNT)) p->type[PX_B_SYN] = PX_SYN_ORGAN;
 }
 static uint64_t H(uint64_t h, const float *o, int n)
 {
@@ -115,6 +124,7 @@ static void rnd_preset(px_preset_t *p, int nam)
     else if (p->type[PX_B_AMP] == PX_AMP_NAM) p->type[PX_B_AMP] = (uint8_t)(rnd() % PX_AMP_COUNT);
     for (int i = PX_NBLK - 1; i > 0; i--) { const int j = (int)(rnd() % (unsigned)(i + 1)); const uint8_t t = p->order[i]; p->order[i] = p->order[j]; p->order[j] = t; }
     if (rnd() & 1) px_order_default(p->order);
+    no_shim(p);
 }
 static void alone(px_preset_t *p, int blk)
 {
@@ -136,9 +146,10 @@ int main(int argc, char **argv)
     if (strchr(sec, 'A'))
     for (int blk = 0; blk < PX_NBLK; blk++) for (int t = 0; t < ntypes_old(blk); t++) {
         if (blk == PX_B_AMP && t == PX_AMP_NAM) continue;
+        if (blk == PX_B_SYN && syn_changed(t)) continue;
         for (int a = 0; a < 8; a++) {
             px_preset_t p; alone(&p, blk);
-            p.type[blk] = (uint8_t)t; memcpy(p.p[blk], V[a], 5);
+            p.type[blk] = (uint8_t)t; memcpy(p.p[blk], V[a], 5); no_shim(&p);
             printf("A blk %d type %d set %d %016llx\n", blk, t, a, (unsigned long long)run(&p, a & 1, 2 * 44100, 64)); n++;
         }
     }
@@ -147,7 +158,8 @@ int main(int argc, char **argv)
         px_preset_t p; px_preset_factory(&p, 9);
         for (int z = 0; z < PX_NBLK; z++) p.on[z] = (z == PX_B_AMP || z == PX_B_CAB || z == PX_B_DRIVE || z == blk);
         if (blk == PX_B_AMP && t == PX_AMP_NAM) continue;
-        p.type[blk] = (uint8_t)t; memcpy(p.p[blk], V[5 + a], 5);
+        if (blk == PX_B_SYN && syn_changed(t)) continue;
+        p.type[blk] = (uint8_t)t; memcpy(p.p[blk], V[5 + a], 5); no_shim(&p);
         printf("B blk %d type %d set %d %016llx\n", blk, t, a, (unsigned long long)run(&p, a, 44100, 64)); n++;
     }
     if (strchr(sec, 'C'))
@@ -163,6 +175,7 @@ int main(int argc, char **argv)
                 px_preset_t q = e.cur;
                 for (int j = 0; j < 4; j++) { const int z = (int)(rnd() % PX_NBLK); q.p[z][rnd() % 5] = (uint8_t)(rnd() % 101); }
                 const int z = (int)(rnd() % PX_NBLK); q.on[z] ^= 1;
+                no_shim(&q);
                 if (px_engine_change(&e, &q) == PX_CH_KNOBS) { px_engine_prepare(&e, &q); px_engine_knobs(&e, &q); }
                 dly_check();
             }
@@ -184,6 +197,7 @@ int main(int argc, char **argv)
                 px_preset_t q = e.cur;
                 const int z = (int)(rnd() % PX_NBLK); if (z != PX_B_AMP) q.on[z] ^= 1;
                 q.p[rnd() % PX_NBLK][rnd() % 5] = (uint8_t)(rnd() % 101);
+                no_shim(&q);
                 if (px_engine_change(&e, &q) == PX_CH_KNOBS) { px_engine_prepare(&e, &q); px_engine_knobs(&e, &q); }
             }
             if (e.wl_on) px_wet_swap(&e);
@@ -198,7 +212,7 @@ int main(int argc, char **argv)
     }
     if (strchr(sec, 'F'))
     for (int f = 0; f < px_preset_count(); f++) for (int w = 0; w < 3; w++) {
-        px_preset_t p; px_preset_factory(&p, f);
+        px_preset_t p; px_preset_factory(&p, f); no_shim(&p);
         printf("F preset %d %s %016llx\n", f + 1, w == 0 ? "lanes-off" : w == 1 ? "lanes-on" : "bs16",
                (unsigned long long)run(&p, w == 1, NS, w == 2 ? 16 : 64)); n++;
     }

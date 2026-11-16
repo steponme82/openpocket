@@ -149,6 +149,43 @@ so a block's return is mixed once; PRE and POST keep their own settings, as they
 side made before the place fade with the guitar. `PX_RT_NONE`, or no sound with the guitar kept, leaves the chain bit for bit
 as build 42's (`tests/engine/usbret.c`).
 
+## Test build 44: five models put right, and TAPE FLUTE
+
+A player's verdict on models this image shared with the release: SHIMMER out of tune, BARITONE sluggish, MONO SYNTH tracking
+badly, SITAR and STRINGS not sounding like what they are named for. In this image only (the release's are unchanged, bit for
+bit: `tests/ownfx_equiv.sh` leaves these out by name):
+
+- **SHIMMER**: its octave is in tune. Its shifter crossfaded two taps with no regard to phase, so the octave landed on a comb
+  86 Hz apart instead of on twice the note: on held notes E 330 Hz +41 cents, B 247 Hz +42, A 440 Hz -17, G 196 Hz -51. Each
+  tap now comes in where it is in phase with the other (`ox_voice`, `ox_align`: SOLA, as PITCH's, comparing 5.8 ms and reaching
+  one period of 69 Hz), within 6 cents from 73 Hz to 988 Hz.
+- **BARITONE**: its sound comes 8 to 11 ms after the pick on average, against 20 to 25 (worst 12 to 22 ms, against 31 to 40). A
+  tap plays loudest in the middle of its sweep, about (window + one period) / 2 late: the window is now 448 samples instead of
+  1400, and the search takes the first offset in phase rather than the best match anywhere in 512 samples. In tune within a few
+  cents, its level as steady as before.
+- **MONO SYNTH**: a new tracker. The old one counted zero crossings after a fixed 110 Hz low-pass (a note at 660 Hz came out of
+  it 60 dB down, under hum and noise: it was lost above about 600 Hz), and after a silence it opened at the last note's pitch
+  until it caught up. Now YIN on the note's fundamentals (every 128 samples, at an eighth of the rate, then refined at the full
+  rate between samples), a new note taken when heard twice and played at once, the gate shut until the first clear estimate.
+  On twenty test notes: in tune after 16.5 ms on average (84 before), a wrong pitch 141 ms in all (2.1 s before), no octave
+  error.
+- **SITAR**, rebuilt as an Indian sitar. The jawari: the string presses on the curved bridge on one side of its swing, so the
+  note is read up to 0.54 ms late in step with its own wave (BUZZ): the buzz is deepest while the note is loud and narrows as it
+  dies, and its partials stay harmonic. The tarab: six sympathetic strings an octave above KEY on its pentatonic (Sa Re Ga Pa Dha
+  Sa'), bright, tuned between samples, ringing DECAY long (0.8 to 4 s) on what the note excites in them (SYMPATH). The body: the
+  low end out, the nasal formant at 1.8 kHz, the bridge's sizzle at 3.6 kHz. Set KEY to the song's key.
+- **STRINGS**, rebuilt as an orchestral section. The bow: the note's level held (up to +20 dB), swelled in over ATTACK and again,
+  softly, at each new pick (the bow turning), let go over RELEASE; the rosin: a little of the top through a soft clip; the body:
+  the guitar's honk at 1.1 kHz out, the violins' wood at 280 Hz and their bridge hill at 2.8 kHz (TONE); the section: four
+  players 7 to 16 ms apart, each with its own vibrato and drift. OCTAVE: the cellos an octave down up to noon, then the violins
+  an octave up over them, in tune (`ox_voice`). CHOIR keeps its old code.
+- **TAPE FLUTE**, new (the 13th SYN type): a Mellotron-like flute played at MONO SYNTH's tracker's pitch, one note at a time:
+  the flute's tone, its breath with the chiff at each note (BREATH), the tape's wow and flutter (WOW), its soft saturation and top
+  (TONE), a swell over ATTACK (20 to 500 ms), DRY for the guitar under it.
+
+Each one's level at noon is TWIN + 1x12's alone, as every other model's (BS.1770 over the five loops; `engine/px_trim.h`). The
+web editor reads the catalogue again (INFO "v42 FX3"). `tests/engine/synfix.c` checks all six.
+
 ## SYN PAD
 
 A smooth chord held under your playing, for as long as you want. Strum a chord and press the **left footswitch** (or press
@@ -290,6 +327,13 @@ does its one-off work in a single block.
   after 256, back the same way, no step larger than the sine's own; LOW OCTAVE's octave cut with the guitar; a NAM amp on two
   cores gives the plain engine's output bit for bit, a block later, at five places, cut or not; STEREO's two channels sum to
   the mono sound.
+- `tests/engine/synfix.c` (9 checks, the same builds): SHIMMER's octave on held notes from 73 Hz to 988 Hz within 8 cents;
+  BARITONE at -5 and -12 semitones 8 to 13 ms after the pick on average, low notes within 12 cents; MONO SYNTH on twenty notes
+  (picked and legato, 82 Hz to 1 kHz, weak fundamentals, a bend) in tune after 35 ms at most on average, a picked note wrong for
+  under 15 ms, no octave error; SITAR's jawari at least doubles the share of the sound above 2 kHz and leaves the pitch, and its
+  tarab rings in KEY after the note (G4 at least 12 dB over F4, off the scale); STRINGS swell in (the pick 12 dB under) and hold
+  the level within 6 dB while the guitar dies, the cellos in tune; TAPE FLUTE plays the note within 20 cents, nothing to
+  silence, and swells in.
 - `tests/ownfx_equiv.sh`: every existing model in this image's engine against the same engine without `PX_OWN_FX`, 5,460
   runs bit for bit (every block x model x 8 settings, random chains, NAM chains through the two cores' pipeline, the 52
   factory presets, every delay over a TIME x FEEDBACK x TONE x WOW grid, turned while playing and at the top for 6 s, every

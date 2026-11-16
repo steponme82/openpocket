@@ -176,8 +176,8 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
 #if PX_OWN_FX   /* the Bluetooth audio image's own models (LOW OCTAVE, PAD, TREBLE BOOST): a version text of its own, because
                  * the web editor keeps each firmware's catalogue under its identity and version (docs/pxedit.js) and would
                  * otherwise show a v42 pedal's, without them. "v42 FX2" since test build 40 (TREBLE BOOST): an editor that
-                 * kept build 38's "v42 FX" catalogue reads it again */
-        ed_b(ED_PROTO); ed_str(OP_VERSION " FX2", 15); ed_str(FELUCCA_ID_PTR, 27);
+                 * kept build 38's "v42 FX" catalogue reads it again. "v42 FX3" since test build 44 (TAPE FLUTE) */
+        ed_b(ED_PROTO); ed_str(OP_VERSION " FX3", 15); ed_str(FELUCCA_ID_PTR, 27);
 #else
         ed_b(ED_PROTO); ed_str(OP_VERSION, 15); ed_str(FELUCCA_ID_PTR, 27);
 #endif

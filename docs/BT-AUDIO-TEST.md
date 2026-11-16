@@ -5,7 +5,7 @@ phone as **`OpenPocket`**, pairs with no PIN, and the phone's music plays **mixe
 
 It is a test image, its own build target (`make bt`). The normal firmware and the installer's packages are unchanged.
 
-> **Status: test build 43** (below; build 38 is the one played longest, about 2 hours of music). Test build 27 brought the web
+> **Status: test build 44** (below; build 38 is the one played longest, about 2 hours of music). Test build 27 brought the web
 > editor over Bluetooth. Up to test build 14: builds 1 to 10 ran on a pedal: the
 > radio starts, a phone sees the pedal and links, but no phone
 > could pair, and the guitar crackled. Build 11 paired an iPhone (below, "Test build 11"), but no music came out, and the guitar
@@ -24,8 +24,10 @@ It is a test image, its own build target (`make bt`). The normal firmware and th
 - **In since test build 14:** the pairing remembered after a power-off (a phone paired once connects again without being
   paired again), kept in two flash sectors of the pedal's own (below, "The pairing kept").
 - **Its own effects** ([OWN-FX.md](OWN-FX.md)): LOW OCTAVE, a 6th PITCH model (an octave under the low strings only),
-  SYN PAD, a 12th SYN model (a chord caught on the left footswitch and held under you), and since test build 40 TREBLE
-  BOOST, a 5th DRV model (a germanium treble booster). Only this image has them; the release's engine is unchanged.
+  SYN PAD, a 12th SYN model (a chord caught on the left footswitch and held under you), since test build 40 TREBLE
+  BOOST, a 5th DRV model (a germanium treble booster), and since test build 44 TAPE FLUTE, a 13th SYN model. Test build 44
+  also puts right SHIMMER, BARITONE and MONO SYNTH and rebuilds SITAR and STRINGS. Only this image has them; the release's
+  engine is unchanged.
 - **In since test build 24:** Bluetooth MIDI (BLE MIDI) beside the music, for a Chocolate (below, "Test build 24"); since
   test build 27 the web editor over Bluetooth too, on a second LE link beside the Chocolate's (below, "Test build 27: the web
   editor over Bluetooth"); since test build 28 the regular Chocolate too, the pedal as its central (below, "Test build 28").
@@ -1311,6 +1313,41 @@ start-up screen reads `v42 BT AUDIO TEST 43`:
 make serve-bt
 ```
 
+## Test build 44: SHIMMER in tune, BARITONE sooner, MONO SYNTH's tracker, SITAR and STRINGS rebuilt, TAPE FLUTE
+
+Build 43 with the models a player found unusable put right, and one more ([OWN-FX.md](OWN-FX.md), "Test build 44"):
+
+- **SHIMMER**: the octave in tune (it was off by up to half a semitone, by the note: E +41 cents, G -51).
+- **BARITONE**: about 9 ms after the pick instead of 23 on average.
+- **MONO SYNTH**: a new tracker (YIN): in tune about 16 ms after the pick on every note from 82 Hz to 1 kHz (it lost every
+  note above about 600 Hz), and no more wrong note at the start of a phrase.
+- **SITAR**: rebuilt as an Indian sitar: the jawari's buzz that narrows as the note dies, and six sympathetic strings an octave
+  above KEY on its pentatonic. Set KEY to the song's key.
+- **STRINGS**: rebuilt as an orchestral section: the bow swelling in and holding the note, four players with their own vibrato,
+  the violins' body; OCTAVE adds the cellos, then the violins an octave up.
+- **TAPE FLUTE** (new, the last SYN model): a Mellotron-like flute on MONO SYNTH's tracker, one note at a time: BREATH, the
+  tape's WOW, TONE, ATTACK, DRY.
+
+The web editor reads the catalogue again (its version text is now `v42 FX3`). Room: the image is 630,132 bytes (14.8 KB of the
+slot left), the RAM code window has 1,160 bytes free (STRINGS' and TAPE FLUTE's samples, MONO's tracker and the shifters'
+search run from the flash: inline, the new code was 1,080 bytes over), the RAM 2,944, the pool 852.
+
+### What to check
+
+1. SHIMMER on a held chord and on single notes up the neck: the octave in tune with the note.
+2. BARITONE at MIX 100: play fast; it follows the pick.
+3. MONO SYNTH: single notes all over the neck, slides and bends: the right note from the first moment.
+4. SITAR with KEY on the song's key: the buzz on each note, the sympathetic strings ringing after it. STRINGS with a HALL: chords
+   swelling in, held; OCTAVE at noon for the cellos. TAPE FLUTE on a melody.
+5. Anything that sounds wrong, say which model and what you played.
+
+Install it from this branch's folder (Chrome or Edge, the computer's USB cable in the pedal), then **Connect**, **Install**; the
+start-up screen reads `v42 BT AUDIO TEST 44`:
+
+```bash
+make serve-bt
+```
+
 ## Checked on a computer
 
 - `tests/test_bt_ring.c`: a phone at 44.1 kHz with 15 ms of jitter, the pedal at its real 44,117.6 Hz, 60 s: no underrun, the rate
@@ -1380,6 +1417,8 @@ make serve-bt
   (the cable's Program Change, a learned switch and CC 118 act as a computer's, nothing is sent to the footswitch, Bluetooth's
   messages not read while the cable's footswitch is connected and read again when it is lost, COMPUTER as before). Not
   covered: the host's register sequences (felucca-bsp's, unchanged but for the waits' hook): only the pedal can tell.
+- Test build 44: `tests/engine/synfix.c` (the six models, [OWN-FX.md](OWN-FX.md)), `tests/ownfx_equiv.sh` (every other model as the
+  release's, bit for bit: 5,420 runs), and the bundled loops rendered through the old and the new models for listening.
 - Test build 43, USB audio: `tests/engine/usbret.c` (23 checks, as the image builds the engine and with the host's flags): with
   nothing given or the guitar kept, every place gives build 42's sound bit for bit; before DELAY with the guitar cut, a drive,
   an amp and a cabinet on or off give the same output (the computer's sound skips them), inline and through the wet lanes; MIX

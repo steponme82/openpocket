@@ -19,4 +19,9 @@ static const float SFX_DB[PX_SFX_COUNT] = {5.45f, 3.54f, 3.82f, -0.15f, 1.58f, -
 static const float MOD_DB[PX_MOD_COUNT] = {1.41f, 2.83f, 3.07f, 2.49f, 0.08f, 5.70f, 4.01f, 2.50f, 0.09f, -0.45f, 0.03f};
 static const float DLY_DB[PX_DLY_COUNT] = {-0.66f, -0.52f, -0.78f, -0.61f, -0.34f, -0.93f, -0.62f, -0.55f};
 static const float REV_DB[PX_REV_COUNT] = {1.74f, 1.97f, 1.83f, 1.51f, 1.63f, 2.00f, 1.81f, 1.56f};
+#if PX_OWN_FX   /* test build 44: STRINGS and SITAR rebuilt, MONO SYNTH and BARITONE changed, TAPE FLUTE new (PAD as before): each at
+                 * noon as loud as TWIN + 1x12 alone, measured the same way (BS.1770 over the five loops) */
+static const float SYN_DB[PX_SYN_COUNT] = {-13.42f, -12.18f, -2.88f, -5.81f, -10.56f, -8.72f, -6.96f, -1.30f, -3.73f, -2.85f, 3.28f, 0.0f, -7.51f};
+#else
 static const float SYN_DB[PX_SYN_COUNT] = {-13.42f, -12.18f, -13.41f, -5.81f, -14.03f, -8.72f, -6.96f, -1.30f, -3.73f, -0.98f, 3.74f};
+#endif

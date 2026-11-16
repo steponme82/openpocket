@@ -418,12 +418,13 @@ static const char *const PN_SIT[] = {"KEY", "BUZZ", "SYMPATH", "DECAY"};
 static const char *const PN_BAR[] = {"TUNE", "TONE", "MIX"};
 #if PX_OWN_FX
 static const char *const PN_PAD[] = {"ATTACK", "RELEASE", "TONE", "MOTION", "MIX"};
+static const char *const PN_FLU[] = {"ATTACK", "BREATH", "WOW", "TONE", "DRY"};   /* test build 44: TAPE FLUTE */
 #endif
 static const tdef T_SYN[PX_SYN_COUNT] = {
     {"ORGAN", 5, PN_ORG}, {"CHURCH ORGAN", 5, PN_CHU}, {"STRINGS", 5, PN_STR}, {"CHOIR", 5, PN_CHO},
     {"MONO SYNTH", 5, PN_MONO}, {"PWM SYNTH", 5, PN_PWM}, {"BASS SYNTH", 5, PN_BSY}, {"12-STRING", 3, PN_12S},
 #if PX_OWN_FX
-    {"ACOUSTIC", 4, PN_ACO}, {"SITAR", 4, PN_SIT}, {"BARITONE", 3, PN_BAR}, {"PAD", 5, PN_PAD}};
+    {"ACOUSTIC", 4, PN_ACO}, {"SITAR", 4, PN_SIT}, {"BARITONE", 3, PN_BAR}, {"PAD", 5, PN_PAD}, {"TAPE FLUTE", 5, PN_FLU}};
 #else
     {"ACOUSTIC", 4, PN_ACO}, {"SITAR", 4, PN_SIT}, {"BARITONE", 3, PN_BAR}};
 #endif
@@ -737,6 +738,9 @@ static const char *const NOTE_TXT[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "
 static int syn_key_idx(int v) { int i = v * 12 / 101; return i < 0 ? 0 : (i > 11 ? 11 : i); }
 static float syn_att_ms(float x) { return 10.0f + x * x * 1490.0f; }     /* STRINGS / CHOIR attack */
 static float syn_rel_ms(float x) { return 50.0f + x * x * 2950.0f; }     /* release */
+#if PX_OWN_FX
+static float flute_att_ms(float x) { return 20.0f + x * x * 480.0f; }    /* test build 44: TAPE FLUTE's attack */
+#endif
 static int syn_bari_st(int v) { return -1 - (int)((float)v * 0.01f * 11.99f); }
 static int syn_oct(int v) { return v < 34 ? -1 : (v < 67 ? 0 : 1); }
 /* presets saved before v34 (store format 1 / 2): the old amp / drive / cab numbers -> the nearest of the v34 set */
@@ -848,6 +852,7 @@ int px_param_text(int b, int t, int k, int v, char *buf)
         if (t == PX_SYN_BARI && k == 0) { put_int(buf, syn_bari_st(v), 0); return 1; }
 #if PX_OWN_FX
         if (t == PX_SYN_PAD) { pad_text(buf, k, v); return 1; }
+        if (t == PX_SYN_FLUTE && k == 0) { put_int(buf, (int)(flute_att_ms(x) + 0.5f), 0); return 1; }
 #endif
         break;
     case PX_B_DELAY:
@@ -2148,6 +2153,15 @@ static void syn_voice(px_engine *e, int v, float st, float W, float lvl)
     if (v >= e->syn_nv) e->syn_nv = v + 1;
 }
 static float opk(float sr, float hz) { float k = 2.0f * PI_F * hz / sr; return k > 0.9f ? 0.9f : k; }   /* one-pole */
+#if PX_OWN_FX
+#define SIT_LINE 128                                   /* test build 44, SITAR: the jawari's line in syn_buf, then the tarab */
+#define SIT_DEP 24.0f                                  /* its deepest reach (samples, 0.54 ms) */
+static float px_sit_mu[6];                             /* each tarab string's length past its whole samples (in tune: a string's
+                                                        * resonance is under 1 Hz wide, whole samples put G4 7 cents off) */
+static int px_mt_dw, px_mt_cn;                         /* test build 44, MONO's tracker (mono_est): the decimated ring's next
+                                                        * place; a new note heard once (1) */
+static float px_mt_cf;                                 /* (and its frequency) */
+#endif
 static void rc_syn(px_engine *e)
 {
     const px_preset_t *p = &e->cur;
@@ -2163,6 +2177,7 @@ static void rc_syn(px_engine *e)
         memset(e->syn_buf, 0, sizeof e->syn_buf); memset(e->syn_cb, 0, sizeof e->syn_cb);
         e->syn_f0 = 0.0f; e->syn_per = 0.0f; e->syn_p1 = e->syn_p2 = 0.0f;
 #if PX_OWN_FX
+        e->syn_w = 0; e->syn_lp = 0.0f; px_mt_dw = 0; px_mt_cn = 0;   /* (test build 44: MONO's tracker from silence) */
         e->pad_capr = -1; e->pad_act = -1; e->pad_k = 0; e->pad_y0 = e->pad_y1 = 0.0f; e->pad_attp = 0;
         e->pad_env = e->pad_slow = 0.0f;
         for (int r = 0; r < 3; r++) { e->pad_g[r] = e->pad_gt[r] = 0.0f; for (int g = 0; g < PX_PAD_NG; g++) e->pad_gt0[r][g] = (float)g / (float)PX_PAD_NG; }
@@ -2199,7 +2214,54 @@ static void rc_syn(px_engine *e)
         e->syn_cdep[0] = 0.0006f * sr; e->syn_cdep[1] = 0.0f;          /* a little "celeste" movement */
         e->syn_linc[0] = 0.4f / sr; e->syn_linc[1] = 5.0f / sr; e->syn_cbase = 0.008f * sr;
     } break;
+#if PX_OWN_FX
+    case PX_SYN_STRINGS: {
+        /* test build 44: an orchestral section, rebuilt (the one before was the guitar through an octave and a string
+         * machine's chorus, its pick and its decay heard through). The bow: the note's level held (up to +20 dB), swelled
+         * in over ATTACK, and again, softly, at each new pick (the bow turning: a dip to 35 %), let go over RELEASE. The
+         * rosin: a little of the top above 2 kHz through a soft clip. The body: the guitar's honk at 1.1 kHz out, the
+         * violins' wood at 280 Hz and their bridge hill at 2.8 kHz (TONE, with the top). The section: four players 7 to
+         * 16 ms apart, each with its own vibrato (5.5 Hz, about 12 cents) and slow drift. OCTAVE: the cellos an octave down
+         * (to 50), then the violins an octave up over them, each an aligned shifter (ox_voice) */
+        const float att = syn_att_ms(a) * 0.001f, rel = syn_rel_ms(b) * 0.001f;
+        e->syn_ka = onepole_k(sr, att * 0.45f); e->syn_kr = onepole_k(sr, rel * 0.45f);   /* (90 % in the time shown) */
+        e->syn_ea = onepole_k(sr, 0.002f); e->syn_er = onepole_k(sr, 0.05f); e->syn_sr2 = onepole_k(sr, 0.25f);
+        syn_voice(e, 0, -12.0f, 1024.0f, c < 0.5f ? c * 1.6f : 0.8f);
+        syn_voice(e, 1, 12.0f, 1024.0f, c > 0.5f ? c - 0.5f : 0.0f);
+        e->syn_d8 = 1.0f;
+        e->syn_cbase = 0.007f * sr; e->syn_cdep[0] = 0.0002f * sr; e->syn_cdep[1] = 0.0015f * sr;
+        e->syn_linc[0] = 5.5f / sr; e->syn_linc[1] = 0.37f / sr;
+        e->syn_hpk = opk(sr, 2000.0f);
+        e->syn_pk = expf(-1.0f / (att * 0.35f * sr + 1.0f));   /* (the bow's turn: its dip comes back over a third of ATTACK) */
+        bq_highpass(&e->syn_f[0], sr, 65.0f, 0.7f);
+        bq_peak(&e->syn_f[1], sr, 280.0f, 1.0f, 2.0f);
+        bq_peak(&e->syn_f[2], sr, 1100.0f, 1.2f, -3.0f);
+        bq_peak(&e->syn_f[3], sr, 2800.0f, 0.9f, 2.0f + d * 4.0f);
+        bq_lowpass(&e->syn_f[4], sr, 3500.0f + d * 6500.0f, 0.7f);
+        e->syn_nf = 5; e->syn_dry = f; e->syn_out = 0.5f;
+    } break;
+    case PX_SYN_FLUTE: {
+        /* test build 44: a tape flute (the Mellotron's), new. One note at a time on MONO SYNTH's tracker (mono_est): a
+         * flute's tone (its fundamental, a little of the 2nd and 3rd) at the note's pitch, the breath (noise about 2.6 kHz,
+         * more at the start: the chiff), the tape's wow (0.55 Hz) and flutter (7.3 Hz, WOW), its soft saturation and top
+         * (TONE); it swells in over ATTACK when the note is heard, and lets go in 90 ms */
+        bq_lowpass(&e->syn_f[0], sr, 1400.0f, 0.54f); bq_lowpass(&e->syn_f[1], sr, 1400.0f, 1.31f);
+        bq_highpass(&e->syn_f[2], sr, 60.0f, 0.7f);
+        e->syn_lpk = opk(sr, 300.0f);
+        bq_bandpass(&e->syn_f[3], sr, 2600.0f, 0.9f);
+        bq_lowpass(&e->syn_f[4], sr, 2500.0f + d * 6000.0f, 0.7f);
+        bq_highpass(&e->syn_f[5], sr, 120.0f, 0.7f);
+        e->syn_ka = onepole_k(sr, flute_att_ms(a) * 0.001f * 0.45f); e->syn_kr = onepole_k(sr, 0.04f);
+        e->syn_ea = onepole_k(sr, 0.001f); e->syn_er = onepole_k(sr, 0.03f);
+        e->syn_wave = b; e->syn_pwd = c;
+        e->syn_linc[0] = 0.55f / sr; e->syn_linc[1] = 7.3f / sr;
+        e->syn_fdk = expf(-1.0f / (0.06f * sr));
+        e->syn_dry = f; e->syn_out = 0.3f;
+    } break;
+    case PX_SYN_CHOIR: {                               /* (as before) */
+#else
     case PX_SYN_STRINGS: case PX_SYN_CHOIR: {          /* tape replay / string machine: swell + octave + ensemble */
+#endif
         float oct = t == PX_SYN_STRINGS ? c : d;
         e->syn_ka = onepole_k(sr, syn_att_ms(a) * 0.001f); e->syn_kr = onepole_k(sr, syn_rel_ms(b) * 0.001f);
         float n = 1.0f / (1.0f + oct * 0.8f + 0.3f);
@@ -2221,8 +2283,14 @@ static void rc_syn(px_engine *e)
         e->syn_dry = f;
     } break;
     case PX_SYN_MONO:                                  /* one note: tracker -> oscillator -> 24 dB ladder */
+#if PX_OWN_FX   /* test build 44: the tracker's input for YIN (mono_yin): the fundamentals up to 1.4 kHz, a tilt towards them */
+        bq_lowpass(&e->syn_f[0], sr, 1400.0f, 0.54f); bq_lowpass(&e->syn_f[1], sr, 1400.0f, 1.31f);
+        bq_highpass(&e->syn_f[2], sr, 60.0f, 0.7f);
+        e->syn_lpk = opk(sr, 300.0f);
+#else
         bq_lowpass(&e->syn_f[0], sr, 110.0f, 0.54f); bq_lowpass(&e->syn_f[1], sr, 110.0f, 1.31f);
         bq_highpass(&e->syn_f[2], sr, 50.0f, 0.7f);   /* no DC / rumble in the tracker */
+#endif
         e->syn_wave = a; e->syn_mul = syn_oct(q[1]) < 0 ? 0.5f : (syn_oct(q[1]) > 0 ? 2.0f : 1.0f);
         e->syn_cut = 60.0f * powf(150.0f, c); e->syn_res = d * 0.92f; e->syn_fenv = 0.0f; e->syn_ea2 = f;
         e->syn_ka = onepole_k(sr, 0.002f); e->syn_kr = onepole_k(sr, 0.06f);
@@ -2261,6 +2329,42 @@ static void rc_syn(px_engine *e)
         bq_highshelf(&e->syn_f[5], sr, 5000.0f, -2.0f + c * 12.0f);
         e->syn_nf = 6; e->syn_dry = 0.0f; e->syn_out = 0.67f; e->syn_sym = d * 0.35f;
     } break;
+#if PX_OWN_FX
+    case PX_SYN_SITAR: {
+        /* test build 44: an Indian sitar, rebuilt (the one before was a fuzz at 2.8 kHz beside six combs an octave low).
+         * The jawari: the string presses on the curved bridge on one side of its swing, the more the louder, and its sound
+         * comes from a point that moves with it: the note reads itself up to SIT_DEP samples late, in step with its own wave
+         * (its partials stay harmonic), deepest while it is loud and narrowing as it dies (BUZZ). The tarab: six strings an
+         * octave above KEY on its pentatonic (Sa Re Ga Pa Dha Sa'), bright, ringing DECAY long on what the note excites in
+         * them (SYMPATH). The body: no low end to speak of, the nasal formant at 1.8 kHz, the bridge's sizzle at 3.6 kHz */
+        static const int8_t ST[6] = {0, 2, 4, 7, 9, 12};
+        const float root = 261.63f * expf((float)syn_key_idx(q[0]) * 0.05776227f);   /* C4 .. B4 */
+        int base = SIT_LINE;
+        for (int i = 0; i < 6; i++) {
+            const float fr = root * expf((float)ST[i] * 0.05776227f);
+            /* the loop: L whole samples, less px_sit_mu read between two, and the damping's 0.12 / 0.88 of a sample */
+            const float D = sr / fr - 0.1364f;
+            int L = (int)D + 1; if (L > 340) L = 340; if (L < 8) L = 8;
+            px_sit_mu[i] = (float)L - D;
+            e->syn_cl[i] = L; e->syn_c0[i] = base; base += L;
+            if (e->syn_cp[i] >= L) e->syn_cp[i] = 0;
+        }
+        e->syn_buzz = b; e->syn_sym = c * 0.9f;
+        {   /* one trip's loss for DECAY 0.8 .. 4 s at the middle string's length (the shorter strings die sooner, as real ones) */
+            const float t60 = 0.8f + d * 3.2f, L = sr / (root * 1.3348f);
+            e->syn_cfb = powf(10.0f, -3.0f * L / (t60 * sr));
+        }
+        e->syn_cdamp = 0.12f;
+        e->syn_ea = onepole_k(sr, 0.0005f); e->syn_er = onepole_k(sr, 0.12f); e->syn_sr2 = onepole_k(sr, 1.5f);
+        bq_highpass(&e->syn_f[0], sr, 110.0f, 0.7f);
+        bq_peak(&e->syn_f[1], sr, 1800.0f, 1.2f, 6.0f);
+        bq_peak(&e->syn_f[2], sr, 3600.0f, 1.5f, 3.0f);
+        bq_lowshelf(&e->syn_f[3], sr, 250.0f, -5.0f);
+        bq_lowpass(&e->syn_f[4], sr, 7500.0f, 0.7f);
+        bq_bandpass(&e->syn_f[5], sr, 600.0f, 0.5f);   /* (what reaches the tarab: the strings' own octave and above) */
+        e->syn_nf = 5; e->syn_dry = 0.0f; e->syn_out = 0.8f;
+    } break;
+#else
     case PX_SYN_SITAR: {                               /* jawari buzz + 6 sympathetic strings tuned to KEY */
         static const int8_t ST[6] = {0, 7, 12, 16, 14, 9};
         float root = 130.81f * expf((float)syn_key_idx(q[0]) * 0.05776227f);   /* C3 .. B3 */
@@ -2276,6 +2380,7 @@ static void rc_syn(px_engine *e)
         bq_bandpass(&e->syn_f[0], sr, 2800.0f, 1.3f); bq_bandpass(&e->syn_f[1], sr, 500.0f, 0.7f);
         e->syn_dry = 1.0f; e->syn_out = 0.7f;
     } break;
+#endif
 #if PX_OWN_FX
     case PX_SYN_PAD: {                                 /* a chord held on a footswitch: grains at sr / 8 */
         const float sd = sr / (float)PX_PAD_DEC;
@@ -2291,7 +2396,11 @@ static void rc_syn(px_engine *e)
     } break;
 #endif
     default: {                                         /* baritone: the whole guitar a few semitones down */
+#if PX_OWN_FX
+        syn_voice(e, 0, (float)syn_bari_st(q[0]), 448.0f, c);   /* (test build 44: a third of the delay, ox_voice) */
+#else
         syn_voice(e, 0, (float)syn_bari_st(q[0]), 1400.0f, c);
+#endif
         bq_lowshelf(&e->syn_f[0], sr, 180.0f, b * 6.0f); bq_highshelf(&e->syn_f[1], sr, 3500.0f, -b * 4.0f);
         e->syn_nf = 2; e->syn_dry = 1.0f - c; e->syn_out = 1.0f;
     } break;
@@ -2412,6 +2521,8 @@ void px_engine_ret(px_engine *e, int part, const float *x, int at, int cut)
     px_rt_at[i] = (int8_t)(at >= PX_RT_NONE && at <= PX_RT_END ? at : PX_RT_NONE);
     px_rt_cut[i] = (uint8_t)(cut != 0);
 }
+/* test build 44: SHIMMER's octave in tune (ox_voice, below): each tap's offset from its plain place, as PITCH's */
+static float px_sh_off[2];
 /* the return's place: the guitar (and the octave lb, the side sd, when they run) faded to cut, the computer's sound added */
 static __attribute__((noinline)) void px_rt_mix(float *xb, float *lb, float *sd, const float *x, int n, int cut)
 {
@@ -2439,6 +2550,7 @@ void px_engine_init(px_engine *e, float sr)
     px_lo_qr = px_lo_qw;
     px_rt_g = 1.0f;                                    /* (test build 43: the guitar whole; the firmware sets the return each block) */
     px_rt_at[0] = px_rt_at[1] = PX_RT_NONE; px_rt_x[0] = px_rt_x[1] = 0;
+    px_sh_off[0] = px_sh_off[1] = 0.0f;                /* (test build 44: SHIMMER's taps from their plain places) */
 #endif
     e->sr = sr;
     e->oct_ff = 1.0f; e->oct_ff2 = 1.0f;
@@ -3086,6 +3198,78 @@ PX_INL static inline float ps_voice_al(float *buf, int w, float *ph, float *off,
     return rd_frac(buf, PX_PS_N - 1, pa) * g + rd_frac(buf, PX_PS_N - 1, pb) * (1.0f - g);
 }
 #if PX_OWN_FX
+/* ---- test build 44: two shifter voices that come in in phase, with their own search (ox_voice, ox_align) ----
+ * SHIMMER's octave was out of tune. Its shifter was ps_voice, two taps 512 samples apart crossfaded with no regard to phase
+ * ("smeared anyway"): a tap came in out of phase with the other, by the note's phase over those 512 samples, and the octave
+ * landed on the comb f + k sr / 512 (86 Hz apart) instead of on 2 f: up to 43 Hz off, by the note (held notes: E 330 Hz
+ * +41 cents, B 247 Hz +42, A 440 Hz -17, G 196 Hz -51). Now each tap comes in where it is in phase with the other (SOLA, as
+ * PITCH's ps_voice_al) and the octave is 2 f, within 6 cents from 73 Hz to 988 Hz (tests/engine/synfix.c). PITCH's search
+ * (ps_align: 64 samples compared) left the low strings 23 cents flat: 1.5 ms of a low note is a short stretch of a slow
+ * wave, and it locked on a wrong phase; this one compares 5.8 ms (OX_CORR) and reaches one period of 69 Hz (OX_OFFMAX).
+ * BARITONE was slow: a 1400-sample window and a search that took the best match up to 512 samples on made its sound come
+ * 20 to 40 ms after the pick (23 to 25 on average). A tap is loudest in the middle of its sweep, so it plays about
+ * (W + one period) / 2 late; now W is 448 and the search takes the first peak within 10 % of the best (first), climbed to its
+ * top: the least delay that is in phase. 8 to 11 ms on average, in tune within a few cents, the level as steady as before.
+ * Each search is in the flash (it runs every few hundred samples), its coarse scores in its own row: SHIMMER's lane and SYN's
+ * chain may search at once on the two cores. The taps and the search's window stay inside the 2048 samples of a ring */
+#define OX_OFFMAX 640
+#define OX_CORR 256
+typedef char ox_fit_check[(3 + 1024 + OX_OFFMAX + 7 + OX_CORR < PX_PS_N) ? 1 : -1];   /* (W at most 1024: SHIMMER's) */
+static float ox_cv[2][OX_OFFMAX / 8 + 1];
+static __attribute__((noinline)) float ox_align(const float *buf, int w, float d_ref, float d_new, int first)
+{                                                      /* SOLA: the offset that puts the fading-in tap in phase */
+    float *const cv = ox_cv[first != 0];
+    const int r0 = w - (int)d_ref;
+    float bc = -1e30f;
+    int best = 0, i = 0;
+    for (int o = 0; o <= OX_OFFMAX; o += 8, i++) {     /* coarse: every 8 offsets, every 4th sample */
+        const int c0 = w - (int)(d_new + (float)o);
+        float acc = 0.0f, en = 1e-9f;
+        for (int j = 0; j < OX_CORR; j += 4) {
+            const float x = buf[(r0 - j) & (PX_PS_N - 1)], y = buf[(c0 - j) & (PX_PS_N - 1)];
+            acc += x * y; en += y * y;
+        }
+        cv[i] = acc / sqrtf(en);                       /* (normalised: the candidate's loudness does not bias the choice) */
+        if (cv[i] > bc) { bc = cv[i]; best = o; }
+    }
+    if (first && bc > 0.0f)                            /* the least delay in phase: the first peak within 10 % of the best */
+        for (int k = 0; k * 8 < best; k++) if (cv[k] >= 0.9f * bc) {
+            while (k + 1 < i && cv[k + 1] >= cv[k]) k++;   /* (to its top: on a low note the peak is broad, and its slope is
+                                                            * out of phase) */
+            best = k * 8;
+            break;
+        }
+    float bf = -1e30f;
+    int b2 = best;
+    for (int o = best > 7 ? best - 7 : 0; o <= best + 7; o++) {   /* fine: by one, every 2nd sample */
+        const int c0 = w - (int)(d_new + (float)o);
+        float acc = 0.0f, en = 1e-9f;
+        for (int j = 0; j < OX_CORR; j += 2) {
+            const float x = buf[(r0 - j) & (PX_PS_N - 1)], y = buf[(c0 - j) & (PX_PS_N - 1)];
+            acc += x * y; en += y * y;
+        }
+        acc = acc / sqrtf(en);
+        if (acc > bf) { bf = acc; b2 = o; }
+    }
+    return (float)b2;
+}
+static __attribute__((noinline)) float ox_voice(const float *buf, int w, float *ph, float *off, float inc, float W, int first)
+{                                                      /* (one copy, RAM code: firmware/build.sh; its four users inlined it 1 KB) */
+    const float a0 = *ph, a = wrap1(a0 + inc);
+    *ph = a;
+    float b = a + 0.5f; if (b >= 1.0f) b -= 1.0f;
+    const int wa = inc > 0.0f ? (a < a0) : (a > a0);                                  /* tap A restarts (silent) */
+    const int wb = inc > 0.0f ? (a0 < 0.5f && a >= 0.5f) : (a0 >= 0.5f && a < 0.5f);   /* tap B restarts (silent) */
+    const float da = 3.0f + a * W, db = 3.0f + b * W;
+    if (wa) off[0] = ox_align(buf, w, db + off[1], da, first);
+    if (wb) off[1] = ox_align(buf, w, da + off[0], db, first);
+    float pa = (float)w - (da + off[0]); if (pa < 0.0f) pa += (float)PX_PS_N;
+    float pb = (float)w - (db + off[1]); if (pb < 0.0f) pb += (float)PX_PS_N;
+    const float s = lfo_sin(a * 0.5f), g = s * s;
+    return rd_frac(buf, PX_PS_N - 1, pa) * g + rd_frac(buf, PX_PS_N - 1, pb) * (1.0f - g);
+}
+#endif
+#if PX_OWN_FX
 /* LOW OCTAVE's fast octave: phase halving. Two allpass chains 90 degrees apart (Olli Niemitalo's coefficients,
  * 90 +- 0.7 degrees from 30 Hz to 1 kHz at sr / 8, 3.6 ms at the low E) make the low band a turning arrow, z; the
  * octave is an arrow turning half as fast, h, kept in step by h <- unit(h + unit(z) conj(h)) every sample (the
@@ -3212,6 +3396,95 @@ static inline int syn_track(px_engine *e, float x)
     return trig;
 }
 #if PX_OWN_FX
+/* ---- test build 44: MONO SYNTH's tracker ----
+ * The old one (syn_track) counted zero crossings after a fixed 110 Hz low-pass, 24 dB an octave: a note at 660 Hz came out
+ * of it 60 dB down, under the hum and the noise, and the median of three periods kept the note before for two periods. And
+ * after a silence the gate opened at the last note's pitch until the tracker caught up: every phrase began with a wrong
+ * note. Now YIN (de Cheveigne & Kawahara 2002) on the note, its fundamentals up to 1.4 kHz with a tilt towards them: every
+ * 128 samples, its difference function over 8.7 ms at sr / 8 (MT_W8) for 60 Hz to 1.4 kHz, the first dip under 0.15 of
+ * its cumulative mean (the highest period that repeats: no octave below), else the deepest under 0.35; then refined at the
+ * full rate within +-10 samples (MT_WF, every 2nd sample) and between samples. A new note is taken when two estimates in a row
+ * agree within 3 %, and played at once (the old one glided there, 12 ms a step: 40 ms of wrong notes); a note that moves less
+ * (vibrato, a bend) is followed through the glide. After a silence the gate waits for the first
+ * clear estimate (under 0.2): the first sound is the new note. In the flash: it runs once a block, about 8,000 multiply-adds
+ * (tests/engine/synfix.c). syn_buf holds the full-rate ring (MT_RING) and the decimated one (MT_DR) */
+#define MT_RING 1024
+#define MT_DR 256
+#define MT_W8 48
+#define MT_T8 92                                       /* 60 Hz at sr / 8 */
+#define MT_WF 256
+typedef char mt_fit_check[(MT_WF + 8 * MT_T8 + 12 < MT_RING && MT_W8 + MT_T8 + 2 < MT_DR && MT_RING + MT_DR <= PX_PS_N) ? 1 : -1];
+static float px_mt_d[MT_T8 + 2], px_mt_df[24];         /* (scratch: the SYN block runs on one core at a time) */
+static float mono_yin(px_engine *e, float *clear)      /* the note's frequency, or 0; *clear: its aperiodicity (0 clear) */
+{
+    const float *const fr = e->syn_buf, *const dr = e->syn_buf + MT_RING;
+    const int w = e->syn_w, dw = px_mt_dw;
+    float *const d = px_mt_d, cum = 0.0f;
+    d[0] = 1.0f;
+    for (int t = 1; t <= MT_T8 + 1; t++) {             /* YIN's difference, normalised by its cumulative mean */
+        float s = 0.0f;
+        for (int j = 0; j < MT_W8; j++) {
+            const float a = dr[(dw - 1 - j) & (MT_DR - 1)], b = dr[(dw - 1 - j - t) & (MT_DR - 1)];
+            s += (a - b) * (a - b);
+        }
+        cum += s;
+        d[t] = cum > 1e-20f ? s * (float)t / cum : 1.0f;
+    }
+    int tau = -1;
+    for (int t = 4; t <= MT_T8; t++)
+        if (d[t] < 0.15f) { while (t < MT_T8 && d[t + 1] < d[t]) t++; tau = t; break; }
+    if (tau < 0) {
+        int tm = 4;
+        for (int t = 5; t <= MT_T8; t++) if (d[t] < d[tm]) tm = t;
+        if (d[tm] < 0.35f) tau = tm;
+    }
+    if (tau < 0) return 0.0f;
+    *clear = d[tau];
+    float a = d[tau - 1], b = d[tau], c = d[tau + 1], den = a - 2.0f * b + c;
+    const float t8 = (float)tau + (den > 1e-9f ? 0.5f * (a - c) / den : 0.0f);
+    const int tf = (int)(t8 * 8.0f + 0.5f), lo = tf - 10 < 24 ? 24 : tf - 10, hi = tf + 10;
+    int bi = -1;
+    for (int t = lo - 1, i = 0; t <= hi + 1; t++, i++) {   /* the full rate, about the coarse period */
+        float s = 0.0f;
+        for (int j = 0; j < MT_WF; j += 2) {
+            const float u = fr[(w - 1 - j) & (MT_RING - 1)], v = fr[(w - 1 - j - t) & (MT_RING - 1)];
+            s += (u - v) * (u - v);
+        }
+        px_mt_df[i] = s;
+        if (t >= lo && t <= hi && (bi < 0 || s < px_mt_df[bi])) bi = i;
+    }
+    if (bi <= 1 || bi >= hi - lo + 1) return e->sr / (t8 * 8.0f);   /* (its minimum at an end: the coarse one) */
+    a = px_mt_df[bi - 1]; b = px_mt_df[bi]; c = px_mt_df[bi + 1]; den = a - 2.0f * b + c;
+    const float tp = (float)(lo - 1 + bi) + (den > 1e-12f ? 0.5f * (a - c) / den : 0.0f);
+    return e->sr / tp;
+}
+static __attribute__((noinline)) void mono_est(px_engine *e);
+PX_AINL static inline void mt_feed(px_engine *e, float x)   /* YIN's input, its two rings, an estimate every 128 samples */
+{
+    const float tq = bq_run(&e->syn_f[1], bq_run(&e->syn_f[0], bq_run(&e->syn_f[2], x)));
+    e->syn_lp += e->syn_lpk * (tq - e->syn_lp);        /* (the tilt: the fundamental above its harmonics) */
+    e->syn_buf[e->syn_w] = e->syn_lp;
+    e->syn_w = (e->syn_w + 1) & (MT_RING - 1);
+    if (!(e->syn_w & 7)) { e->syn_buf[MT_RING + px_mt_dw] = e->syn_lp; px_mt_dw = (px_mt_dw + 1) & (MT_DR - 1); }
+    if (!(e->syn_w & 127)) mono_est(e);
+}
+static __attribute__((noinline)) void mono_est(px_engine *e)   /* once a block (128 samples): the note to play */
+{
+    float clear = 1.0f;
+    const float f = mono_yin(e, &clear);
+    if (f < 55.0f || f > 1500.0f) return;              /* no note heard: the last one goes on */
+    if (e->syn_snap) {                                 /* after a silence: the first clear estimate, at once */
+        if (clear < 0.2f) { e->syn_f0 = e->syn_f0t = f; e->syn_snap = 0; px_mt_cn = 0; }
+        return;
+    }
+    const float r = f / e->syn_f0t;
+    if (r > 0.97f && r < 1.03f) { e->syn_f0t = f; px_mt_cn = 0; return; }   /* the same note: followed */
+    if (px_mt_cn && f > px_mt_cf * 0.97f && f < px_mt_cf * 1.03f) {   /* a new note, heard twice: straight to it (the glide
+                                                                         * is for vibrato and bends, not between notes) */
+        e->syn_f0 = e->syn_f0t = f; px_mt_cn = 0; return;
+    }
+    px_mt_cf = f; px_mt_cn = 1;
+}
 /* ---- SYN PAD: the chord caught on the footswitch, held as overlapping grains ---- */
 #define PX_PAD_L 2048                                  /* a slice: 372 ms at sr / 8, 16 bits */
 #define PX_PAD_G 882                                   /* a grain: 160 ms */
@@ -3422,6 +3695,79 @@ static __attribute__((noinline)) float pad_run(px_engine *e, float x)
     return x + o * e->pad_mix + e->dn;
 }
 #endif
+#if PX_OWN_FX
+static __attribute__((noinline)) float syn_strings(px_engine *e, float x)   /* test build 44: STRINGS, a sample (rc_syn; in the flash: the RAM code window is full) */
+{
+    float y;
+
+        const float a = px_abs(x);
+        e->syn_env += (a - e->syn_env) * (a > e->syn_env ? e->syn_ea : e->syn_er);
+        const int pick = e->syn_env > 1.8f * e->syn_slow + e->syn_thr;   /* (before slow follows it) */
+        e->syn_slow += (e->syn_env - e->syn_slow) * (e->syn_env > e->syn_slow ? e->syn_ea : e->syn_sr2);
+        const int on = e->syn_key ? (e->syn_env > e->syn_thr * 0.5f) : (e->syn_env > e->syn_thr);
+        if (pick && e->syn_key) e->syn_click = 1.0f;   /* the bow turns: a dip (syn_perc follows syn_click in 3 ms) */
+        e->syn_key = on;
+        e->syn_kg += ((on ? 1.0f : 0.0f) - e->syn_kg) * (on ? e->syn_ka : e->syn_kr);
+        if (e->syn_kg < 1e-6f) e->syn_kg = 0.0f;
+        e->syn_perc += (e->syn_click - e->syn_perc) * 0.0075f;
+        e->syn_click *= e->syn_pk;
+        const float g = 0.1f / (e->syn_slow + 0.003f);
+        float xs = x * (g > 10.0f ? 10.0f : g);        /* the bow holds the note's level */
+        e->syn_hp += e->syn_hpk * (xs - e->syn_hp);
+        xs += px_tanh((xs - e->syn_hp) * 3.0f) * 0.12f;   /* the rosin */
+        e->syn_buf[e->syn_w] = xs;
+        y = xs * e->syn_d8;
+        if (e->syn_lvl[0] > 0.0f) y += ox_voice(e->syn_buf, e->syn_w, &e->syn_ph[0], e->syn_off[0], e->syn_inc[0], e->syn_W[0], 0) * e->syn_lvl[0];
+        if (e->syn_lvl[1] > 0.0f) y += ox_voice(e->syn_buf, e->syn_w, &e->syn_ph[1], e->syn_off[1], e->syn_inc[1], e->syn_W[1], 0) * e->syn_lvl[1];
+        if (++e->syn_w >= PX_PS_N) e->syn_w = 0;
+        for (int i = 0; i < e->syn_nf; i++) y = bq_run(&e->syn_f[i], y);
+        e->syn_cb[e->syn_cw] = y;
+        e->syn_lfo[0] = wrap1(e->syn_lfo[0] + e->syn_linc[0]);
+        e->syn_lfo[1] = wrap1(e->syn_lfo[1] + e->syn_linc[1]);
+        float w = 0.0f;
+        for (int i = 0; i < 4; i++) {                  /* the section: four players */
+            static const float SD[4] = {1.0f, 1.4f, 1.8f, 2.3f}, SV[4] = {0.0f, 0.29f, 0.53f, 0.77f}, SL[4] = {0.0f, 0.61f, 0.17f, 0.83f};
+            w += syn_tap(e, e->syn_cbase * SD[i] + e->syn_cdep[0] * lfo_sin(wrap1(e->syn_lfo[0] + SV[i]))
+                            + e->syn_cdep[1] * lfo_sin(wrap1(e->syn_lfo[1] + SL[i])));
+        }
+        if (++e->syn_cw >= PX_SYN_CB) e->syn_cw = 0;
+        y = 0.3f * w + 0.25f * y;
+        return y * e->syn_kg * (1.0f - 0.65f * e->syn_perc) * e->syn_out + x * e->syn_dry + e->dn;
+    }
+static __attribute__((noinline)) float syn_flute(px_engine *e, float x)   /* test build 44: TAPE FLUTE, a sample (rc_syn; in the flash) */
+{
+    float y;
+
+        const float a = px_abs(x);
+        e->syn_env += (a - e->syn_env) * (a > e->syn_env ? e->syn_ea : e->syn_er);
+        e->syn_slow += (e->syn_env - e->syn_slow) * e->syn_glk;
+        const int on = e->syn_key ? (e->syn_env > e->syn_thr * 0.5f) : (e->syn_env > e->syn_thr * 1.5f);
+        if (on && !e->syn_key) { e->syn_snap = 1; e->syn_fenv = 1.0f; }
+        else if (on && e->syn_env > 1.6f * e->syn_slow + e->syn_thr) e->syn_fenv = 1.0f;   /* a new pick: the chiff again */
+        mt_feed(e, x);
+        e->syn_key = on;
+        e->syn_kg += ((on && !e->syn_snap && e->syn_f0 > 0.0f ? 1.0f : 0.0f) - e->syn_kg) * (on ? e->syn_ka : e->syn_kr);
+        if (e->syn_kg < 1e-6f) e->syn_kg = 0.0f;
+        e->syn_f0 += (e->syn_f0t - e->syn_f0) * e->syn_glk;
+        e->syn_lfo[0] = wrap1(e->syn_lfo[0] + e->syn_linc[0]);
+        e->syn_lfo[1] = wrap1(e->syn_lfo[1] + e->syn_linc[1]);
+        const float dev = e->syn_pwd * (0.004f * lfo_sin(e->syn_lfo[0]) + 0.0015f * lfo_sin(e->syn_lfo[1]));   /* the tape */
+        float dt = e->syn_f0 * (1.0f + dev) / e->sr;
+        if (dt > 0.45f) dt = 0.45f;
+        e->syn_oph += dt; if (e->syn_oph >= 1.0f) e->syn_oph -= 1.0f;
+        const float p1 = e->syn_oph, p2 = wrap1(p1 + p1), p3 = wrap1(p2 + p1);
+        const float o = sin_hq(p1) + 0.22f * lfo_sin(p2) + 0.07f * lfo_sin(p3);
+        e->syn_rnd = e->syn_rnd * 1664525u + 1013904223u;
+        const float nz = (float)(e->syn_rnd >> 8) * (2.0f / 16777216.0f) - 1.0f;
+        const float br = bq_run(&e->syn_f[3], nz) * (0.05f + 0.35f * e->syn_fenv) * e->syn_wave;
+        e->syn_fenv *= e->syn_fdk;
+        const float lv = 0.55f + 0.45f * (e->syn_env * 6.0f > 1.0f ? 1.0f : e->syn_env * 6.0f);
+        y = (0.5f * o + br) * e->syn_kg * lv;
+        y = px_tanh(y * 1.5f) * 0.67f;
+        y = bq_run(&e->syn_f[5], bq_run(&e->syn_f[4], y));
+        return y * e->syn_out + x * e->syn_dry + e->dn;
+    }
+#endif
 PX_INL static inline float syn_run(px_engine *e, int t, float x)
 {
     float y = 0.0f;
@@ -3455,7 +3801,13 @@ PX_INL static inline float syn_run(px_engine *e, int t, float x)
         return y * e->syn_kg * e->syn_out + x * e->syn_dry + e->dn;
     }
 #endif
+#if PX_OWN_FX
+    case PX_SYN_STRINGS: return syn_strings(e, x);     /* (test build 44) */
+    case PX_SYN_FLUTE: return syn_flute(e, x);
+    case PX_SYN_CHOIR: {
+#else
     case PX_SYN_STRINGS: case PX_SYN_CHOIR: {
+#endif
         float xs = syn_keys(e, x);
         e->syn_buf[e->syn_w] = xs;
         y = xs * e->syn_d8 + syn_shift(e, 0) * e->syn_lvl[0] + syn_shift(e, 1) * e->syn_lvl[1];
@@ -3483,10 +3835,17 @@ PX_INL static inline float syn_run(px_engine *e, int t, float x)
         e->syn_slow += (e->syn_env - e->syn_slow) * e->syn_glk;           /* slower: re-attack detection */
         int on = e->syn_key ? (e->syn_env > e->syn_thr * 0.5f) : (e->syn_env > e->syn_thr * 1.5f);
         if (on && !e->syn_key) { e->syn_snap = 1; e->syn_p1 = e->syn_p2 = 0.0f; }   /* after a silence: no glide */
+#if PX_OWN_FX
+        mt_feed(e, x);                                 /* (test build 44: the tracker) */
+        if ((on && !e->syn_key) || e->syn_env > 1.6f * e->syn_slow + e->syn_thr) e->syn_fenv = 1.0f;
+        e->syn_key = on;
+        e->syn_kg += ((on && !e->syn_snap && e->syn_f0 > 0.0f ? 1.0f : 0.0f) - e->syn_kg) * (on ? e->syn_ka : e->syn_kr);
+#else
         syn_track(e, x);
         if ((on && !e->syn_key) || e->syn_env > 1.6f * e->syn_slow + e->syn_thr) e->syn_fenv = 1.0f;
         e->syn_key = on;
         e->syn_kg += ((on && e->syn_f0 > 0.0f ? 1.0f : 0.0f) - e->syn_kg) * (on ? e->syn_ka : e->syn_kr);
+#endif
         if (e->syn_kg < 1e-6f) e->syn_kg = 0.0f;
         e->syn_f0 += (e->syn_f0t - e->syn_f0) * e->syn_glk;
         float fr = e->syn_f0 * e->syn_mul, dt = fr / e->sr;
@@ -3568,6 +3927,35 @@ PX_INL static inline float syn_run(px_engine *e, int t, float x)
         if (++e->syn_cw >= PX_SYN_CB) e->syn_cw = 0;
         return (y + r * e->syn_sym) * e->syn_out * 1.8f + e->dn;
     }
+#if PX_OWN_FX
+    case PX_SYN_SITAR: {                               /* test build 44 (rc_syn) */
+        const float a = px_abs(x);
+        e->syn_env += (a - e->syn_env) * (a > e->syn_env ? e->syn_ea : e->syn_er);
+        e->syn_slow = e->syn_env > e->syn_slow ? e->syn_env : e->syn_slow + (e->syn_env - e->syn_slow) * e->syn_sr2;
+        float *const ln = e->syn_buf;                  /* the jawari: the note read where the bridge moves it */
+        ln[e->syn_w] = x;
+        const float u = x / (e->syn_env + 1e-4f), cu = u > 0.0f ? (u > 1.5f ? 1.5f : u) : 0.0f;
+        const float rel = e->syn_env / (e->syn_slow + 1e-4f);
+        const float dep = e->syn_buzz * SIT_DEP * (0.35f + 0.65f * rel);
+        float pos = (float)e->syn_w - (2.0f + dep * cu * cu); if (pos < 0.0f) pos += (float)SIT_LINE;
+        y = rd_frac(ln, SIT_LINE - 1, pos);
+        e->syn_w = (e->syn_w + 1) & (SIT_LINE - 1);
+        for (int i = 0; i < e->syn_nf; i++) y = bq_run(&e->syn_f[i], y);
+        const float in_s = bq_run(&e->syn_f[5], y) * 0.12f;
+        float sum = 0.0f;
+        for (int i = 0; i < 6; i++) {                  /* the tarab: bright, long, in tune (rc_syn) */
+            float *bf = e->syn_buf + e->syn_c0[i];
+            const int cp = e->syn_cp[i], cn = cp + 1 < e->syn_cl[i] ? cp + 1 : 0;
+            const float r = bf[cp] + (bf[cn] - bf[cp]) * px_sit_mu[i];
+            e->syn_cs[i] = r + (e->syn_cs[i] - r) * e->syn_cdamp;
+            if (e->syn_cs[i] > 4.0f) e->syn_cs[i] = 4.0f; else if (e->syn_cs[i] < -4.0f) e->syn_cs[i] = -4.0f;
+            bf[e->syn_cp[i]] = in_s + e->syn_cs[i] * e->syn_cfb;
+            if (++e->syn_cp[i] >= e->syn_cl[i]) e->syn_cp[i] = 0;
+            sum += r;
+        }
+        return (y + sum * e->syn_sym) * e->syn_out + e->dn;
+    }
+#else
     case PX_SYN_SITAR: {
         float a = px_abs(x);
         e->syn_env += (a - e->syn_env) * (a > e->syn_env ? e->syn_ea : e->syn_er);
@@ -3587,13 +3975,18 @@ PX_INL static inline float syn_run(px_engine *e, int t, float x)
         }
         return (y + sum * e->syn_sym) * e->syn_out + e->dn;
     }
+#endif
 #if PX_OWN_FX
     case PX_SYN_PAD:
         return pad_run(e, x);
 #endif
     default: {                                         /* baritone */
         e->syn_buf[e->syn_w] = x;
+#if PX_OWN_FX
+        y = x * e->syn_dry + ox_voice(e->syn_buf, e->syn_w, &e->syn_ph[0], e->syn_off[0], e->syn_inc[0], e->syn_W[0], 1) * e->syn_lvl[0];
+#else
         y = x * e->syn_dry + syn_shift(e, 0) * e->syn_lvl[0];
+#endif
         if (++e->syn_w >= PX_PS_N) e->syn_w = 0;
         for (int i = 0; i < e->syn_nf; i++) y = bq_run(&e->syn_f[i], y);
         return y + e->dn;
@@ -4030,7 +4423,11 @@ PX_AINL static inline void rv_loop(px_engine *e, const float *xb, float *wo, int
             acc = bq_run(&e->rv_tone, acc);            /* (TONE at the full rate: it also takes the half rate's images down) */
             if (SH) {                   /* octave-up shifter in the feedback loop */
                 e->sh_buf[e->sh_w] = acc;
+#if PX_OWN_FX
+                float s = ox_voice(e->sh_buf, e->sh_w, &e->sh_ph, px_sh_off, -1.0f / 1024.0f, 1024.0f, 0);   /* (test build 44: in tune) */
+#else
                 float s = ps_voice(e->sh_buf, e->sh_w, &e->sh_ph, -1.0f / 1024.0f, 1024.0f);
+#endif
                 if (++e->sh_w >= PX_PS_N) e->sh_w = 0;
                 e->sh_lp += (s - e->sh_lp) * e->sh_k;
                 e->sh_hp += (e->sh_lp - e->sh_hp) * e->sh_hk;   /* v35: only the upper octave goes round again */
