@@ -5,7 +5,7 @@ phone as **`OpenPocket`**, pairs with no PIN, and the phone's music plays **mixe
 
 It is a test image, its own build target (`make bt`). The normal firmware and the installer's packages are unchanged.
 
-> **Status: test build 40** (below; build 38 is the one played longest, about 2 hours of music). Test build 27 brought the web
+> **Status: test build 42** (below; build 38 is the one played longest, about 2 hours of music). Test build 27 brought the web
 > editor over Bluetooth. Up to test build 14: builds 1 to 10 ran on a pedal: the
 > radio starts, a phone sees the pedal and links, but no phone
 > could pair, and the guitar crackled. Build 11 paired an iPhone (below, "Test build 11"), but no music came out, and the guitar
@@ -29,7 +29,8 @@ It is a test image, its own build target (`make bt`). The normal firmware and th
 - **In since test build 24:** Bluetooth MIDI (BLE MIDI) beside the music, for a Chocolate (below, "Test build 24"); since
   test build 27 the web editor over Bluetooth too, on a second LE link beside the Chocolate's (below, "Test build 27: the web
   editor over Bluetooth"); since test build 28 the regular Chocolate too, the pedal as its central (below, "Test build 28").
-- **Not in:** stereo, play/pause from the pedal (AVRCP), a level setting on the pedal.
+- **Not in:** play/pause from the pedal (AVRCP), a level setting on the pedal. (Stereo: since test build 42, with SETTINGS'
+  OUTPUT on STEREO, the phone's music and the effects come out in stereo; MONO, the default, sums it as before.)
 - **Left out to make room** (the release image has them): USB audio, the pedal as a USB sound card (v42; `OP_UAUDIO` 0);
   8 of the 12 factory NAM models, since test build 28 (it keeps TWIN, AC15, JCM900 and MARK IV; a preset with another one
   plays a kept one; the capture slots the editor fills are all there); delay times over 780 ms, since test build 24 (TIME
@@ -1202,6 +1203,47 @@ make log
 ```
 
 If the pedal restarts or hangs in FOOTSW: switch it off and on (it is COMPUTER again), and report what the screen said last.
+
+## Test build 42: LOW OCTAVE's bass out of the chain, and the stereo output
+
+Build 41 with two changes asked by a player. First, **a bass never goes through the guitar's reverb or delay**. LOW OCTAVE's octave
+now leaves the chain at the PIT block and joins at the end, after the last block, so no amp, cabinet, EQ, MOD, DELAY or REVERB
+touches it; it still follows the preset's LEVEL, MASTER, the tuner, the volume pedal and PIT's on/off fade. Its 41 Hz now comes
+out whole (the cabinet cut it before): the same OCT -1 sounds bigger on a full-range system, so start lower and raise it.
+With the AMP on it gets +12 dB, about what the amps add to the guitar ([OWN-FX.md](OWN-FX.md), "LOW OCTAVE").
+
+Second, **the stereo output**: the pedal's output is stereo (M-VAVE's firmware uses it), and every OpenPocket image so far
+sent the same sound to both channels. A new SETTINGS row (hold FX), **OUTPUT**, before USB PORT, also in the editor's MIDI
+section: **MONO** (the default, as before), **STEREO** (the delay's echoes and the reverb's tail, TAILS included, and seven
+modulations, CE CHORUS, DIMENSION, FLANGER, PHASE 90, SMALL STONE, UNI-VIBE and ROTARY, spread to the sides, the dry guitar and
+the bass in the middle; the two channels summed are exactly the MONO sound; and the phone's music in true stereo: its side, at
+half the rate, beside the mono mix) or **GTR+BASS** (the
+guitar on the left channel, LOW OCTAVE's octave alone on the right, for two channels of a desk). Applied at once, saved on
+leaving the page (bits 2-3 of the store header's USB settings byte). With a mono cable in the OUT jack, keep MONO: a mono
+plug takes the left channel alone. `engine/px_dsp.c` `px_lo_*`, `px_sd_*`, `px_engine_out`; `firmware/px_audio.h` (a_outr,
+a_resr: the right channel through the same mutes, fades, volume and knee as the left); `tests/engine/bassout.c`. The web
+editor's reply buffer went back to the main RAM (18 KB free there) to make room for this code in the RAM code window.
+
+### What to check
+
+1. A preset with LOW OCTAVE, an amp, and a long reverb and a delay: play low notes, then stop. The guitar's echoes and tail
+   ring out, the bass's do not: it stops with the note. Low notes sound deeper than with build 41.
+2. OCT -1: set the bass against the guitar by ear (start around `-6 DB`).
+3. The volume pedal and the preset's LEVEL move the bass with the guitar; PIT switched off fades it out.
+4. OUTPUT STEREO, headphones or a stereo cable: a preset with a delay and a reverb sounds wide, the dry guitar in the
+   middle; a CE CHORUS, a DIMENSION, a PHASE 90 or the ROTARY move between the two sides. Switch the delay off with TAILS on:
+   its echoes ring out wide. Turn the stereo off and on while playing: no click. Play music from the phone: a song with
+   instruments panned left and right sounds wide, as on the phone's own headphones.
+5. OUTPUT GTR+BASS, the OUT jack to two channels of a desk (a stereo cable, or a TRS-to-two-jacks Y cable): the guitar on the
+   left, the bass alone on the right. A preset without LOW OCTAVE: the right channel is silent.
+6. OUTPUT MONO again: both channels the same. Power off and on: the setting is kept.
+
+Install it from this branch's folder (Chrome or Edge, the computer's USB cable in the pedal), then **Connect**, **Install**; the
+start-up screen reads `v42 BT AUDIO TEST 42`:
+
+```bash
+make serve-bt
+```
 
 ## Checked on a computer
 

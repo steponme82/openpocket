@@ -32,6 +32,66 @@ mode, so that it carries on small speakers and a PA without subwoofers; at 0 the
 octave's level, as a compressor in front of an octaver: at 100 a note 20 dB softer gets an octave only 2 dB softer, and the
 hum between notes is not raised.
 
+**The bass skips the rest of the chain (test build 42).** A bass player's sound goes to the desk clean, never through the
+guitarist's reverb or delay. So the octave no longer goes on down the chain with the guitar: it leaves at the PIT block, the
+guitar (DRY) goes on alone through the drive, the amp, the cabinet, EQ, MOD, DELAY and REVERB, and the octave joins at the
+end, after the last block (`engine/px_dsp.c` `px_lo_*`). It still follows the preset's LEVEL, MASTER, the tuner's mute, the
+volume pedal and PIT's own on/off fade. Two things change in the sound, both on purpose:
+
+- no reverb, delay or modulation on the bass, and no amp distortion either: the guitar's distortion is cleaner without a sub
+  in it;
+- the octave's fundamental comes out whole: a guitar cabinet cuts below 70 to 165 Hz, and the low E's octave is 41 Hz, so
+  through the chain little more than GROWL's harmonics was left of it. On a PA with subwoofers, or headphones, the same OCT -1
+  now sounds much bigger than before: start lower (`-6 DB`, 25) and raise it. On small speakers GROWL still helps.
+
+With the AMP on, the octave gets +12 dB, about what the amps add to the guitar (the eight fitted amps add +12 to +17 dB at
+noon, the NAM factory models +9 to +13 dB, measured on the DI loops), so that OCT -1 sets it against the guitar as it comes
+out of the amp, as it did against the guitar going in. Your own NAM captures each have their level: set OCT -1 by ear.
+
+Where it comes out is SETTINGS' **OUTPUT** (below): in MONO and STEREO with everything else, in the middle; in GTR+BASS
+alone on the right channel, the guitar on the left.
+
+## The output: MONO, STEREO, GTR+BASS (test build 42)
+
+The pedal's output is stereo: the I2S carries both channels to the DAC and the amplifier of OUT and the headphones
+(`docs/AUDIO-SDK.md`), and M-VAVE's own firmware makes its delay and reverb stereo. Until test build 42 every OpenPocket
+image sent the same sound to both. SETTINGS' **OUTPUT** row (and the editor's MIDI section) chooses, at once, saved with the
+settings:
+
+| OUTPUT | Left | Right | For |
+|---|---|---|---|
+| `MONO` (default) | everything | the same | a mono cable, one amp or one desk channel: as every earlier build |
+| `STEREO` | the sound, with the delay, the reverb and the modulations spread; the phone's music in stereo | the same, spread the other way | a stereo cable or two channels; headphones |
+| `GTR+BASS` | the guitar | LOW OCTAVE's octave alone (silence without it) | two desk channels, the bass as a bass player's |
+
+**STEREO.** The dry guitar, the amp and LOW OCTAVE's bass stay in the middle; the DELAY's echoes and the REVERB's tail (and
+their TAILS when they ring out) and seven of the eleven MOD models also reach the sides. Each adds a side signal to the left
+channel and takes it from the right one, so the two channels summed are exactly the MONO sound: a desk that sums them, or a
+mono speaker at the end of a stereo chain, hears what MONO gives. The side is:
+
+- DELAY and REVERB: their wet sound a few milliseconds late (5.7 ms for the delay, 9.8 ms for the reverb; `px_side`, 2 KB
+  apart, no delay memory taken);
+- CE CHORUS: a second voice at the LFO's other half; DIMENSION: its two voices, one each side, as the original's two lines;
+  FLANGER: the sweep's other half; PHASE 90 and SMALL STONE: a second phaser at the LFO's other half, so that the notches
+  move differently on the two sides; UNI-VIBE: a second lamp; ROTARY: the horn and the drum as two microphones on their two
+  sides hear them;
+- the tremolos (OPTO, BIAS, HARMONIC) and VIBRATO stay in the middle: a second one of them would change what the two
+  channels sum to.
+
+A block after the DELAY, the REVERB or the MOD in the preset's order works on the middle only. With a mono cable in a stereo
+jack you get the left channel alone: choose MONO then.
+
+**The phone's music in stereo.** The phone sends stereo; every earlier build summed it to mono as it decoded it. In STEREO the
+music now comes out in stereo too: beside the mono mix, (L + R) / 2, its side, (L - R) / 2, is kept at half the rate in a
+second ring (2.5 KB in the RAM, `firmware/px_bt_ring.h` `bt_ring_mix2`, `firmware/bt/bt_sbc.c` `bt_sbc_frame2`) and read at the
+same position: left = mix + side, right = mix - side. One channel alone stays in its channel 47 dB at 1 kHz and 19 dB at
+5 kHz (the side at half the rate keeps the stereo where the ear places sounds). In MONO and GTR+BASS the music is the mono mix,
+exactly as before.
+
+**GTR+BASS.** The guitar on the left channel, LOW OCTAVE's octave alone on the right: two channels of a desk, the bass as a
+bass player's (a stereo cable, or a TRS-to-two-jacks Y cable). On headphones the bass is in the right ear only. The phone's
+music stays on the left.
+
 The octave comes about 14 ms after the note (the dry signal has no delay): it is made from the note's phase, turned half as
 fast, so nothing waits in a buffer; the time is the filters' that pick the note. The low band runs at 5.5 kHz. It splits by
 pitch, not by string: a note below RANGE gets the octave on whatever string you play it.
@@ -197,6 +257,17 @@ does its one-off work in a single block.
   200 Hz: TREBLE +19.2 dB, MID +9.9 dB, FULL +2.9 dB; driven hard, the 2nd harmonic 28 dB and the 3rd 10 dB under the
   note; BOOST raises the level and the harmonics at each step; at noon, at every RANGE, the loudness of the guitar without
   it within 0.5 dB.
+- `tests/engine/bassout.c` (22 checks, the same builds): LOW OCTAVE's octave out of the chain, and the output's three ways. Through TWIN, the 1x12 US OPEN
+  and a long HALL the guitar comes out the same with the octave on and off (the tail differs by -114 dB), while the note plays
+  the octave adds its 41.2 Hz and nothing at the note (-63 dB); OUTPUT GTR+BASS: the left channel is the guitar alone, bit for
+  bit, the right the octave alone, silent without LOW OCTAVE; a NAM amp on two cores (PRE, NAM, POST a block apart, as the
+  firmware runs them): the plain engine's output bit for bit, a block later, both channels; PIT switched off while the octave
+  plays fades it (no step); the volume pedal's heel silences it; its +12 dB lies within the amps' gains. STEREO, inline and
+  through the wet lanes: left and right summed are the MONO sound (the largest difference -162 dB), the delay's echoes and
+  the reverb's tail reach the sides (the side 5 to 7 dB under the middle), with no DELAY or REVERB both channels are the
+  MONO sound, a reverb switched off with TAILS rings out wide; every MOD model sums to the MONO sound, seven spread (the
+  side 4 to 13 dB under the middle on a bright note), the tremolos and VIBRATO stay in the middle; a NAM amp on two cores,
+  with a chorus and a delay, gives both channels bit for bit.
 - `tests/ownfx_equiv.sh`: every existing model in this image's engine against the same engine without `PX_OWN_FX`, 5,460
   runs bit for bit (every block x model x 8 settings, random chains, NAM chains through the two cores' pipeline, the 52
   factory presets, every delay over a TIME x FEEDBACK x TONE x WOW grid, turned while playing and at the top for 6 s, every

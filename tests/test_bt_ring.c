@@ -5,7 +5,8 @@
  *  - after the start, no underrun in 60 s, the backlog stays near its target, the rate settles at the clocks' ratio;
  *  - the music comes out clean: a 1 kHz sine, against the best-fitting sine at the pedal's rate, > 45 dB;
  *  - a 300 ms pause in the stream stops the reader once, fades out without a jump, and it starts again by itself;
- *  - nothing is added before the start or after the fade (silence stays silence). */
+ *  - nothing is added before the start or after the fade (silence stays silence);
+ *  - (test build 42) the stereo: one channel alone stays in its channel (1 kHz, 5 kHz), the mono mix unchanged by the side. */
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -135,6 +136,46 @@ int main(void)
         int same = 1;
         for (i = 0; i < FRAME; i++) same &= o[i] == 0.25f;
         CHECK(same, "a ring never started adds nothing");
+    }
+    {   /* test build 42: the stereo. The phone's left channel alone, then its right alone: the mono mix and the side each half of
+         * it; read back at the pedal's rate, left = mix + side and right = mix - side. The mono mix comes out bit for bit the same
+         * with the side read beside it or not */
+        static int16_t mm[BT_RING_N], ms[BT_RING_SN], mm2[BT_RING_N];
+        static float lo[400 * FRAME], ro[400 * FRAME];
+        static const double FQ[2] = {1000.0, 5000.0};
+        int same = 1;
+        for (int f = 0; f < 2; f++) for (int side = 0; side < 2; side++) {
+            bt_ring_t a, b;
+            bt_ring_init2(&a, mm, ms);
+            bt_ring_init(&b, mm2);
+            a.step = b.step = (uint32_t)(65536.0 * PHONE_FS / PEDAL_FS + 0.5);
+            double ph2 = 0.0;
+            int started = 0;
+            for (int blk = 0; blk < 400; blk++) {
+                while (bt_ring_room(&a) >= FRAME) {
+                    int16_t m[FRAME], s[FRAME];
+                    for (i = 0; i < FRAME; i++) {
+                        const int32_t v = (int32_t)(16000.0 * sin(ph2)), l = side ? 0 : v, r = side ? v : 0;
+                        ph2 += 2.0 * M_PI * FQ[f] / PHONE_FS;
+                        m[i] = (int16_t)((l + r) >> 1); s[i] = (int16_t)((l - r) >> 1);
+                    }
+                    bt_ring_put2(&a, m, s, FRAME);
+                    bt_ring_put(&b, m, FRAME);
+                }
+                if (!started) { a.starts++; b.starts++; started = 1; }
+                float o[FRAME], so[FRAME], o2[FRAME];
+                for (i = 0; i < FRAME; i++) o[i] = so[i] = o2[i] = 0.0f;
+                bt_ring_mix2(&a, o, so, FRAME, 1.0f);
+                bt_ring_mix(&b, o2, FRAME, 1.0f);
+                for (i = 0; i < FRAME; i++) { lo[blk * FRAME + i] = o[i] + so[i]; ro[blk * FRAME + i] = o[i] - so[i]; same &= o[i] == o2[i]; }
+            }
+            double el = 0, er = 0;
+            for (i = 100 * FRAME; i < 400 * FRAME; i++) { el += (double)lo[i] * lo[i]; er += (double)ro[i] * ro[i]; }
+            const double sep = side ? 10.0 * log10(er / (el + 1e-20)) : 10.0 * log10(el / (er + 1e-20));
+            if (f == 0) CHECK(sep > 35.0, "stereo, the %s channel alone at 1 kHz: the other one %.1f dB under it", side ? "right" : "left", sep);
+            else CHECK(sep > 12.0, "stereo, the %s channel alone at 5 kHz: the other one %.1f dB under it (the side at half the rate)", side ? "right" : "left", sep);
+        }
+        CHECK(same, "the mono mix is the same, bit for bit, with the side read beside it");
     }
     printf(fails ? "bt ring: %d FAILED\n" : "bt ring: all passed\n", fails);
     return fails != 0;

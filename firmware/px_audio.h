@@ -80,6 +80,17 @@ int gpio_set_pull_down(uint32_t g, int on)   { jl_rmw(g, 0x14, on); return 0; }
 static px_engine g_eng __attribute__((section(".pool"), aligned(8)));   /* ~250 KB: "POOL" RAM region */
 static float a_in[A_FR], a_out[A_FR];
 #if PX_OWN_FX
+/* test build 42: OUTPUT (px_midi.h px_out_mode): STEREO and GTR+BASS make a_outr the right channel (engine/px_dsp.c
+ * px_engine_out), through the same mutes, fades, volume and knee as the left (dsp_out); a_res_sp: a_resr holds the block
+ * a_res holds, for a_send. Latched once a block (a_mode), so a block is all one way or the other. The phone's music: both
+ * channels in STEREO, the left in GTR+BASS (the right is the bass's alone) */
+static float a_outr[A_FR];
+static int32_t a_resr[A_FR];
+static uint8_t a_mode, a_split;
+static volatile uint8_t a_res_sp;
+#define A_BASS(o) px_engine_out(&g_eng, a_mode, a_outr + (o))
+#endif
+#if PX_OWN_FX
 /* test build 39: INPUT (px_midi.h px_in_db) as the input's scale: the interrupt reads one float, set from the main loop */
 static volatile float a_in_k = 0.5f / 8388608.0f;
 static void a_in_gain_apply(void) { a_in_k = (0.5f / 8388608.0f) * powf(10.0f, (float)px_in_db * 0.05f); }
@@ -160,6 +171,7 @@ static const float bt_gain = 0.5f;                     /* -6 dB: the phone's own
  * radio's 64 KB window; up to test build 16 it lay beside the ring, inside the window, and CPU1 cleared and read it in every
  * block (app-bt.ld .data_hi says why that matters) */
 static float bt_mix[A_FR] __attribute__((section(".bss.hi.bt_mix")));
+static float bt_side[A_FR];                            /* test build 42: the music's side, (L - R) / 2: + left, - right in STEREO */
 #endif
 
 /* DSP work for one block: a_in -> a_res (gain, clipping) + load measurement. Runs on the 2nd core (CPU1)
@@ -170,11 +182,21 @@ static void dsp_block(void)
 {
     uint32_t t0 = fm1_ticks();
     a_commit();
+#if PX_OWN_FX
+    a_mode = px_out_mode; a_split = a_mode != 0u;
+#endif
     if (!a_bypass && !a_hold) {
-        for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK)
+        for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK) {
+#if PX_OWN_FX
+            A_BASS(o);
+#endif
             px_engine_process(&g_eng, a_in + o, a_out + o, PX_MAX_BLOCK);
+        }
     } else {
         for (uint32_t i = 0; i < A_FR; i++) a_out[i] = a_in[i];
+#if PX_OWN_FX
+        for (uint32_t i = 0; i < A_FR; i++) a_outr[i] = 0.0f;
+#endif
     }
     dsp_out();
     dsp_load(t0, 85u);
@@ -187,21 +209,38 @@ static void dsp_out(void)                              /* a_out -> a_res: safety
         float v = a_out[i];
         if (v != v || v > 1.0e6f || v < -1.0e6f) { a_nan = 1; break; }
     }
+#if PX_OWN_FX
+    const int sp = a_split;                            /* test build 42: OUTPUT STEREO or GTR+BASS, a_outr the right channel */
+    if (sp) for (uint32_t i = 0; i < A_FR; i++) {
+        float v = a_outr[i];
+        if (v != v || v > 1.0e6f || v < -1.0e6f) { a_nan = 1; break; }
+    }
+    if (a_nan || a_mute) for (uint32_t i = 0; i < A_FR; i++) a_outr[i] = 0.0f;
+#endif
     if (a_nan) for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;
     if (a_mute) for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;
     {   /* tuner mute, with a short ramp both ways (no click) */
         float tg = a_tmute ? 0.0f : 1.0f;
         if (a_mg != tg) {
+#if PX_OWN_FX
+            for (uint32_t i = 0; i < A_FR; i++) { a_mg += (tg - a_mg) * 0.005f; a_out[i] *= a_mg; a_outr[i] *= a_mg; }
+#else
             for (uint32_t i = 0; i < A_FR; i++) { a_mg += (tg - a_mg) * 0.005f; a_out[i] *= a_mg; }
+#endif
             if (tg > 0.5f ? a_mg > 0.999f : a_mg < 0.0005f) a_mg = tg;
-        } else if (tg == 0.0f) for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;
+        } else if (tg == 0.0f) {
+            for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;
+#if PX_OWN_FX
+            for (uint32_t i = 0; i < A_FR; i++) a_outr[i] = 0.0f;
+#endif
+        }
     }
 #if OP_BT_AUDIO
     /* the phone's music (bt_mix: read from the ring by CPU0 before the block was handed over, a_bt_fill), through the change
      * fade below with the guitar (up to test build 10 it was added after it, so a full preset change cut the guitar but left
      * the music at full level in the blocks the DMA then repeats while the interrupt is held, audio_apply). A NaN found in
      * this block drops this block's music with the guitar (2.9 ms); from the next block on, a_bt_fill leaves it waiting */
-    if (a_nan) for (uint32_t i = 0; i < A_FR; i++) bt_mix[i] = 0.0f;
+    if (a_nan) for (uint32_t i = 0; i < A_FR; i++) bt_mix[i] = bt_side[i] = 0.0f;
 #endif
     /* the output: a soft knee from 0.8 of full scale (the same slope there, then bending towards full scale, which it
      * never reaches) instead of a hard clip, whose corners crackle on the loudest notes */
@@ -214,16 +253,23 @@ static void dsp_out(void)                              /* a_out -> a_res: safety
                 xf += st;
                 if (st > 0.0f ? xf > 1.0f : xf < 0.0f) xf = tg;
                 a_out[i] *= xf;
+#if PX_OWN_FX
+                a_outr[i] *= xf;
+#endif
 #if OP_BT_AUDIO
                 bt_mix[i] *= xf;
+                bt_side[i] *= xf;
 #endif
             }
             a_xf = xf;
             if (xf == 1.0f && a_swin) { a_sw1 = fm1_ticks(); a_swin = 0; }
         } else if (tg == 0.0f) {
             for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;
+#if PX_OWN_FX
+            for (uint32_t i = 0; i < A_FR; i++) a_outr[i] = 0.0f;
+#endif
 #if OP_BT_AUDIO
-            for (uint32_t i = 0; i < A_FR; i++) bt_mix[i] = 0.0f;   /* (already 0, unless the gate above read a_xft / a_xf
+            for (uint32_t i = 0; i < A_FR; i++) bt_mix[i] = bt_side[i] = 0.0f;   /* (already 0, unless the gate above read a_xft / a_xf
                                                                      * otherwise: a change between the reads, a CPU1 misread) */
 #endif
         }
@@ -231,9 +277,14 @@ static void dsp_out(void)                              /* a_out -> a_res: safety
     const float g = a_gain;                            /* v38: the volume glides there (~3 ms), no zipper */
     float gv = a_gv;
     int clip = 0;
+#if PX_OWN_FX && OP_BT_AUDIO
+    const float mr = a_mode == 1u ? 1.0f : 0.0f;       /* test build 42: STEREO, the music in stereo (else mono, as before) */
+#endif
     for (uint32_t i = 0; i < A_FR; i++) {
         gv += (g - gv) * 0.008f;
-#if OP_BT_AUDIO
+#if OP_BT_AUDIO && PX_OWN_FX
+        float v = a_out[i] * gv + bt_mix[i] + bt_side[i] * mr, m = v < 0.0f ? -v : v;   /* (STEREO: the music's side, + left) */
+#elif OP_BT_AUDIO
         float v = a_out[i] * gv + bt_mix[i], m = v < 0.0f ? -v : v;
 #else
         float v = a_out[i] * gv, m = v < 0.0f ? -v : v;
@@ -245,8 +296,22 @@ static void dsp_out(void)                              /* a_out -> a_res: safety
             clip = 1;
         }
         a_res[i] = (int32_t)(v * 8388607.0f);
+#if PX_OWN_FX
+        if (sp) {                                      /* the right channel: the same volume and knee */
+#if OP_BT_AUDIO
+            float w = a_outr[i] * gv + (bt_mix[i] - bt_side[i]) * mr, mw = w < 0.0f ? -w : w;   /* (- right) */
+#else
+            float w = a_outr[i] * gv, mw = w < 0.0f ? -w : w;
+#endif
+            if (mw > 0.8f) { float t = (mw - 0.8f) * 5.0f; mw = 0.8f + 0.2f * t / (1.0f + t); w = w < 0.0f ? -mw : mw; clip = 1; }
+            a_resr[i] = (int32_t)(w * 8388607.0f);
+        }
+#endif
     }
     a_gv = gv;
+#if PX_OWN_FX
+    a_res_sp = (uint8_t)sp;
+#endif
     if (clip) a_clip++;
 }
 static void dsp_load(uint32_t t0, uint32_t lim)        /* the block's load, the safety bypass (over lim % 8 blocks running) */
@@ -308,12 +373,22 @@ static uint8_t a_nbi, a_nbv, a_prun;                  /* a_nb[a_nbi] is this blo
 static void post_run(uint32_t prev, int run, int nbv)   /* run: the engine on; nbv: a_nb[prev] holds a block */
 {
     if (g_eng.wl_on) px_wet_run(&g_eng, 0u, 0);       /* v39.1: the lanes (the previous block's sends), first */
+#if PX_OWN_FX
+    a_mode = px_out_mode; a_split = a_mode != 0u;
+#endif
     if (run && nbv) {
-        for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK)
+        for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK) {
+#if PX_OWN_FX
+            A_BASS(o);
+#endif
             px_engine_part(&g_eng, a_nb[prev] + o, a_out + o, PX_MAX_BLOCK, PX_PART_POST);
+        }
     } else if (!run) {
         for (uint32_t i = 0; i < A_FR; i++) a_out[i] = a_in[i];
     } else for (uint32_t i = 0; i < A_FR; i++) a_out[i] = 0.0f;   /* the pipeline's first block */
+#if PX_OWN_FX
+    if (!(run && nbv)) for (uint32_t i = 0; i < A_FR; i++) a_outr[i] = 0.0f;
+#endif
     dsp_out();
 }
 static void post_job(uint32_t prev) { post_run(prev, a_prun, a_nbv); }
@@ -672,8 +747,8 @@ static void a_testsig(void)
  * dsp_out. Not read while the fade sits at silence, or after a NaN, or muted: the music waits, it does not skip */
 static void a_bt_fill(void)
 {
-    for (uint32_t i = 0; i < A_FR; i++) bt_mix[i] = 0.0f;
-    if (!a_mute && !a_nan && !(a_xft == 0 && a_xf == 0.0f)) bt_ring_mix(&bt_ring, bt_mix, A_FR, bt_gain);
+    for (uint32_t i = 0; i < A_FR; i++) bt_mix[i] = bt_side[i] = 0.0f;
+    if (!a_mute && !a_nan && !(a_xft == 0 && a_xf == 0.0f)) bt_ring_mix2(&bt_ring, bt_mix, bt_side, A_FR, bt_gain);
 }
 #endif
 static void a_block(const uint8_t *data, int len)      /* a guitar block: its DSP started, or run */
@@ -750,6 +825,10 @@ static void a_send(int32_t *d, uint32_t n)             /* an output block filled
 #endif
     a_collect();                                       /* the previous block must be finished */
     if (n > A_FR) n = A_FR;
+#if PX_OWN_FX
+    if (a_res_sp) for (uint32_t i = 0; i < n; i++) { d[2u * i] = a_res[i]; d[2u * i + 1u] = a_resr[i]; }   /* (L, R) */
+    else
+#endif
     for (uint32_t i = 0; i < n; i++) d[2u * i] = d[2u * i + 1u] = a_res[i];
 #if OP_UAUDIO
     if (a_ua) {                                        /* v42: USB audio */
@@ -929,6 +1008,9 @@ static void b_str(char *d, const char *s) { while (*d) d++; while (*s) *d++ = *s
 static uint32_t b_engine(const px_preset_t *pp)        /* % of the real-time budget for 128 frames */
 {
     px_engine_set(&g_eng, pp);
+#if PX_OWN_FX
+    px_engine_out(&g_eng, PX_OUT_MONO, 0);
+#endif
     for (uint32_t i = 0; i < A_FR; i++) a_in[i] = 0.3f * sinf((float)i * 0.0157f) + 0.05f * sinf((float)i * 0.11f);
     for (int w = 0; w < 4; w++) { px_engine_process(&g_eng, a_in, a_out, 64); px_engine_process(&g_eng, a_in + 64, a_out + 64, 64); }
     fm1_wdt_feed();

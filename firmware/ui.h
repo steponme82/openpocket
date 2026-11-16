@@ -649,7 +649,7 @@ enum { MI_CHAN, MI_SEND, MI_CLOCK, MI_UAUDIO,
 enum { MI_CHAN, MI_SEND, MI_CLOCK,
 #endif
 #if PX_OWN_FX
-       MI_EACH, MI_INPUT, MI_TAILS, MI_BTPWR, MI_USB,
+       MI_EACH, MI_INPUT, MI_TAILS, MI_BTPWR, MI_OUT, MI_USB,
 #endif
        MI_ROWS };
 #if PX_OWN_FX && !defined(PX_BT_POWER_APPLY)
@@ -666,14 +666,14 @@ enum { MI_CHAN, MI_SEND, MI_CLOCK,
 static uint32_t mi_row, mi_shown_hash = ~0u;
 static uint8_t mi_orig, mi_ua;
 #if PX_OWN_FX
-static uint8_t mi_set_orig;
+static uint8_t mi_set_orig, mi_out_orig;
 #endif
 static void midi_persist(void);                 /* openpocket.c: writes the settings to the store */
 static void midi_open(void)
 {
     ui_mode = M_MIDI; mi_row = 0; mi_shown_hash = ~0u; mi_orig = px_midi_cfg_pack(&mid_cfg); mi_ua = px_ua_on;
 #if PX_OWN_FX
-    mi_set_orig = px_set_pack();
+    mi_set_orig = px_set_pack(); mi_out_orig = px_out_mode;
 #endif
     lcd_rect(0, 0, 240, 240, UI_BG);
     lcd_rect(0, 0, 240, 4, UI_ACC); lcd_rect(0, 27, 240, 3, UI_ACC); lcd_rect(0, 4, 8, 23, UI_ACC);
@@ -694,6 +694,7 @@ static void midi_draw(void)
     for (uint32_t i = 0; i < PXM_MAP_N; i++) h ^= ((uint32_t)mid_map[i].src << 16 | (uint32_t)mid_map[i].dst << 8 | mid_map[i].mode) * (0x9E3779B1u + i);
     h ^= (uint32_t)px_set_pack() * 0x85EBCA6Bu;
     h ^= ((uint32_t)px_usb_foot << 4 | px_uh.st) * 0xC2B2AE35u;   /* (test build 41: the row, and what the host sees) */
+    h ^= (uint32_t)px_out_mode * 0x165667B1u;        /* (test build 42: OUTPUT) */
 #endif
     if (h == mi_shown_hash) return;
     mi_shown_hash = h;
@@ -702,7 +703,7 @@ static void midi_draw(void)
                                               "USB AUDIO",
 #endif
 #if PX_OWN_FX
-                                              "SWITCH", "INPUT", "TAILS", "BT POWER", "USB PORT",
+                                              "SWITCH", "INPUT", "TAILS", "BT POWER", "OUTPUT", "USB PORT",
 #endif
     };
     char v[MI_ROWS][MI_VW];
@@ -725,6 +726,8 @@ static void midi_draw(void)
     b_str(v[MI_TAILS], px_tails ? "ON" : "OFF");
     v[MI_BTPWR][0] = 0;
     b_str(v[MI_BTPWR], px_bt_pwr == 2u ? "LOW" : px_bt_pwr == 1u ? "MID" : "HIGH");
+    v[MI_OUT][0] = 0;
+    b_str(v[MI_OUT], px_out_mode == 1u ? "STEREO" : px_out_mode == 2u ? "GTR+BASS" : "MONO");   /* test build 42 */
     v[MI_USB][0] = 0;
     b_str(v[MI_USB], px_usb_foot ? "FOOTSW" : "COMPUTER");
 #endif
@@ -791,7 +794,9 @@ static void midi_close(void)
 {
     ui_mode = M_CHAIN; ui_item = 0;
 #if PX_OWN_FX
-    if (px_midi_cfg_pack(&mid_cfg) != mi_orig || mi_ua != px_ua_on || px_set_pack() != mi_set_orig) { px_ua_on = mi_ua; midi_persist(); }
+    if (px_midi_cfg_pack(&mid_cfg) != mi_orig || mi_ua != px_ua_on || px_set_pack() != mi_set_orig || px_out_mode != mi_out_orig) {
+        px_ua_on = mi_ua; midi_persist();
+    }
 #else
     if (px_midi_cfg_pack(&mid_cfg) != mi_orig || mi_ua != px_ua_on) { px_ua_on = mi_ua; midi_persist(); }
 #endif
@@ -809,6 +814,7 @@ static void midi_knob(int dd)
     else if (mi_row == MI_INPUT) { px_in_db = (int8_t)px_in_db_clamp(px_in_db + (dd > 0 ? 1 : -1)); a_in_gain_apply(); }   /* heard at once */
     else if (mi_row == MI_TAILS) { px_tails ^= 1u; a_tails_apply(); }
     else if (mi_row == MI_BTPWR) { px_bt_pwr = (uint8_t)((px_bt_pwr + (dd > 0 ? 1u : 2u)) % 3u); PX_BT_POWER_APPLY(); }
+    else if (mi_row == MI_OUT) px_out_mode = (uint8_t)((px_out_mode + (dd > 0 ? 1u : 2u)) % 3u);   /* test build 42: at once, saved on leaving */
     else if (mi_row == MI_USB) { px_usb_foot ^= 1u; PX_USB_MODE_APPLY(); }   /* test build 41: at once, never saved */
 #endif
     else mi_ua ^= 1u;

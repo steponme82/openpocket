@@ -20,7 +20,7 @@ static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL "); printf(__VA_ARGS__); printf("\n"); } else { printf("ok   "); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
 #define N_FRAMES 700u                                   /* 2 s */
-static int16_t in_l[N_FRAMES * 128u], in_r[N_FRAMES * 128u], out[N_FRAMES * 128u + 128u];
+static int16_t in_l[N_FRAMES * 128u], in_r[N_FRAMES * 128u], out[N_FRAMES * 128u + 128u], side_out[N_FRAMES * 128u + 128u];
 
 static uint32_t encode(SBC_ENC_PARAMS *e, uint32_t f, uint8_t *dst, int stereo)
 {
@@ -39,7 +39,7 @@ static double snr_best_delay(const int16_t *got, uint32_t n, int stereo, int *de
     for (int d = 0; d < 400; d++) {
         double e = 0, p = 0;
         for (uint32_t i = 2000; i + d < n && i < n - 2000; i++) {
-            double ref = stereo ? (in_l[i] + in_r[i]) * 0.5 : in_l[i];
+            double ref = stereo == 2 ? (in_l[i] - in_r[i]) * 0.5 : stereo ? (in_l[i] + in_r[i]) * 0.5 : in_l[i];   /* (2: the side) */
             double x = got[i + d] - ref;
             e += x * x; p += ref * ref;
         }
@@ -115,7 +115,7 @@ static uint32_t run(int stereo, int kbps, int damage_at, uint32_t *pkts_out)
         if (pkts == 0u && off != 12u + 4u + 8u + 1u) printf("payload offset %u\n", off);
         p = pkt + off; n = len - off;
         for (;;) {
-            int got = bt_sbc_frame(&p, &n, out + nout);
+            int got = bt_sbc_frame2(&p, &n, out + nout, side_out + nout);
             if (got <= 0) break;
             nout += (uint32_t)got;
         }
@@ -153,6 +153,9 @@ int main(void)
     {
         double db = snr_best_delay(out, nout, 1, &d);
         CHECK(db > 30.0, "the output is the mono mix: %.1f dB above the difference, the codec's delay %d samples", db, d);
+        int d2;
+        double ds = snr_best_delay(side_out, nout, 2, &d2);
+        CHECK(ds > 30.0 && d2 == d, "test build 42: the side is (L - R) / 2: %.1f dB above the difference, at the same delay (%d)", ds, d2);
     }
     nout = run(0, 127, -1, &pkts);
     {

@@ -14,7 +14,9 @@
 #    the expression pedal (test build 25): volume before the delay with its hold, wah sweep, whammy to SHIFT (tests/engine/exp.c);
 #    TAILS (test build 40): a delay or reverb switched off, or off in the next preset, rings out, inline and in its lane
 #    (tests/engine/tails.c); TREBLE BOOST (test build 40): its knobs, RANGE's shape, lopsided clipping, BOOST, its level at
-#    noon matching the dry guitar's loudness over the DI loops (tests/engine/treble.c)
+#    noon matching the dry guitar's loudness over the DI loops (tests/engine/treble.c); LOW OCTAVE's octave out of the chain
+#    (test build 42): the reverb's tail the same with it on and off, its 41 Hz whole, the right channel alone, bit for bit
+#    on two cores, fades, the volume pedal, its level against the amps' (tests/engine/bassout.c)
 #  - changes without clicks (v38): knob changes glide to exactly where a full set goes, blocks on / off fade, fewer clicks
 #  - USER IR (v38): the partitioned FFT convolution against the direct FIR, slots, names
 #  - wet lanes (v39): the delay through its lane as inline bit for bit, the reverb's tail lag frames later, the pipeline
@@ -44,7 +46,7 @@
 #  - pedal skin: its input mapping (tools/sim/pedal-input.js)
 #  - sound: the WebAssembly engine on known signals, against the native build; the bundled loops against their manifest
 #  - Chocolate Plus files: tools/chocolate/fcp.py against a made-up export
-#  - Bluetooth audio (docs/BT-AUDIO-TEST.md): the ring and its rate (tests/test_bt_ring.c), the radio pools' allocator
+#  - Bluetooth audio (docs/BT-AUDIO-TEST.md): the ring and its rate, and (test build 42) its stereo side (tests/test_bt_ring.c), the radio pools' allocator
 #    (test_bt_lbuf.c), the compiler runtime it adds (test_bt_rt.c), SBC through Android's encoder and decoder (test_bt_sbc.c), the third-party sources (test_bt_sources.mjs),
 #    the pairing store in the flash with power cuts at every step (test_bt_ps.c, test build 14)
 #    and the Bluetooth images' task message queues (test_ble_taskq.c: messages of the library's sizes, whole, in order)
@@ -84,9 +86,10 @@ $CC -O2 $FX -Iengine tests/engine/pipe_test.c engine/px_dsp.c firmware/px_math.c
 $CC -O2 $FX -Iengine tests/engine/long.c engine/px_dsp.c firmware/px_math.c -lm -o build/long_fx && build/long_fx "LOW OCTAVE" PAD "TREBLE BOOST" | tail -1
 echo "== the Bluetooth audio image's own effects: LOW OCTAVE (PIT), SYN PAD, TREBLE BOOST (DRV) (docs/OWN-FX.md)"
 for D in "$FX" "-DPX_OWN_FX=1"; do                     # as the image builds the engine, and with the host's defaults (PX_RUNS 1)
-  for t in lowoct pad exp nam_keep tails treble; do     # (exp: test build 25's expression pedal; nam_keep: test build 28's
-                                                        # factory models left out, PXN_KEEP below; tails, treble: test build
-                                                        # 40's TAILS and TREBLE BOOST)
+  for t in lowoct pad exp nam_keep tails treble bassout; do   # (exp: test build 25's expression pedal; nam_keep: test
+                                                        # build 28's factory models left out, PXN_KEEP below; tails, treble:
+                                                        # test build 40's TAILS and TREBLE BOOST; bassout: test build 42's
+                                                        # LOW OCTAVE out of the chain)
     $CC -O2 $D -Iengine tests/engine/$t.c engine/px_dsp.c firmware/px_math.c -lm -o build/$t
     build/$t > build/$t.log || { cat build/$t.log; exit 1; }; tail -1 build/$t.log
   done

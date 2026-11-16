@@ -2350,12 +2350,61 @@ void px_engine_tails(px_engine *e, int on)
 }
 int px_engine_ringing(const px_engine *e) { (void)e; return px_tl.ring[0] | px_tl.ring[1] << 1; }
 static void px_tl_start(int L, float g) { px_tl.ring[L] = 1; px_tl.g[L] = g; px_tl.f[L] = 1.0f; px_tl.q[L] = 0; px_tl.n[L] = 0; }
+
+/* ---- test build 42: LOW OCTAVE's bass out of the chain ----
+ * LOW OCTAVE makes its octave as before, but the octave no longer goes on down the chain with the guitar: it waits in
+ * px_lo_b and joins at the chain's end (before the preset LEVEL and the limiter), or goes to the right channel alone
+ * (px_engine_bass_out). With a NAM amp on two cores the blocks before the amp (PX_PART_PRE) and after it (PX_PART_POST) run
+ * one block apart, at once on the two cores: PRE's octave waits in the queue px_lo_q until POST takes that block (PRE
+ * only writes px_lo_qw, POST only px_lo_qr; each call has its own px_lo_b: PRE and PX_PART_ALL [0], POST [1]).
+ * PX_LO_OUTG: with the AMP on, the octave gets the chain's typical gain, so that OCT -1 sets it against the guitar as it
+ * comes out of the amp, as it did against the guitar going in: +12 dB, the amps' RMS gain at noon through the 1x12 US OPEN
+ * on the DI loops of assets/loops (tests/engine/bassout.c: the eight fitted amps +12.0 to +17.0 dB, the NAM factory models
+ * about +9 to +13 dB), taken at the low end for the headroom the sum needs (a sub-bass has little crest to spare). */
+#define PX_LOQ 512u
+#define PX_LO_OUTG 3.981072f                           /* +12 dB */
+static float px_lo_q[PX_LOQ][2];                       /* (the octave; STEREO's side) */
+static volatile uint32_t px_lo_qw, px_lo_qr;
+static float px_lo_b[2][PX_MAX_BLOCK], px_sd_b[2][PX_MAX_BLOCK], px_sdx_b[2][PX_MAX_BLOCK];   /* (static: CPU1's stack is small) */
+static float *px_lo_r;
+static int px_lo_mode;
+void px_engine_out(px_engine *e, int mode, float *r) { (void)e; px_lo_mode = mode; px_lo_r = mode != PX_OUT_MONO ? r : 0; }
+/* STEREO's side: each lane's wet (L 0 the delay, 1 the reverb) a few ms late, x PX_SD_G, added to the left channel and taken
+ * from the right: a copy that cancels in the sum, so the two channels summed are the mono sound (before the knee). The two
+ * lanes are delayed differently, both well under an echo. A lane that was not run starts again from silence (px_sd_dirty) */
+#define PX_SD_N 512u
+#define PX_SD_G 0.6f
+static const uint16_t PX_SD_D[2] = {251u, 433u};      /* 5.7 ms, 9.8 ms */
+static float px_sd_r[2][PX_SD_N];
+static uint32_t px_sd_i[2];
+static uint8_t px_sd_dirty[2] = {1u, 1u};
+/* MOD's side (STEREO): a second voice at the LFO's other half, from the same line (CE CHORUS, FLANGER; DIMENSION's two voices
+ * apart; ROTARY's horn from the other side) or a second all-pass chain (PHASE 90, SMALL STONE, UNI-VIBE). The tremolos and
+ * VIBRATO stay in the middle: a second one of them would change what the two channels sum to */
+static px_bq px_sd_lp;                                 /* (the chorus's low-pass for the second voice: MOD's coefficients) */
+static float px_sd_z[4], px_sd_fb, px_sd_lamp;
+static uint8_t px_sdm_dirty = 1u;
+static int px_mod_st(int t)
+{
+    return t == PX_MOD_CHORUS || t == PX_MOD_DIMENSION || t == PX_MOD_FLANGER || t == PX_MOD_PHASE90 || t == PX_MOD_STONE ||
+           t == PX_MOD_UNIVIBE || t == PX_MOD_ROTARY;
+}
+static inline __attribute__((always_inline)) float px_side(int L, float w)
+{
+    const uint32_t i = px_sd_i[L];
+    const float s = px_sd_r[L][(i - PX_SD_D[L]) & (PX_SD_N - 1u)];
+    px_sd_r[L][i & (PX_SD_N - 1u)] = w;
+    px_sd_i[L] = i + 1u;
+    return s * PX_SD_G;
+}
 #endif
 void px_engine_init(px_engine *e, float sr)
 {
     memset(e, 0, sizeof(*e));
 #if PX_OWN_FX
     px_tl.ring[0] = px_tl.ring[1] = 0;                 /* (TAILS itself, a setting, stays) */
+    px_sd_dirty[0] = px_sd_dirty[1] = px_sdm_dirty = 1u;   /* (test build 42: STEREO's side lines from silence; no octave waits) */
+    px_lo_qr = px_lo_qw;
 #endif
     e->sr = sr;
     e->oct_ff = 1.0f; e->oct_ff2 = 1.0f;
@@ -2396,6 +2445,7 @@ void px_engine_set(px_engine *e, const px_preset_t *p)
     for (int b = 0; b < PX_NBLK; b++) { e->bf[b] = e->bfa[b] = p->on[b] ? 1.0f : 0.0f; e->bfd[b] = 0; }
 #if PX_OWN_FX
     for (int L = 0; L < 2; L++) { if (ring[L]) px_tl_start(L, 0.0f); else px_tl.ring[L] = 0; }   /* (the output faded: no send) */
+    px_sd_dirty[0] = px_sd_dirty[1] = px_sdm_dirty = 1u;   /* (test build 42: STEREO's side lines: nothing of the sound before) */
 #endif
 }
 
@@ -2681,7 +2731,15 @@ static void hb2_down(px_hb *s, const float *in, float *out, int n)
     for (int i = 0; i < n; i++) out[i] = 0.5f * (d[2 * i] + d[2 * i + 1]);
 }
 #undef HB_SEC
-static float px_os_m[2 * PX_MAX_BLOCK] PX_LO(px_os_m);                /* (stage 1 <-> 2) */
+/* test build 42: in the Bluetooth audio image these buffers (3.3 KB) leave the RAM code window (.bss_hi) for the pool's free
+ * end, as the IR's spectra did in test build 24 (PX_BT_POOL): the window's room went to the stereo output's code. The pool
+ * is plain SRAM outside the radio's window, both cores'. Elsewhere they stay where they were (PX_LO) */
+#if PX_DLY_SHORT && defined(__PI32V2__)
+#define PX_LOB(name) PX_BT_POOL(name)
+#else
+#define PX_LOB(name) PX_LO(name)
+#endif
+static float px_os_m[2 * PX_MAX_BLOCK] PX_LOB(px_os_m);               /* (stage 1 <-> 2) */
 static void os_up(px_hb *st, const float *in, float *out, int n, int os)   /* os 2 or 4: st[0] stage 1, st[1] stage 2 */
 {
     if (os == 2) { hb1_up(&st[0], in, out, n); return; }
@@ -2698,14 +2756,14 @@ static void os_down(px_hb *st, const float *in, float *out, int n, int os)   /* 
 /* drive_run over n oversampled samples in place, stage by stage (the same operations as drive_run sample by sample);
  * the anti-denormal offset follows the base-rate sample (os samples each) */
 #if PX_OWN_FX   /* (px_os_h held TM_MUFF's second path only) */
-static float px_os_t[PX_OVERSAMPLE * PX_MAX_BLOCK] PX_LO(px_os_t), px_os_u[PX_OVERSAMPLE * PX_MAX_BLOCK] PX_LO(px_os_u);
+static float px_os_t[PX_OVERSAMPLE * PX_MAX_BLOCK] PX_LOB(px_os_t), px_os_u[PX_OVERSAMPLE * PX_MAX_BLOCK] PX_LOB(px_os_u);
 #else
 static float px_os_t[PX_OVERSAMPLE * PX_MAX_BLOCK] PX_LO(px_os_t), px_os_h[PX_OVERSAMPLE * PX_MAX_BLOCK] PX_LO(px_os_h),
              px_os_u[PX_OVERSAMPLE * PX_MAX_BLOCK] PX_LO(px_os_u);
 #endif
 /* v40.4: the oversampled sections' input at the base rate (the drive's, or a fitted amp's: one at a time), and the delay's
  * and the reverb's wet output when they run in the chain: not on px_engine_part's stack (the second core's is 2.8 KB) */
-static float px_os_p[PX_MAX_BLOCK] PX_LO(px_os_p), px_wb[2][PX_MAX_BLOCK] PX_LO(px_wb);
+static float px_os_p[PX_MAX_BLOCK] PX_LOB(px_os_p), px_wb[2][PX_MAX_BLOCK] PX_LOB(px_wb);
 static void drive_block(px_engine *e, float *u, int n, int os)   /* (static buffers: off the interrupt's stack) */
 {
 #if PX_OWN_FX
@@ -3247,12 +3305,13 @@ static inline __attribute__((always_inline)) void px_exp_block(px_engine *e, con
     }
 }
 /* the volume over a block of the chain (at its first DELAY or REVERB, else at its end) */
-static inline __attribute__((always_inline)) void px_exp_vol(float *xb, int n)
+static inline __attribute__((always_inline)) void px_exp_vol(float *xb, float *sb, int n)   /* sb: LOW OCTAVE's octave, or 0 */
 {
     float g = px_exp.vg;
     const float t = px_exp.vt;
     if (g == 1.0f && t == 1.0f) return;                /* (no pedal, or another job: the signal untouched) */
-    for (int k = 0; k < n; k++) { g += (t - g) * (1.0f / 441.0f); xb[k] *= g; }
+    if (sb) for (int k = 0; k < n; k++) { g += (t - g) * (1.0f / 441.0f); xb[k] *= g; sb[k] *= g; }
+    else for (int k = 0; k < n; k++) { g += (t - g) * (1.0f / 441.0f); xb[k] *= g; }
     if (t == 1.0f && g > 0.9999f) g = 1.0f;            /* (back at unity, exactly: the test above holds again) */
     if (t == 0.0f && g < 1e-6f) g = 0.0f;              /* (no denormals at the heel) */
     px_exp.vg = g;
@@ -4047,7 +4106,7 @@ int px_wet_run(px_engine *e, uint32_t deadline, volatile const uint8_t *stop)
 /* TAILS (px_tl): an off DELAY (L 0) or REVERB (L 1) ringing out at its place: its send goes down to nothing over 256 samples,
  * the dry passes at unity (the reverb's own dry level glides back to it), and its wet is added, with its own trim, until it
  * has been quiet for longer than an echo could still come; at 15 s it fades out over 0.25 s. Through its lane when the lanes are on, else inline. */
-static void px_tl_run(px_engine *e, int L, float *xb, int n, float strim, int dly_t)
+static void px_tl_run(px_engine *e, int L, float *xb, int n, float strim, int dly_t, float *sdx)   /* sdx: STEREO's side, or 0 */
 {
     const float g0 = px_tl.g[L], g1 = g0 - (float)n * (1.0f / 256.0f) > 0.0f ? g0 - (float)n * (1.0f / 256.0f) : 0.0f;
     const float dg = L ? 1.0f - 0.4f * e->rv_mix : 1.0f, f0 = px_tl.f[L], gs = (g1 - g0) / (float)n;
@@ -4061,6 +4120,7 @@ static void px_tl_run(px_engine *e, int L, float *xb, int n, float strim, int dl
             const float x = xb[k], w = (k < rd ? bw[k] : 0.0f) * f0;
             bw[k] = x * g;
             xb[k] = x * (1.0f - (1.0f - dg) * g) + w * strim;
+            if (sdx) sdx[k] = px_side(L, w) * strim;
             if (px_abs(w) > pk) pk = px_abs(w);
         }
         e->wl_p[L] = (uint16_t)(e->wl_p[L] + n);
@@ -4075,6 +4135,7 @@ static void px_tl_run(px_engine *e, int L, float *xb, int n, float strim, int dl
             g += gs;
             const float w = wb[k] * f0;
             xb[k] = xb[k] * (1.0f - (1.0f - dg) * g) + w * strim;
+            if (sdx) sdx[k] = px_side(L, w) * strim;
             if (px_abs(w) > pk) pk = px_abs(w);
         }
     }
@@ -4115,15 +4176,25 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
     uint8_t st[PX_NBLK];
     float tr[PX_NBLK];                                 /* each block's level trim */
     int ns = 0, ip_drv = -100, ip_amp = -200;
+#if PX_OWN_FX
+    int ip_pit = PX_NBLK;
+#endif
     for (int i = 0; i < PX_NBLK; i++) {
         int b = e->ord[i];
 #if PX_OWN_FX
-        if (b != PX_B_GATE && !p->on[b] && !((b == PX_B_DELAY && px_tl.ring[0]) || (b == PX_B_REVERB && px_tl.ring[1]))) continue;
+        if (b != PX_B_GATE && !p->on[b] && !((b == PX_B_DELAY && px_tl.ring[0]) || (b == PX_B_REVERB && px_tl.ring[1]))) {
+            if (b == PX_B_DELAY || b == PX_B_REVERB) px_sd_dirty[b == PX_B_REVERB] = 1u;   /* (test build 42: STEREO's side) */
+            if (b == PX_B_MOD) px_sdm_dirty = 1u;
+            continue;
+        }
 #else
         if (b != PX_B_GATE && !p->on[b]) continue;
 #endif
         if (b == PX_B_DRIVE) ip_drv = ns;
         if (b == PX_B_AMP) ip_amp = ns;
+#if PX_OWN_FX
+        if (b == PX_B_PITCH) ip_pit = ns;
+#endif
         tr[ns] = e->btr[b];
         st[ns++] = (uint8_t)b;
     }
@@ -4161,6 +4232,19 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
         if (px_clock) e->pf[PX_NBLK] += px_clock() - t0;
         return;
     }
+#if PX_OWN_FX   /* test build 42: LOW OCTAVE's octave out of the chain (px_lo_b above) */
+    const int lo_on = p->on[PX_B_PITCH] && pit_t == PX_PIT_LOWOCT;
+    const int sd_on = px_lo_mode == PX_OUT_STEREO, q_on = lo_on || sd_on;   /* (STEREO: the side, sd) */
+    float *const lb = px_lo_b[part == PX_PART_POST], *const sd = px_sd_b[part == PX_PART_POST];
+    const float lo_g = amp_on ? PX_LO_OUTG : 1.0f;     /* (the chain's gain when the amp is on) */
+    if (part == PX_PART_POST && q_on && px_lo_qw - px_lo_qr >= (uint32_t)n) {
+        const uint32_t r = px_lo_qr;
+        for (int k = 0; k < n; k++) { const float *q = px_lo_q[(r + (uint32_t)k) & (PX_LOQ - 1u)]; lb[k] = q[0]; sd[k] = q[1]; }
+        px_lo_qr = r + (uint32_t)n;
+    } else if (q_on) for (int k = 0; k < n; k++) lb[k] = sd[k] = 0.0f;   /* (POST: none waiting yet, the pipeline's start) */
+    if (part == PX_PART_ALL || (part == PX_PART_POST && !q_on)) px_lo_qr = px_lo_qw;   /* (nothing to wait for) */
+    if (!sd_on) px_sd_dirty[0] = px_sd_dirty[1] = px_sdm_dirty = 1u;   /* (the side's lines from silence when STEREO is back) */
+#endif
     int s_lo = 0, s_hi = nam ? ip_amp : ns;
     const int p0 = part == PX_PART_POST, p1 = part == PX_PART_PRE ? 1 : nam ? 2 : 1;
     for (int pass = p0; pass < p1; pass++) {
@@ -4195,13 +4279,17 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
         const int sblk = st[s];
         const float strim = tr[s];
 #if PX_OWN_FX
-        if (s == ex_vi) px_exp_vol(xb, n);
+        if (s == ex_vi) px_exp_vol(xb, lo_on && ip_pit < ex_vi ? lb : 0, n);
 #endif
         /* v38: a block fading in or out: its output mixed with its input, the mix ramped over the block */
         const uint32_t pt0 = px_clock ? px_clock() : 0u;   /* v38: each block's time (px_clock: the firmware's) */
         const float fa = e->bfa[sblk], fz = e->bf[sblk];
         const int fading = p->on[sblk] && (fa < 1.0f || fz < 1.0f);   /* (GATE runs off too: not a fade) */
         float dryb[PX_MAX_BLOCK];
+#if PX_OWN_FX
+        float *const sdx = px_sdx_b[part == PX_PART_POST];   /* test build 42: STEREO, this DELAY's or REVERB's side */
+        int sdx_on = 0;
+#endif
         if (fading) for (int k = 0; k < n; k++) dryb[k] = xb[k];
         if (sblk == PX_B_CAB) {                          /* cabinet: its filters one after the other over the block */
             if (p->on[PX_B_CAB] && p->type[PX_B_CAB] % PX_CAB_COUNT == PX_CAB_IR) {   /* v38: an impulse response */
@@ -4252,12 +4340,22 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
             goto faded;
         }
         if (sblk == PX_B_DELAY || sblk == PX_B_REVERB) {   /* v38: over the block, each type's own loop */
+#if PX_OWN_FX
+            const int L0 = sblk == PX_B_REVERB;
+            if (sd_on) {                                   /* test build 42: STEREO, this lane's side (sdx, at faded) */
+                sdx_on = 1;
+                if (px_sd_dirty[L0]) { for (uint32_t i = 0; i < PX_SD_N; i++) px_sd_r[L0][i] = 0.0f; px_sd_dirty[L0] = 0u; }
+            }
+#endif
             if (p->on[sblk]) {
                 const int L = sblk == PX_B_REVERB;
                 if (e->wl_on && e->wl_p[L] + n <= PX_WL_N) {   /* v39: the lane: the send in, two blocks old wet out */
                     const float dg = L ? 1.0f - 0.4f * e->rv_mix : 1.0f;
                     float *bw = px_wl[L][e->wl_b] + e->wl_p[L];
                     const int rd = (int)e->wl_rd[L] - (int)e->wl_p[L];
+#if PX_OWN_FX
+                    if (sdx_on) for (int k = 0; k < n; k++) sdx[k] = px_side(L, k < rd ? bw[k] : 0.0f) * strim;
+#endif
                     for (int k = 0; k < n; k++) {
                         const float x = xb[k], w = k < rd ? bw[k] : 0.0f;
                         bw[k] = x;
@@ -4275,10 +4373,13 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
                         dly_block(e, xb, wb, n, dly_t);
                         for (int k = 0; k < n; k++) xb[k] = xb[k] + wb[k];
                     }
+#if PX_OWN_FX
+                    if (sdx_on) for (int k = 0; k < n; k++) sdx[k] = px_side(L, wb[k]) * strim;
+#endif
                 }
             }
 #if PX_OWN_FX
-            else { px_tl_run(e, sblk == PX_B_REVERB, xb, n, strim, dly_t); goto faded; }   /* (off in the list: TAILS) */
+            else { px_tl_run(e, sblk == PX_B_REVERB, xb, n, strim, dly_t, sdx_on ? sdx : 0); goto faded; }   /* (off: TAILS) */
 #endif
             for (int k = 0; k < n; k++) xb[k] *= strim;
             goto faded;
@@ -4319,6 +4420,17 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
             bq_chain(e->eq, e->eq_n, xb, n);
             for (int k = 0; k < n; k++) xb[k] *= strim;
             goto faded;
+        }
+#endif
+#if PX_OWN_FX
+        if (sblk == PX_B_MOD && sd_on && p->on[PX_B_MOD] && px_mod_st(mod_t)) {   /* test build 42: STEREO, MOD's side */
+            sdx_on = 1;
+            if (px_sdm_dirty) {
+                bq_reset(&px_sd_lp); px_sd_z[0] = px_sd_z[1] = px_sd_z[2] = px_sd_z[3] = px_sd_fb = 0.0f;
+                px_sd_lamp = e->uv_lamp; px_sdm_dirty = 0u;
+            }
+            px_sd_lp.b0 = e->mod_lp.b0; px_sd_lp.b1 = e->mod_lp.b1; px_sd_lp.b2 = e->mod_lp.b2;
+            px_sd_lp.a1 = e->mod_lp.a1; px_sd_lp.a2 = e->mod_lp.a2;
         }
 #endif
         for (int k = 0; k < n; k++) {
@@ -4391,7 +4503,8 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
                         e->lo_glp += (px_tanh(oc * e->lo_gk) * e->lo_gn - e->lo_glp) * e->lo_glk;
                         oc += (e->lo_glp - oc) * e->lo_g;
                     }
-                    x = x * e->lo_dry + oc * e->lo_lvl;
+                    x = x * e->lo_dry;
+                    lb[k] += oc * e->lo_lvl * lo_g * strim;   /* test build 42: the octave out of the chain */
 #endif
                 } else {
 #if !PX_RUNS                                           /* (with the runs: pitch_run) */
@@ -4525,12 +4638,26 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
                     if (mod_t == PX_MOD_CHORUS) wet = mod_tap(e, e->mod_base + e->mod_sweep * (0.5f + 0.5f * tri));
                     else wet = 0.5f * (mod_tap(e, e->mod_base + e->mod_sweep * tri) + mod_tap(e, e->mod_base - e->mod_sweep * tri));
                     wet = bq_run(&e->mod_lp, wet);
+#if PX_OWN_FX
+                    if (sdx_on) {                          /* STEREO: CE CHORUS a second voice at the LFO's other half (0.8),
+                                                            * DIMENSION its two voices one each side */
+                        const float sv = mod_t == PX_MOD_CHORUS ? 0.8f * mod_tap(e, e->mod_base + e->mod_sweep * (0.5f - 0.5f * tri))
+                            : 0.5f * (mod_tap(e, e->mod_base + e->mod_sweep * tri) - mod_tap(e, e->mod_base - e->mod_sweep * tri));
+                        sdx[k] = bq_run(&px_sd_lp, sv) * 0.5f * e->mod_mix * strim;
+                    }
+#endif
                     if (++e->mod_w >= 2048) e->mod_w = 0;
                     x = x * (1.0f - 0.5f * e->mod_mix) + wet * 0.5f * e->mod_mix;
                 } break;
                 case PX_MOD_FLANGER: case PX_MOD_VIBRATO: {
                     float d = e->mod_base + e->mod_sweep * (0.5f + 0.5f * (mod_t == PX_MOD_FLANGER ? lfo_tri(e->mod_ph) : l));
                     float wet = mod_tap(e, d);
+#if PX_OWN_FX
+                    if (sdx_on) {                          /* STEREO (FLANGER: VIBRATO stays in the middle): the sweep's other half */
+                        const float d2 = e->mod_base + e->mod_sweep * (0.5f - 0.5f * lfo_tri(e->mod_ph));
+                        sdx[k] = 0.8f * mod_tap(e, d2) * 0.5f * e->mod_mix * strim;
+                    }
+#endif
                     e->mod_buf[e->mod_w] = x + wet * e->mod_fb;
                     if (++e->mod_w >= 2048) e->mod_w = 0;
                     x = (mod_t == PX_MOD_VIBRATO) ? wet : x * (1.0f - 0.5f * e->mod_mix) + wet * 0.5f * e->mod_mix;
@@ -4542,6 +4669,16 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
                     float s = x + e->ph_fb * e->mod_fb;
                     for (int i = 0; i < 4; i++) { float y = -a * s + e->ph_z[i]; e->ph_z[i] = s + a * y; s = y; }
                     e->ph_fb = s;
+#if PX_OWN_FX
+                    if (sdx_on) {                          /* STEREO: a second chain at the LFO's other half; half their difference */
+                        const float u2 = 0.5f - 0.5f * l, f2 = e->ph_lo + (e->ph_hi - e->ph_lo) * u2 * u2;
+                        const float w2 = PI_F * f2 / sr, a2 = (1.0f - w2) / (1.0f + w2);
+                        float s2 = x + px_sd_fb * e->mod_fb;
+                        for (int i = 0; i < 4; i++) { float y = -a2 * s2 + px_sd_z[i]; px_sd_z[i] = s2 + a2 * y; s2 = y; }
+                        px_sd_fb = s2;
+                        sdx[k] = 0.25f * (s - s2) * strim;
+                    }
+#endif
                     x = 0.5f * (x + s);
                 } break;
                 case PX_MOD_UNIVIBE: {
@@ -4553,6 +4690,20 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
                         float w = PI_F * fc / sr, a = (1.0f - w) / (1.0f + w);
                         float y = -a * s + e->ph_z[i]; e->ph_z[i] = s + a * y; s = y;
                     }
+#if PX_OWN_FX
+                    if (sdx_on) {                          /* STEREO: a second lamp at the LFO's other half, its own chain */
+                        const float tg2 = 0.5f - 0.5f * l;
+                        px_sd_lamp += (tg2 - px_sd_lamp) * (tg2 > px_sd_lamp ? e->uv_up : e->uv_dn);
+                        const float f20 = 60.0f + px_sd_lamp * e->mod_depth * 1200.0f;
+                        float s2 = x;
+                        for (int i = 0; i < 4; i++) {
+                            float fc = f20 * e->uv_k[i]; if (fc > sr * 0.45f) fc = sr * 0.45f;
+                            const float w = PI_F * fc / sr, a = (1.0f - w) / (1.0f + w);
+                            const float y = -a * s2 + px_sd_z[i]; px_sd_z[i] = s2 + a * y; s2 = y;
+                        }
+                        sdx[k] = 0.25f * e->mod_mix * (s - s2) * strim;
+                    }
+#endif
                     x = x * (1.0f - e->mod_mix) + s * e->mod_mix;
                 } break;
                 case PX_MOD_OPTOTREM: {
@@ -4580,9 +4731,17 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
                     e->mod_buf[e->mod_w] = hi;
                     float hs = lfo_sin(e->rot_h);
                     float horn = mod_tap(e, (0.001f + 0.00044f * e->mod_depth * hs) * sr);
+#if PX_OWN_FX
+                    const float horn2 = sdx_on ? mod_tap(e, (0.001f - 0.00044f * e->mod_depth * hs) * sr) : 0.0f;   /* (the other side) */
+#endif
                     if (++e->mod_w >= 2048) e->mod_w = 0;
                     float hc = lfo_sin(wrap1(e->rot_h + 0.25f));
                     horn *= 1.0f - 0.35f * e->mod_depth * (0.5f + 0.5f * hc);
+#if PX_OWN_FX
+                    if (sdx_on)                            /* STEREO: the horn and the drum as two microphones on their two sides hear them */
+                        sdx[k] = 0.5f * ((horn - horn2 * (1.0f - 0.35f * e->mod_depth * (0.5f - 0.5f * hc))) * (0.5f + e->rot_bal)
+                                         - lo * 0.25f * e->mod_depth * lfo_sin(e->rot_d) * (1.5f - e->rot_bal)) * strim;
+#endif
                     lo *= 1.0f - 0.25f * e->mod_depth * (0.5f + 0.5f * lfo_sin(e->rot_d));
                     x = lo * (1.5f - e->rot_bal) + horn * (0.5f + e->rot_bal);
                 } break;
@@ -4599,21 +4758,55 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
             const float dg = (fz - fa) / (float)n;
             float g = fa;
             for (int k = 0; k < n; k++) { g += dg; xb[k] = dryb[k] + (xb[k] - dryb[k]) * g; }
+#if PX_OWN_FX
+            if (sblk == PX_B_PITCH && lo_on) { g = fa; for (int k = 0; k < n; k++) { g += dg; lb[k] *= g; } }
+            if (sdx_on) { g = fa; for (int k = 0; k < n; k++) { g += dg; sdx[k] *= g; } }
+#endif
         }
+#if PX_OWN_FX
+        if (sdx_on) { for (int k = 0; k < n; k++) sd[k] += sdx[k]; sdx_on = 0; }
+#endif
         if (px_clock) e->pf[sblk] += px_clock() - pt0;
     }
     if (nam && pass == 0) {
         float *d = part == PX_PART_PRE ? out : e->nam_buf;
         for (int k = 0; k < n; k++) d[k] = xb[k];
+#if PX_OWN_FX
+        if (part == PX_PART_PRE && q_on && px_lo_qw - px_lo_qr <= PX_LOQ - (uint32_t)n) {
+            const uint32_t w = px_lo_qw;
+            for (int k = 0; k < n; k++) { float *q = px_lo_q[(w + (uint32_t)k) & (PX_LOQ - 1u)]; q[0] = lb[k]; q[1] = sd[k]; }
+            px_lo_qw = w + (uint32_t)n;
+        }
+#endif
         continue;
     }
 #if PX_OWN_FX
-    if (ex_vi >= ns) px_exp_vol(xb, n);                /* (no DELAY or REVERB on: the volume at the chain's end) */
+    if (ex_vi >= ns) px_exp_vol(xb, lo_on ? lb : 0, n);   /* (no DELAY or REVERB on: the volume at the chain's end) */
+#endif
+#if PX_OWN_FX
+    float *const ro = px_lo_r;
+    const int st2 = sd_on && ro;                       /* STEREO: the side + left, - right */
+    if (px_lo_mode == PX_OUT_BASS && ro) {             /* GTR+BASS: the right channel, the octave alone (silence without it) */
+        for (int k = 0; k < n; k++) {
+            float x = lo_on ? lb[k] * pg : 0.0f, a = px_abs(x);
+            if (a > 0.8f) { float y = 0.8f + 0.4f * px_tanh((a - 0.8f) * 2.5f); x = x > 0.0f ? y : -y; }
+            ro[k] = x;
+        }
+    } else if (lo_on) for (int k = 0; k < n; k++) xb[k] += lb[k];
 #endif
     for (int k = 0; k < n; k++) {
         float x = xb[k];
         { float y = x - e->odc_x1 + 0.9990f * e->odc_y1; e->odc_x1 = x; e->odc_y1 = y; x = y; }
         x *= pg;
+#if PX_OWN_FX
+        if (st2) {                                     /* (the right channel through the same limiter) */
+            const float s = sd[k] * pg;
+            float r = x - s, ar = px_abs(r);
+            if (ar > 0.8f) { float y = 0.8f + 0.4f * px_tanh((ar - 0.8f) * 2.5f); r = r > 0.0f ? y : -y; }
+            ro[k] = r;
+            x += s;
+        }
+#endif
         {   /* v36: soft limiter instead of a hard clip: transparent up to 0.8, then rounds off smoothly to 1.2 */
             float a = px_abs(x);
             if (a > 0.8f) { float y = 0.8f + 0.4f * px_tanh((a - 0.8f) * 2.5f); x = x > 0.0f ? y : -y; }

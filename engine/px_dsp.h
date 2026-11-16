@@ -407,6 +407,17 @@ void px_wet_mode(px_engine *e, int on, int lag);
  * (a tail ringing then fades out over 0.25 s). px_engine_ringing: bit 0 the delay rings, bit 1 the reverb (tests, the log) */
 void px_engine_tails(px_engine *e, int on);
 int  px_engine_ringing(const px_engine *e);
+/* test build 42: the output's two channels (firmware/px_audio.h; SETTINGS' OUTPUT, firmware/px_midi.h px_out_mode).
+ * LOW OCTAVE's octave leaves the chain at the PIT block and joins at its end, clean: no block after PIT touches it (amp,
+ * cabinet, EQ, MOD, DELAY, REVERB...); the preset's LEVEL, the volume pedal and the block's on/off fade still do.
+ * px_engine_out(e, mode, r) sets the next px_engine_part that makes output (PX_PART_ALL, PX_PART_POST): set it before each.
+ *  PX_OUT_MONO   out: everything, the octave added; r unused. As every earlier image.
+ *  PX_OUT_STEREO out: the left channel, r[0..n): the right. The mono sound in the middle; DELAY's and REVERB's wet (and their
+ *                TAILS) and seven MOD models also to the sides, as a side signal added to the left and taken from the right,
+ *                so that the two channels summed are the mono sound.
+ *  PX_OUT_BASS   out: the guitar without the octave, r[0..n): the octave alone (silence without LOW OCTAVE). */
+enum { PX_OUT_MONO, PX_OUT_STEREO, PX_OUT_BASS };
+void px_engine_out(px_engine *e, int mode, float *r);
 #endif
 void px_wet_swap(px_engine *e);
 int  px_wet_run(px_engine *e, uint32_t deadline, volatile const uint8_t *stop);

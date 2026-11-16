@@ -528,6 +528,19 @@ int main(int argc, char **argv)
         if (px_bt_pwr != 2u) { printf("midi: BT POWER must step back HIGH -> LOW\n"); return 1; }
         midi_draw(); shot(d, "midi_tails_on_bt_low");
     }
+    {   /* test build 42: OUTPUT (MONO, STEREO, GTR+BASS, round both ways), at once (the audio reads it each block), before USB PORT */
+        midi_push();
+        if (mi_row != MI_OUT || px_out_mode) { printf("midi: OUTPUT must follow BT POWER, MONO at first\n"); return 1; }
+        midi_knob(1);
+        if (px_out_mode != 1u) { printf("midi: OUTPUT must step MONO -> STEREO\n"); return 1; }
+        midi_draw(); shot(d, "midi_output_stereo");
+        midi_knob(1);
+        if (px_out_mode != 2u) { printf("midi: OUTPUT must step STEREO -> GTR+BASS\n"); return 1; }
+        midi_knob(1); midi_knob(-1);
+        if (px_out_mode != 2u) { printf("midi: OUTPUT must go round GTR+BASS -> MONO and back\n"); return 1; }
+        if (ft_width(&FT_SM, "GTR+BASS") > 92u || ft_width(&FT_SM, "STEREO") > 92u || ft_width(&FT_SM, "OUTPUT") > 140u) { printf("midi: OUTPUT's texts must fit\n"); return 1; }
+        midi_draw(); shot(d, "midi_output_gtr_bass");
+    }
     {   /* test build 41: USB PORT, the last row: COMPUTER / FOOTSW, to the port at once; in FOOTSW the USB line says what the
          * host sees, each text whole on the line; the controls learned are counted beside it when they fit */
         static const uint8_t ST[] = {PXU_OFF, PXU_WAIT, PXU_NOMIDI, PXU_LOW, PXU_OK, PXU_LOST};
@@ -571,6 +584,14 @@ int main(int argc, char **argv)
         midi_knob(1); midi_close();
         if (midi_saved != 2 || !px_usb_foot) { printf("midi: USB PORT must not be saved, and must stay FOOTSW after leaving\n"); return 1; }
         px_usb_foot = 0;
+    }
+    {   /* test build 42: OUTPUT alone changed: saved on leaving */
+        const int s0 = midi_saved;
+        const uint8_t b0 = px_out_mode;
+        midi_open(); while (mi_row != MI_OUT) midi_push();
+        midi_knob(1); midi_close();
+        if (midi_saved != s0 + 1 || px_out_mode == b0) { printf("midi: OUTPUT changed alone must be saved on leaving\n"); return 1; }
+        px_out_mode = 0;
     }
 #endif
     mid_cfg.chan = 16; midi_open(); midi_knob(1); midi_draw(); shot(d, "midi_channel_wraps_to_omni");

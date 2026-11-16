@@ -49,12 +49,9 @@ enum { ED_INFO = 1, ED_CAT_BLOCK, ED_CAT_TYPE, ED_TEXTS, ED_STATE, ED_SET, ED_OR
 #ifndef ED_OUT_BYTES
 #define ED_OUT_BYTES 1024u   /* a reply's bytes at most (an image with longer DIAG lines sets more) */
 #endif
-#if OP_BT_AUDIO   /* test build 23: in the RAM code window's data (.bss_hi), out of the 96 KB RAM, which BLE MIDI needs; only the CPU reads it
-                  * (ota_wire_send packs it into USB-MIDI packets) */
-static uint8_t ed_out[ED_OUT_BYTES] __attribute__((section(".bss.hi.ed_out")));
-#else
+/* (test builds 23 to 41 kept it in the RAM code window's data, .bss_hi, out of the 96 KB RAM, which BLE MIDI needed then;
+ * test build 42 brings it back to the RAM, 18 KB free, for the code of the stereo output; only CPU0 touches it) */
 static uint8_t ed_out[ED_OUT_BYTES];
-#endif
 static uint32_t ed_n;
 static struct {
     uint8_t on; uint32_t last_ms, hash, push_ms;
@@ -402,7 +399,7 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
                                                         * PXM_MAP_N x (present, src, dst, mode) */
             static px_map_t mq[PXM_MAP_N];
             uint32_t want = 4u + PXM_MAP_N * 4u;
-            if (n < want || a[2] > (uint32_t)(PX_IN_DB_MAX - PX_IN_DB_MIN) || ((a[3] >> 1) & 3u) > 2u) rc = 1;
+            if (n < want || a[2] > (uint32_t)(PX_IN_DB_MAX - PX_IN_DB_MIN) || ((a[3] >> 1) & 3u) > 2u || ((a[3] >> 3) & 3u) > 2u) rc = 1;
             for (k = 0; !rc && k < PXM_MAP_N; k++) {
                 const uint8_t *e = a + 4u + k * 4u;
                 mq[k].src = e[0] ? e[1] : 0xFFu; mq[k].dst = e[2]; mq[k].mode = e[3];
@@ -419,12 +416,15 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
                 a_in_gain_apply();                     /* (heard at once) */
                 if ((a[3] & 1u) != px_tails) { px_tails = (uint8_t)(a[3] & 1u); a_tails_apply(); }
                 if (((a[3] >> 1) & 3u) != px_bt_pwr) { px_bt_pwr = (uint8_t)((a[3] >> 1) & 3u); PX_BT_POWER_APPLY(); }
+                px_out_mode = (uint8_t)((a[3] >> 3) & 3u);   /* test build 42: OUTPUT (the audio reads it each block) */
+                st_usb = (uint8_t)((st_usb & ~PX_ST_OUT_MASK) | (px_out_mode << PX_ST_OUT_SH));
                 st_midi = px_midi_cfg_pack(&mid_cfg);
                 if (st_commit()) rc = 2;               /* (it stays in RAM and works: the next save writes it) */
                 st_gen++;
             }
         }
-        ed_b((uint32_t)rc); ed_b(mid_cfg.each); ed_b((uint32_t)(px_in_db - PX_IN_DB_MIN)); ed_b(px_tails | (uint32_t)px_bt_pwr << 1);
+        ed_b((uint32_t)rc); ed_b(mid_cfg.each); ed_b((uint32_t)(px_in_db - PX_IN_DB_MIN));
+        ed_b(px_tails | (uint32_t)px_bt_pwr << 1 | (uint32_t)px_out_mode << 3);
         ed_b(PXM_MAP_N);
         for (k = 0; k < PXM_MAP_N; k++) {
             const px_map_t *e = &mid_map[k];

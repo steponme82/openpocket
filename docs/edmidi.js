@@ -133,7 +133,7 @@ async function finishCatch() {
     return;
   }
   try {
-    const r = await app.ed.setPedalMap(pmap.each, next, pmap.inputDb, pmap.tails, pmap.btPower);
+    const r = await app.ed.setPedalMap(pmap.each, next, pmap.inputDb, pmap.tails, pmap.btPower, pmap.outMode);
     if (r.rc === 0) {
       pmap = r;
       const e = r.entries.find((y) => y && y.src === c.src);
@@ -144,9 +144,9 @@ async function finishCatch() {
   catching = null;
   renderMap();
 }
-async function savePmap(entries, each = pmap.each, inputDb = pmap.inputDb, tails = pmap.tails, btPower = pmap.btPower) {
+async function savePmap(entries, each = pmap.each, inputDb = pmap.inputDb, tails = pmap.tails, btPower = pmap.btPower, outMode = pmap.outMode) {
   try {
-    const r = await app.ed.setPedalMap(each, entries, inputDb, tails, btPower);
+    const r = await app.ed.setPedalMap(each, entries, inputDb, tails, btPower, outMode);
     if (r.rc === 0) pmap = r; else say(r.rc === 2 ? "The pedal could not save it (flash)." : "The pedal refused it.", "err");
   } catch (e) { say(`Not changed: ${e.message}`, "err"); }
   renderMap();
@@ -322,6 +322,10 @@ function renderPmap() {
   const bp = h("select", { id: "pmapbt", "aria-label": "The radio's transmit power", onchange: () => savePmap(pmap.entries, pmap.each, pmap.inputDb, pmap.tails, +bp.value) },
     h("option", { value: "0", text: "High (as before)" }), h("option", { value: "1", text: "Medium" }), h("option", { value: "2", text: "Low" }));
   bp.value = String(pmap.btPower);
+  const bo = h("select", { id: "pmapout", "aria-label": "The output", onchange: () => savePmap(pmap.entries, pmap.each, pmap.inputDb, pmap.tails, pmap.btPower, +bo.value) },
+    h("option", { value: "0", text: "Mono (as before)" }), h("option", { value: "1", text: "Stereo" }),
+    h("option", { value: "2", text: "Guitar left, LOW OCTAVE's bass right" }));
+  bo.value = String(pmap.outMode || 0);
   const used = pmap.entries.map((e, i) => [e, i]).filter(([e]) => e);
   return h("div", { class: "learned", id: "pmap" },
     h("div", { class: "lrow" }, h("span", { text: "The flip numbers, CC 8 to 19, act" }), sw, h("span", { class: "grow" }),
@@ -332,6 +336,8 @@ function renderPmap() {
       h("span", { class: "grow" }), h("span", { class: "dim small", text: "(SETTINGS, TAILS: the delay and the reverb ring out when they go off and across a preset change)" })),
     h("div", { class: "lrow" }, h("span", { text: "Bluetooth transmit power" }), bp, h("span", { class: "grow" }),
       h("span", { class: "dim small", text: "(SETTINGS, BT POWER: lower it if the guitar ticks while the radio works)" })),
+    h("div", { class: "lrow" }, h("span", { text: "Output" }), bo, h("span", { class: "grow" }),
+      h("span", { class: "dim small", text: "(SETTINGS, OUTPUT: stereo spreads the delay, the reverb and the modulations, the two channels summed are the mono sound; a mono cable then carries only the left)" })),
     used.length ? used.map(([e, i]) => {
       const t = pedalTarget(e.dst), isValue = e.mode === MAP_VALUE || (t && (t.kind === "param" || t.kind === "type" || t.kind === "exp" || t.kind === "master"));
       const mode = !isValue && h("select", { "aria-label": `How CC ${e.src} acts`, onchange: () => {

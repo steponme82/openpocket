@@ -315,20 +315,22 @@ export class Editor {
   }
   // the CAB USER IR type's IR texts name the slots, which change: always asked again (not cached)
   // test build 39 (protocol 5, the Bluetooth audio image): controls learned on the pedal (firmware/px_midi.h mid_map) and
-  // SWITCH (CC 8..19 flip on every message: "each"), INPUT (-10..+10 dB) and (test build 40) TAILS and BT POWER. pedalMap()
-  // reads them; setPedalMap(each, entries, inputDb, tails, btPower) writes all of them and the flash (the sound holds a
-  // moment, as a save). entries: PEDAL_MAP_N of { src, dst, mode } or null; mode 0 press, 1 each, 2 value (docs/pxmidi.js).
-  // -> { rc (0 ok, 1 invalid, 2 flash), each, inputDb, tails, btPower, entries }
+  // SWITCH (CC 8..19 flip on every message: "each"), INPUT (-10..+10 dB), (test build 40) TAILS and BT POWER and (test build
+  // 42) OUTPUT. pedalMap() reads them; setPedalMap(each, entries, inputDb, tails, btPower, outMode) writes all of them and
+  // the flash (the sound holds a moment, as a save). entries: PEDAL_MAP_N of { src, dst, mode } or null; mode 0 press, 1 each,
+  // 2 value (docs/pxmidi.js). -> { rc (0 ok, 1 invalid, 2 flash), each, inputDb, tails, btPower, outMode, entries }
   get hasPedalLearn() { return !!(this.info && this.info.proto >= 5); }
   _map(r) {
     const q = new Reader(r), rc = q.b(), each = !!q.b(), inputDb = q.b() - 10, fl = q.b(), n = q.b(), entries = [];
     for (let i = 0; i < n; i++) { const on = q.b(), src = q.b(), dst = q.b(), mode = q.b(); entries.push(on ? { src, dst, mode } : null); }
-    return { rc, each, inputDb, tails: !!(fl & 1), btPower: (fl >> 1) & 3, entries };
+    return { rc, each, inputDb, tails: !!(fl & 1), btPower: (fl >> 1) & 3, outMode: (fl >> 3) & 3, entries };
   }
   async pedalMap() { return this._map(await this.request(C.MAP)); }
-  // inputDb: SETTINGS' INPUT, -10..+10 dB (the guitar's level into the chain); tails: TAILS; btPower: 0 HIGH, 1 MID, 2 LOW
-  async setPedalMap(each, entries, inputDb = 0, tails = false, btPower = 0) {
-    const a = [1, each ? 1 : 0, Math.max(0, Math.min(20, Math.round(inputDb) + 10)), (tails ? 1 : 0) | (Math.max(0, Math.min(2, btPower | 0)) << 1)];
+  // inputDb: SETTINGS' INPUT, -10..+10 dB (the guitar's level into the chain); tails: TAILS; btPower: 0 HIGH, 1 MID, 2 LOW;
+  // outMode: OUTPUT, 0 MONO, 1 STEREO (DELAY's and REVERB's wet to the sides), 2 GTR+BASS (the guitar left, LOW OCTAVE's octave right)
+  async setPedalMap(each, entries, inputDb = 0, tails = false, btPower = 0, outMode = 0) {
+    const a = [1, each ? 1 : 0, Math.max(0, Math.min(20, Math.round(inputDb) + 10)),
+      (tails ? 1 : 0) | (Math.max(0, Math.min(2, btPower | 0)) << 1) | (Math.max(0, Math.min(2, outMode | 0)) << 3)];
     for (const e of entries) a.push(...(e ? [1, e.src, e.dst, e.mode] : [0, 0, 0, 0]));
     return this._map(await this.request(C.MAP, a, 4000));
   }

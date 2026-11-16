@@ -84,6 +84,14 @@ static void px_set_unpack(uint8_t b)
  * the host sees (px_usbhost.h), for the screen and for px_midi_io.h */
 #include "px_usbhost.h"
 static uint8_t px_usb_foot;
+/* test build 42: OUTPUT, the two channels (engine/px_dsp.c px_engine_out): 0 MONO, the same sound on both, as every earlier
+ * image; 1 STEREO, the mono sound in the middle and DELAY's, REVERB's (with their TAILS) and MOD's wet to the sides, the two summed
+ * being the mono sound; 2 GTR+BASS, the guitar on the left channel and LOW OCTAVE's octave alone on the right (silent without
+ * it), for two channels of a desk. Applied at once (px_audio.h), saved with the settings: bits 2-3 of the USB settings byte
+ * (px_store.h st_usb, the header's pad[1]; bit 0 USB AUDIO, bit 1 left for test build 41's USB PORT) */
+static uint8_t px_out_mode;
+#define PX_ST_OUT_SH 2u
+#define PX_ST_OUT_MASK 0x0Cu
 static pxu_t px_uh;
 #endif
 /* the pedal's MIDI state, shared by the screen (ui.h) and the glue (px_midi_io.h) */

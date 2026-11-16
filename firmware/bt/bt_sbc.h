@@ -21,3 +21,5 @@ uint32_t bt_sbc_payload(const uint8_t *pkt, uint32_t len);
 /* decodes the frame at *p (n bytes left there): mono gets its samples (BT_SBC_MAX_SAMPLES at most); *p and *n move past it.
  * Returns the samples written; 0 when what is left is not a whole frame; -1 when the frame is refused (drop the rest) */
 int bt_sbc_frame(const uint8_t **p, uint32_t *n, int16_t *mono);
+/* test build 42: as bt_sbc_frame, and side (0: none) gets (L - R) / 2, the stereo the mono mix leaves out (0 for a mono stream) */
+int bt_sbc_frame2(const uint8_t **p, uint32_t *n, int16_t *mono, int16_t *side);

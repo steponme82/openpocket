@@ -38,7 +38,8 @@ uint32_t bt_sbc_payload(const uint8_t *pkt, uint32_t len)
     return off < len ? off : len;                               /* (contributors or an extension longer than the packet: nothing left) */
 }
 
-int bt_sbc_frame(const uint8_t **p, uint32_t *n, int16_t *mono)
+int bt_sbc_frame(const uint8_t **p, uint32_t *n, int16_t *mono) { return bt_sbc_frame2(p, n, mono, 0); }
+int bt_sbc_frame2(const uint8_t **p, uint32_t *n, int16_t *mono, int16_t *side)
 {
     uint32_t bytes = sizeof pcm, i, k;
     const OI_BYTE *d = *p;
@@ -62,12 +63,14 @@ int bt_sbc_frame(const uint8_t **p, uint32_t *n, int16_t *mono)
         k = bytes / 4u;                                         /* stereo frames, interleaved L, R */
         if (k > BT_SBC_MAX_SAMPLES) k = BT_SBC_MAX_SAMPLES;
         for (i = 0; i < k; i++) mono[i] = (int16_t)(((int32_t)pcm[2u * i] + pcm[2u * i + 1u]) >> 1);
+        if (side) for (i = 0; i < k; i++) side[i] = (int16_t)(((int32_t)pcm[2u * i] - pcm[2u * i + 1u]) >> 1);   /* (test build 42) */
     } else {
         k = bytes / 4u;                                         /* one channel, written at the stride of two (pcmStride): the
                                                                  * decoder counts both slots, so half its bytes are samples (up to
                                                                  * test build 10 this read stale ones after each frame) */
         if (k > BT_SBC_MAX_SAMPLES) k = BT_SBC_MAX_SAMPLES;
         for (i = 0; i < k; i++) mono[i] = pcm[2u * i];
+        if (side) for (i = 0; i < k; i++) side[i] = 0;
     }
     return (int)k;
 }

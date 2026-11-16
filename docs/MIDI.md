@@ -154,12 +154,15 @@ follow a tempo with another note value, set the delay's own TIME; this is not a 
 | INPUT (the Bluetooth test image, test build 40) | -10 DB to +10 DB, steps of 1 dB | 0 DB |
 | TAILS (the Bluetooth test image, test build 40) | OFF, ON | OFF |
 | BT POWER (the Bluetooth test image, test build 40) | HIGH, MID, LOW | HIGH |
+| OUTPUT (the Bluetooth test image, test build 42) | MONO, STEREO, GTR+BASS | MONO |
 
 In the Bluetooth test image the page's title is **SETTINGS**: it also holds INPUT, the guitar's level into the chain, as the
 official firmware's Input Gain (a digital gain at the input, heard at once while you turn it; the input meters of the
 diagnostics page show the level before it, so the converter's clipping still shows); TAILS, the delay and the reverb ringing
 out when they go off or the next preset has them off (as the official firmware's Delay Tail and Reverb Tail, one switch for
-both); and BT POWER, the radio's transmit power. The editor's MIDI section sets them too.
+both); BT POWER, the radio's transmit power; and OUTPUT: MONO (the same sound on both channels, as before), STEREO (the
+delay, the reverb and the modulations spread to the sides, the two channels summed being the mono sound) or GTR+BASS (the guitar on the left,
+LOW OCTAVE's octave alone on the right; [OWN-FX.md](OWN-FX.md)). The editor's MIDI section sets them too.
 
 The knob changes the row, PUSH goes to the next one (after the last it leaves), HOME leaves. The page also shows whether a
 host is connected and the last Program or Control Change received ("LAST: CC 25 = 127"), which is what to look at first when

@@ -27,6 +27,9 @@ static void midi_persist(void)                  /* the page's HOME: save the set
 {
     st_midi = px_midi_cfg_pack(&mid_cfg);
     st_usb = (uint8_t)((st_usb & ~1u) | (px_ua_on & 1u));   /* v42: USB AUDIO (px_usb.h then presents the device anew) */
+#if PX_OWN_FX
+    st_usb = (uint8_t)((st_usb & ~PX_ST_OUT_MASK) | (px_out_mode << PX_ST_OUT_SH));   /* test build 42: OUTPUT */
+#endif
     ft_box(0, 186, 240, "SAVING...", &FT_MD, UI_ACC, UI_BG, 1);
     if (st_ok) (void)st_commit();
 }

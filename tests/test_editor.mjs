@@ -310,8 +310,8 @@ if (FX) {
   const bad = await ed.setPedalMap(false, [{ src: 90, dst: 3, mode: 0 }, null, null, null, null, null, null, null]);
   const dup = await ed.setPedalMap(false, [{ src: 90, dst: 15, mode: 0 }, { src: 90, dst: 16, mode: 0 }, null, null, null, null, null, null]);
   ok(bad.rc === 1 && dup.rc === 1 && bad.entries.filter(Boolean).length === 4, "MAP: a number the pedal does not read, or one controller number twice, is refused (the table kept)");
-  m = await ed.setPedalMap(true, m.entries, 4, true, 2);
-  ok(m.rc === 0 && m.each && m.inputDb === 4 && m.tails && m.btPower === 2, "MAP: SWITCH LATCH, INPUT +4 dB, TAILS on, BT POWER LOW");
+  m = await ed.setPedalMap(true, m.entries, 4, true, 2, 1);
+  ok(m.rc === 0 && m.each && m.inputDb === 4 && m.tails && m.btPower === 2 && m.outMode === 1, "MAP: SWITCH LATCH, INPUT +4 dB, TAILS on, BT POWER LOW, OUTPUT STEREO");
   ed.onMidiIn = null;
 }
 await bleCheck(s);
@@ -332,8 +332,8 @@ list = await ed.list();
 }
 if (FX) {
   const m = await ed.pedalMap();
-  ok(m.rc === 0 && m.each && m.inputDb === 4 && m.tails && m.btPower === 2 && m.entries.filter(Boolean).length === 4 && m.entries[0].src === 80,
-     "power cycle: the controls learned on the pedal, LATCH, INPUT, TAILS and BT POWER are still there");
+  ok(m.rc === 0 && m.each && m.inputDb === 4 && m.tails && m.btPower === 2 && m.outMode === 1 && m.entries.filter(Boolean).length === 4 && m.entries[0].src === 80,
+     "power cycle: the controls learned on the pedal, LATCH, INPUT, TAILS, BT POWER and OUTPUT are still there");
 }
 
 // ---- 7. v37: NAM models (an A2 file -> a user slot -> the AMP block's NAM type) ----

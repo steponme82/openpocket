@@ -384,6 +384,20 @@ int main(void)
         CHECK(px_in_db == -3 && px_tails == 1 && px_bt_pwr == 2 && a_tails_n >= 1, "TAILS on, BT POWER LOW and INPUT -3 dB survive a power cycle (TAILS applied at boot)");
         px_in_db = 0; px_tails = 0; px_bt_pwr = 0;
         CHECK(st_commit() == 0, "INPUT, TAILS, BT POWER: back to the defaults");
+        /* test build 42: OUTPUT, bits 2-3 of the USB settings byte (header pad[1]), USB AUDIO's bit 0 beside it untouched */
+        for (uint8_t m = 1; m <= 2; m++) {
+            st_usb = (uint8_t)((st_usb & ~PX_ST_OUT_MASK) | (m << PX_ST_OUT_SH) | 1u);
+            CHECK(st_commit() == 0, "OUTPUT: a commit");
+            px_out_mode = 0; px_ua_on = 0;
+            reboot();
+            CHECK(px_out_mode == m && px_ua_on == 1, m == 1 ? "OUTPUT STEREO survives a power cycle, USB AUDIO's bit 0 beside it" : "OUTPUT GTR+BASS survives a power cycle");
+        }
+        st_usb = (uint8_t)(3u << PX_ST_OUT_SH);
+        CHECK(st_commit() == 0, "OUTPUT: a value no build writes (3)");
+        reboot();
+        CHECK(px_out_mode == 0, "OUTPUT: 3 read as MONO");
+        st_usb = 0; px_out_mode = 0; px_ua_on = 0;
+        CHECK(st_commit() == 0, "OUTPUT: back to MONO");
     }
 #endif
     loader_bytes_clear();

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only OR MPL-2.0 */
 /* The Bluetooth audio test image (build target "bt", docs/BT-AUDIO-TEST.md): JieLi's classic controller and host (the stock
  * firmware's own, third_party/jieli-ble + third_party/jieli-bt) are started; the pedal shows up on a phone as "OpenPocket", pairs
- * with no PIN (Just Works) and plays the phone's music into its output (A2DP sink, SBC, mono).
+ * with no PIN (Just Works) and plays the phone's music into its output (A2DP sink, SBC; mono, and stereo with OUTPUT STEREO).
  *
  * The image is the Bluetooth test image's (OP_BLE_TEST: ble/ble_os.c's scheduler, the radio start-up, the stall watch, the boot
  * report, DIAG) with the classic stack in place of the LE one: openpocket.c calls the same ble_test_* functions, defined here.
@@ -66,6 +66,9 @@ enum { BT_STATUS_INIT_OK = 3, BT_STATUS_START_CONNECTED = 5, BT_STATUS_FIRST_CON
 #define BT_TARGET 6615u                                         /* the backlog it keeps: 150 ms */
 #define BT_PREBUF 1024u                                         /* decoded before it starts: 23 ms */
 static int16_t bt_ring_mem[BT_RING_N] __attribute__((aligned(4), section(".bss.lo2.bt_ring")));   /* (bt_ring: px_audio.h) */
+/* test build 42: the music's side, (L - R) / 2, at half the rate (px_bt_ring.h): 2.5 KB in the RAM, CPU0's alone like the ring
+ * (the SRAM below the RAM has 672 bytes left beside the ring and the decoder) */
+static int16_t bt_ring_smem[BT_RING_SN] __attribute__((aligned(4)));
 
 /* the state, for the screen and the log */
 enum { BT_OFF, BT_STARTING, BT_VISIBLE, BT_LINKED, BT_PLAYING, BT_FAILED };
@@ -133,7 +136,7 @@ static const uint8_t *bt_pp;                                    /* the frames le
 static uint32_t bt_pn, bt_pkts, bt_frames_in, bt_t_steer;
 static uint32_t bt_confirms, bt_hci_disc, bt_conn_fail;         /* the pairing confirmations sent, the links that ended (HCI) */
 static uint32_t bt_end;                                         /* the last link's end: HCI event << 8 | its reason or status */
-static int16_t bt_frame[BT_SBC_MAX_SAMPLES];
+static int16_t bt_frame[BT_SBC_MAX_SAMPLES], bt_frame_s[BT_SBC_MAX_SAMPLES];   /* (the mono mix; the side, test build 42) */
 
 static void bt_cmd(uint32_t bit) { bt_cmd_bits |= bit; os_sem_post(bt_cmd_sem); }
 /* test build 40: BT POWER (px_midi.h px_bt_pwr), the radio's highest transmit levels: classic, page, inquiry, LE. HIGH is the
@@ -453,7 +456,7 @@ void ble_test_start(void)
     bt_stall.magic = 0;                                         /* (a stall record is shown until Bluetooth starts again) */
     __crc16_mutex_init();                                       /* else thread_create waits for ever in crc_get_32bit */
     bt_sbc_reset();
-    bt_ring_init(&bt_ring, bt_ring_mem);
+    bt_ring_init2(&bt_ring, bt_ring_mem, bt_ring_smem);
     bt_fq = bt_fq_mem;                                          /* the phone's packets (test build 24: no longer from the heap) */
     os_sem_create(bt_cmd_sem, 0);
     bt_cmd_up = 1;
@@ -512,10 +515,10 @@ static void bt_decode(void)
             bt_pp = s->b + off;
             bt_pn = off < s->n ? s->n - off : 0u;               /* (a header longer than the packet: nothing to decode) */
         }
-        k = bt_sbc_frame(&bt_pp, &bt_pn, bt_frame);
+        k = bt_sbc_frame2(&bt_pp, &bt_pn, bt_frame, bt_frame_s);
         if (k <= 0) { bt_pn = 0; continue; }                    /* the packet is done (or refused: the rest is dropped) */
         if (bt_cur_left) bt_cur_left--;
-        bt_ring_put(&bt_ring, bt_frame, (uint32_t)k);
+        bt_ring_put2(&bt_ring, bt_frame, bt_frame_s, (uint32_t)k);
         bt_frames_in++;
     }
     if (!bt_pn) bt_fq_done();

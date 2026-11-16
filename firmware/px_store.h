@@ -34,7 +34,8 @@ typedef char st_size_check[(sizeof(px_preset_t) < ST_SLOT && ST_NSLOT == 52u) ? 
 #endif
 
 /* pad[0]: the MIDI settings (px_midi.h, px_midi_cfg_pack); 0 = the defaults, which is what every earlier save wrote.
- * pad[1] (v42): bit 0 = USB AUDIO on (px_midi.h, px_ua_on); the other bits 0. 0 = off, as every earlier save wrote */
+ * pad[1] (v42): bit 0 = USB AUDIO on (px_midi.h, px_ua_on); the other bits 0. 0 = off, as every earlier save wrote. The
+ * Bluetooth audio image (test build 42): bits 2-3 = OUTPUT, 0 MONO, 1 STEREO, 2 GTR+BASS (px_midi.h px_out_mode) */
 typedef struct { uint32_t magic, seq; uint16_t crc; uint8_t ver, nslot, last, pad[3]; } st_hdr_t;   /* 16 B */
 static uint8_t st_slot[ST_NSLOT][ST_SLOT] __attribute__((aligned(4)));
 static uint32_t st_seq, st_cur;                 /* sequence of the copy in use, its base (0: none yet) */
@@ -294,6 +295,8 @@ static void px_store_boot(void)
     px_midi_cfg_unpack(&mid_cfg, st_midi);
     px_ua_on = st_usb & 1u;
 #if PX_OWN_FX
+    px_out_mode = (uint8_t)((st_usb & PX_ST_OUT_MASK) >> PX_ST_OUT_SH);   /* test build 42: OUTPUT */
+    if (px_out_mode > 2u) px_out_mode = 0;
     a_in_gain_apply();                            /* test build 39: INPUT as stored; test build 40: TAILS to the engine */
     a_tails_apply();
 #endif
