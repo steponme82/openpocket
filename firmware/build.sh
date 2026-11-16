@@ -129,6 +129,8 @@ RAM_DSP="px_engine_process px_engine_part px_wet_run px_wet_swap dly_block rv_bl
 # the Bluetooth audio image's own effects (PX_OWN_FX): LOW OCTAVE's octave, SYN PAD's grains (px_pad_press and px_pad_stop,
 # which the main loop calls, stay in the flash)
 [ -n "$OP_BT" ] && RAM_DSP="$RAM_DSP lo_fast pad_run pad_step pad_grain_new pad_flatten"
+# (test build 43: USB RETURN's mix into the chain, px_rt_mix, as every block's)
+[ -n "$OP_BT" ] && RAM_DSP="$RAM_DSP px_rt_mix"
 # v40.2: the layer split's path (pxn_lp_*, lp_job, dsp_lp_run) in RAM; out of it, to make the room: the frame split's serving
 # (now the fallback when the layer split cannot run), the vector unit's paths (never chosen: slower) and the C versions
 # of the hand routines (used only if a hand one fails its start-up check: the network is then too slow anyway)

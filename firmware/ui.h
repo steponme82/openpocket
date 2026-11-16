@@ -643,15 +643,23 @@ static void save_confirm(void)
  * a footswitch by cable, px_usbhost.h). Applied at once, so the USB line under the rows shows what the host sees while the
  * page is open (NOTHING ATTACHED, NO MIDI INTERFACE, LOW SPEED DEVICE, CONNECTED, LOST), and never saved: every power-on is
  * COMPUTER, and this row (or switching off) is the way back. */
-#if OP_UAUDIO
-enum { MI_CHAN, MI_SEND, MI_CLOCK, MI_UAUDIO,
-#else
-enum { MI_CHAN, MI_SEND, MI_CLOCK,
-#endif
+/* Test build 43: USB audio in the Bluetooth audio image, its rows last: USB AUDIO (applied on leaving, as v42's), USB SEND,
+ * USB RETURN and GUITAR (px_midi.h px_ua_route: heard at once, saved on leaving). 13 rows: the page shows 8 of 15 px and
+ * scrolls with the selected one, a bar at the right edge saying where. USB RETURN's knob moves the return along this preset's
+ * chain: INPUT, before each block after the first, OUTPUT */
 #if PX_OWN_FX
-       MI_EACH, MI_INPUT, MI_TAILS, MI_BTPWR, MI_OUT, MI_USB,
+enum { MI_CHAN, MI_SEND, MI_CLOCK, MI_EACH, MI_INPUT, MI_TAILS, MI_BTPWR, MI_OUT, MI_USB,
+#if OP_UAUDIO
+       MI_UAUDIO, MI_USEND, MI_URET, MI_UGTR,
 #endif
        MI_ROWS };
+#elif OP_UAUDIO
+enum { MI_CHAN, MI_SEND, MI_CLOCK, MI_UAUDIO,
+       MI_ROWS };
+#else
+enum { MI_CHAN, MI_SEND, MI_CLOCK,
+       MI_ROWS };
+#endif
 #if PX_OWN_FX && !defined(PX_BT_POWER_APPLY)
 #define PX_BT_POWER_APPLY() ((void)0)    /* (no Bluetooth here: the setting is only kept) */
 #endif
@@ -659,21 +667,38 @@ enum { MI_CHAN, MI_SEND, MI_CLOCK,
 #define PX_USB_MODE_APPLY() ((void)0)    /* (no USB host here: the row is only shown) */
 #endif
 #if PX_OWN_FX
-#define MI_VW 10u                        /* a value's text: "COMPUTER" and its end */
+#define MI_VW 12u                        /* a value's text: "BEFORE DLY" and its end */
 #else
 #define MI_VW 8u
 #endif
 static uint32_t mi_row, mi_shown_hash = ~0u;
 static uint8_t mi_orig, mi_ua;
 #if PX_OWN_FX
-static uint8_t mi_set_orig, mi_out_orig;
+static uint8_t mi_set_orig, mi_out_orig, mi_route_orig;
+#endif
+#if PX_OWN_FX && OP_UAUDIO
+static uint32_t ed_ua_stat(uint32_t k);         /* px_uaudio.h: the streams' state (the USB line) */
+/* USB RETURN's knob: along this preset's chain, INPUT, before each block after the first, OUTPUT (px_midi.h PX_UA_RET). A
+ * place before the first block (set where the order differed) moves on as INPUT would */
+static uint32_t mi_ret_step(uint32_t ret, int dd)
+{
+    uint8_t ord[PX_NBLK];
+    uint32_t pos[PX_UA_RET_N], np = 0, i, cur = 0;
+    if (px_order_valid(PRESET.order)) for (i = 0; i < PX_NBLK; i++) ord[i] = PRESET.order[i];
+    else px_order_default(ord);
+    pos[np++] = 1u;
+    for (i = 1; i < PX_NBLK; i++) pos[np++] = 2u + ord[i];
+    pos[np++] = 0u;
+    for (i = 0; i < np; i++) if (pos[i] == ret) cur = i;
+    return pos[(cur + (dd > 0 ? 1u : np - 1u)) % np];
+}
 #endif
 static void midi_persist(void);                 /* openpocket.c: writes the settings to the store */
 static void midi_open(void)
 {
     ui_mode = M_MIDI; mi_row = 0; mi_shown_hash = ~0u; mi_orig = px_midi_cfg_pack(&mid_cfg); mi_ua = px_ua_on;
 #if PX_OWN_FX
-    mi_set_orig = px_set_pack(); mi_out_orig = px_out_mode;
+    mi_set_orig = px_set_pack(); mi_out_orig = px_out_mode; mi_route_orig = px_ua_route;
 #endif
     lcd_rect(0, 0, 240, 240, UI_BG);
     lcd_rect(0, 0, 240, 4, UI_ACC); lcd_rect(0, 27, 240, 3, UI_ACC); lcd_rect(0, 4, 8, 23, UI_ACC);
@@ -695,17 +720,28 @@ static void midi_draw(void)
     h ^= (uint32_t)px_set_pack() * 0x85EBCA6Bu;
     h ^= ((uint32_t)px_usb_foot << 4 | px_uh.st) * 0xC2B2AE35u;   /* (test build 41: the row, and what the host sees) */
     h ^= (uint32_t)px_out_mode * 0x165667B1u;        /* (test build 42: OUTPUT) */
+    h ^= (uint32_t)px_ua_route * 0xD3A2646Cu;        /* (test build 43: USB SEND, USB RETURN, GUITAR) */
+#if OP_UAUDIO
+    const uint32_t ust = a_ua ? ed_ua_stat(0) & 5u : 0u;   /* (the computer records: 1, plays: 4) */
+    h ^= (ust + 1u) * 0x9E3779B9u;
+#endif
 #endif
     if (h == mi_shown_hash) return;
     mi_shown_hash = h;
+#if PX_OWN_FX
+    static const char *const NAME[MI_ROWS] = {"CHANNEL", "SEND", "CLOCK > DELAY",
+                                              "SWITCH", "INPUT", "TAILS", "BT POWER", "OUTPUT", "USB PORT",
+#if OP_UAUDIO
+                                              "USB AUDIO", "USB SEND", "USB RETURN", "GUITAR",
+#endif
+    };
+#else
     static const char *const NAME[MI_ROWS] = {"CHANNEL", "SEND", "CLOCK > DELAY",
 #if OP_UAUDIO
                                               "USB AUDIO",
 #endif
-#if PX_OWN_FX
-                                              "SWITCH", "INPUT", "TAILS", "BT POWER", "OUTPUT", "USB PORT",
-#endif
     };
+#endif
     char v[MI_ROWS][MI_VW];
     if (mid_cfg.chan) { v[0][0] = (char)(mid_cfg.chan >= 10 ? '0' + mid_cfg.chan / 10 : ' '); v[0][1] = (char)('0' + mid_cfg.chan % 10); v[0][2] = 0; }
     else { v[0][0] = 'O'; v[0][1] = 'M'; v[0][2] = 'N'; v[0][3] = 'I'; v[0][4] = 0; }
@@ -730,18 +766,37 @@ static void midi_draw(void)
     b_str(v[MI_OUT], px_out_mode == 1u ? "STEREO" : px_out_mode == 2u ? "GTR+BASS" : "MONO");   /* test build 42 */
     v[MI_USB][0] = 0;
     b_str(v[MI_USB], px_usb_foot ? "FOOTSW" : "COMPUTER");
+#if OP_UAUDIO
+    {   /* test build 43 */
+        static const char *const SND[3] = {"OUTPUT", "DI", "DI + OUT"};
+        const uint32_t ret = PX_UA_RET(px_ua_route);
+        v[MI_USEND][0] = v[MI_URET][0] = v[MI_UGTR][0] = 0;
+        b_str(v[MI_USEND], SND[PX_UA_SEND(px_ua_route) <= 2u ? PX_UA_SEND(px_ua_route) : 0u]);
+        if (ret >= 2u) { b_str(v[MI_URET], "BEFORE "); b_str(v[MI_URET], px_block_label((int)ret - 2)); }
+        else b_str(v[MI_URET], ret ? "INPUT" : "OUTPUT");
+        b_str(v[MI_UGTR], PX_UA_CUT(px_ua_route) ? "CUT" : "MIX");
+    }
+#endif
 #endif
 #if PX_OWN_FX
     /* (the rows share 126 px, 30 at most each, so the USB line stays at 162; the values in the small font in rows under 25.
-     * Test build 41: 8 rows of 15 px, the small font's height, in the image; 9 with USB AUDIO, where it builds, of 14) */
-    const uint32_t rh = MI_ROWS > 4u ? (126u / MI_ROWS < 25u ? 126u / MI_ROWS : 25u) : 30u;
+     * Test build 41: 8 rows of 15 px, the small font's height, in the image; 9 with USB AUDIO, where it builds, of 14.
+     * Test build 43: 8 rows at most on the page (MI_VIS), from mi_top: the selected one always among them) */
+#define MI_VIS (MI_ROWS < 8u ? MI_ROWS : 8u)
+    const uint32_t rh = MI_VIS > 4u ? (126u / MI_VIS < 25u ? 126u / MI_VIS : 25u) : 30u;
     const uint32_t ry = rh > 15u ? (rh - 15u) / 2u : 0u;   /* (rows no taller than the text: no gap line, the rows touch) */
-    for (uint32_t r = 0; r < MI_ROWS; r++) {
-        uint32_t y = 36u + r * rh;
+    const uint32_t top = mi_row >= MI_VIS ? mi_row + 1u - MI_VIS : 0u;
+    for (uint32_t q = 0; q < MI_VIS; q++) {
+        const uint32_t r = top + q, y = 36u + q * rh;
         uint16_t bg = r == mi_row ? C_CARD : UI_BG;
         lcd_rect(0, y, 240, rh > 15u ? rh - 1u : rh, bg);
         ft_box(8, y + (rh == 30u ? 6u : ry), 130, NAME[r], &FT_SM, r == mi_row ? UI_TXT : UI_DIM, bg, 0);
         ft_box(140, y + (rh == 30u ? 2u : rh >= 25u ? 0u : ry), 92, v[r], rh >= 25u ? &FT_MD : &FT_SM, r == mi_row ? UI_ACC : UI_TXT, bg, 2);
+    }
+    if (MI_ROWS > MI_VIS) {                          /* where the page is in the list: a bar at the right edge */
+        const uint32_t th = MI_VIS * rh, bh = th * MI_VIS / MI_ROWS, by = 36u + th * top / MI_ROWS;
+        lcd_rect(236, 36, 4, th, UI_BG);
+        lcd_rect(237, by, 2, bh, UI_DIM);
     }
 #else
     for (uint32_t r = 0; r < MI_ROWS; r++) {       /* (v42: four rows of 30 px; three of 36 before) */
@@ -770,7 +825,14 @@ static void midi_draw(void)
             }
         } else {
             b_str(u, mid_usb_up ? "USB: HOST CONNECTED" : "USB: NO HOST");
-            if (nl) { b_str(u, "  LEARNED "); b_num(u, nl); }
+#if OP_UAUDIO
+            if (ust) b_str(u, ust == 5u ? "  REC + PLAY" : ust == 1u ? "  REC" : "  PLAY");   /* (test build 43: the streams open) */
+#endif
+            if (nl) {
+                char k[16]; k[0] = 0;
+                b_str(k, "  LEARNED "); b_num(k, nl);
+                if (ft_width(&FT_SM, u) + ft_width(&FT_SM, k) <= 236u) b_str(u, k);
+            }
         }
         ft_box(0, 162, 240, u, &FT_SM, col, UI_BG, 1);
     }
@@ -794,7 +856,8 @@ static void midi_close(void)
 {
     ui_mode = M_CHAIN; ui_item = 0;
 #if PX_OWN_FX
-    if (px_midi_cfg_pack(&mid_cfg) != mi_orig || mi_ua != px_ua_on || px_set_pack() != mi_set_orig || px_out_mode != mi_out_orig) {
+    if (px_midi_cfg_pack(&mid_cfg) != mi_orig || mi_ua != px_ua_on || px_set_pack() != mi_set_orig || px_out_mode != mi_out_orig ||
+        px_ua_route != mi_route_orig) {
         px_ua_on = mi_ua; midi_persist();
     }
 #else
@@ -816,6 +879,11 @@ static void midi_knob(int dd)
     else if (mi_row == MI_BTPWR) { px_bt_pwr = (uint8_t)((px_bt_pwr + (dd > 0 ? 1u : 2u)) % 3u); PX_BT_POWER_APPLY(); }
     else if (mi_row == MI_OUT) px_out_mode = (uint8_t)((px_out_mode + (dd > 0 ? 1u : 2u)) % 3u);   /* test build 42: at once, saved on leaving */
     else if (mi_row == MI_USB) { px_usb_foot ^= 1u; PX_USB_MODE_APPLY(); }   /* test build 41: at once, never saved */
+#if OP_UAUDIO   /* test build 43: heard at once (the audio reads px_ua_route each block), saved on leaving */
+    else if (mi_row == MI_USEND) px_ua_route = (uint8_t)((px_ua_route & ~3u) | (PX_UA_SEND(px_ua_route) + (dd > 0 ? 1u : 2u)) % 3u);
+    else if (mi_row == MI_URET) px_ua_route = (uint8_t)((px_ua_route & 7u) | mi_ret_step(PX_UA_RET(px_ua_route), dd) << 3);
+    else if (mi_row == MI_UGTR) px_ua_route ^= 4u;
+#endif
 #endif
     else mi_ua ^= 1u;
 }

@@ -135,6 +135,20 @@ on paper and with recordings, not yet on a stage):
 | Magnetic pickup (electric, or a soundhole pickup) | `D3` (40) to `F3` (50) | `0 DB` (50) | `0 DB` (100) | to taste | `1.6:1` (40) | an even low end: little COMP needed |
 | Bass line that moves up the neck under chords | `LOWEST` (0) | `0 DB` (50) | `0 DB` (100) | as above | as above | the octave follows the lowest note wherever it is |
 
+## USB RETURN: the computer's sound into the chain (test build 43)
+
+With USB audio on ([USB-AUDIO.md](USB-AUDIO.md)), SETTINGS' **USB RETURN** brings the computer's sound into the chain right
+before a block (or at its start), and **GUITAR CUT** cuts the guitar there while the computer plays: a synth made from the guitar
+on the computer goes through the blocks after that point, and the ones before never touch it.
+
+`px_engine_ret(e, part, x, at, cut)`, before each `px_engine_part`: x the computer's sound for that call (mono, at the input's
+scale), at a block (`PX_B_*`), `PX_RT_IN` or `PX_RT_END`, cut the guitar's fade (256 samples, linear, both ways). The place is
+found while the preset's order is read: where that block sits, on or off, so a block off still has a place (where the next
+block on is). With a NAM amp on two cores, whichever part holds the place mixes it (before the amp: PRE's end; after it: POST),
+so a block's return is mixed once; PRE and POST keep their own settings, as they run at once. LOW OCTAVE's octave and STEREO's
+side made before the place fade with the guitar. `PX_RT_NONE`, or no sound with the guitar kept, leaves the chain bit for bit
+as build 42's (`tests/engine/usbret.c`).
+
 ## SYN PAD
 
 A smooth chord held under your playing, for as long as you want. Strum a chord and press the **left footswitch** (or press
@@ -268,6 +282,14 @@ does its one-off work in a single block.
   MONO sound, a reverb switched off with TAILS rings out wide; every MOD model sums to the MONO sound, seven spread (the
   side 4 to 13 dB under the middle on a bright note), the tremolos and VIBRATO stay in the middle; a NAM amp on two cores,
   with a chorus and a delay, gives both channels bit for bit.
+- `tests/engine/usbret.c` (23 checks, the same builds): USB RETURN. Nothing given, or silence with the guitar kept, at every
+  place: build 42's output bit for bit; before DELAY with the guitar cut, a drive, an amp and a cabinet on or off give the same
+  output (the computer's sound skips them) while the echoes and the tail play it, inline and through the wet lanes; MIX adds the
+  two (within 50 dB: the delay's and the reverb's own rounding); before a block that is off it is where the next one on is; a
+  REVERB moved before the amp takes the computer's sound through the amp; GUITAR CUT at the output: half at 128 samples, gone
+  after 256, back the same way, no step larger than the sine's own; LOW OCTAVE's octave cut with the guitar; a NAM amp on two
+  cores gives the plain engine's output bit for bit, a block later, at five places, cut or not; STEREO's two channels sum to
+  the mono sound.
 - `tests/ownfx_equiv.sh`: every existing model in this image's engine against the same engine without `PX_OWN_FX`, 5,460
   runs bit for bit (every block x model x 8 settings, random chains, NAM chains through the two cores' pipeline, the 52
   factory presets, every delay over a TIME x FEEDBACK x TONE x WOW grid, turned while playing and at the top for 6 s, every

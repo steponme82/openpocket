@@ -144,9 +144,10 @@ async function finishCatch() {
   catching = null;
   renderMap();
 }
-async function savePmap(entries, each = pmap.each, inputDb = pmap.inputDb, tails = pmap.tails, btPower = pmap.btPower, outMode = pmap.outMode) {
+async function savePmap(entries, each = pmap.each, inputDb = pmap.inputDb, tails = pmap.tails, btPower = pmap.btPower, outMode = pmap.outMode,
+  usb = pmap.usb) {
   try {
-    const r = await app.ed.setPedalMap(each, entries, inputDb, tails, btPower, outMode);
+    const r = await app.ed.setPedalMap(each, entries, inputDb, tails, btPower, outMode, usb);
     if (r.rc === 0) pmap = r; else say(r.rc === 2 ? "The pedal could not save it (flash)." : "The pedal refused it.", "err");
   } catch (e) { say(`Not changed: ${e.message}`, "err"); }
   renderMap();
@@ -326,6 +327,19 @@ function renderPmap() {
     h("option", { value: "0", text: "Mono (as before)" }), h("option", { value: "1", text: "Stereo" }),
     h("option", { value: "2", text: "Guitar left, LOW OCTAVE's bass right" }));
   bo.value = String(pmap.outMode || 0);
+  // test build 43: USB audio's routing (SETTINGS' USB SEND, USB RETURN, GUITAR), from a pedal that has it
+  const u = pmap.usb, setUsb = (k, v) => savePmap(pmap.entries, pmap.each, pmap.inputDb, pmap.tails, pmap.btPower, pmap.outMode, { ...pmap.usb, [k]: v });
+  const us = u && h("select", { id: "pmapusend", "aria-label": "What the computer records", onchange: () => setUsb("send", +us.value) },
+    h("option", { value: "0", text: "The pedal's sound (as before)" }), h("option", { value: "1", text: "DI: the guitar before any block" }),
+    h("option", { value: "2", text: "DI left, the pedal's sound right" }));
+  if (us) us.value = String(u.send);
+  const ur = u && h("select", { id: "pmapuret", "aria-label": "Where the computer's sound comes in", onchange: () => setUsb("ret", +ur.value) },
+    h("option", { value: "0", text: "At the output (as before)" }), h("option", { value: "1", text: "At the input: through the whole chain" }),
+    app.cat.blocks.map((B, b) => h("option", { value: String(2 + b), text: `Before ${B.name || B.label}` })));
+  if (ur) ur.value = String(u.ret);
+  const ug = u && h("select", { id: "pmapugtr", "aria-label": "The guitar where the computer's sound comes in", onchange: () => setUsb("cut", ug.value === "1") },
+    h("option", { value: "0", text: "Mixed with the computer's sound" }), h("option", { value: "1", text: "Cut while the computer plays" }));
+  if (ug) ug.value = u.cut ? "1" : "0";
   const used = pmap.entries.map((e, i) => [e, i]).filter(([e]) => e);
   return h("div", { class: "learned", id: "pmap" },
     h("div", { class: "lrow" }, h("span", { text: "The flip numbers, CC 8 to 19, act" }), sw, h("span", { class: "grow" }),
@@ -338,6 +352,12 @@ function renderPmap() {
       h("span", { class: "dim small", text: "(SETTINGS, BT POWER: lower it if the guitar ticks while the radio works)" })),
     h("div", { class: "lrow" }, h("span", { text: "Output" }), bo, h("span", { class: "grow" }),
       h("span", { class: "dim small", text: "(SETTINGS, OUTPUT: stereo spreads the delay, the reverb and the modulations, the two channels summed are the mono sound; a mono cable then carries only the left)" })),
+    u && h("div", { class: "lrow" }, h("span", { text: "USB audio: the computer records" }), us, h("span", { class: "grow" }),
+      h("span", { class: "dim small", text: "(SETTINGS, USB SEND: the DI is what a guitar-to-MIDI program tracks best)" })),
+    u && h("div", { class: "lrow" }, h("span", { text: "USB audio: the computer's sound comes in" }), ur, h("span", { class: "grow" }),
+      h("span", { class: "dim small", text: "(SETTINGS, USB RETURN: before a block, wherever this preset puts it, so the blocks after it play on the computer's sound)" })),
+    u && h("div", { class: "lrow" }, h("span", { text: "USB audio: the guitar there" }), ug, h("span", { class: "grow" }),
+      h("span", { class: "dim small", text: "(SETTINGS, GUITAR: cut, only the computer's sound goes on from there; the guitar comes back when the computer stops playing)" })),
     used.length ? used.map(([e, i]) => {
       const t = pedalTarget(e.dst), isValue = e.mode === MAP_VALUE || (t && (t.kind === "param" || t.kind === "type" || t.kind === "exp" || t.kind === "master"));
       const mode = !isValue && h("select", { "aria-label": `How CC ${e.src} acts`, onchange: () => {

@@ -2397,6 +2397,38 @@ static inline __attribute__((always_inline)) float px_side(int L, float w)
     px_sd_i[L] = i + 1u;
     return s * PX_SD_G;
 }
+/* ---- test build 43: USB RETURN (px_dsp.h px_engine_ret) ----
+ * Each part its own setting ([0] PX_PART_ALL and PRE, [1] POST: those two run at once on the two cores). Whichever part
+ * holds the return's place mixes it, so a block's return is mixed once; the guitar's gain there glides in px_rt_g */
+static const float *px_rt_x[2];
+static int8_t px_rt_at[2] = {PX_RT_NONE, PX_RT_NONE};
+static uint8_t px_rt_cut[2];
+static float px_rt_g = 1.0f;
+void px_engine_ret(px_engine *e, int part, const float *x, int at, int cut)
+{
+    const int i = part == PX_PART_POST;
+    (void)e;
+    px_rt_x[i] = x;
+    px_rt_at[i] = (int8_t)(at >= PX_RT_NONE && at <= PX_RT_END ? at : PX_RT_NONE);
+    px_rt_cut[i] = (uint8_t)(cut != 0);
+}
+/* the return's place: the guitar (and the octave lb, the side sd, when they run) faded to cut, the computer's sound added */
+static __attribute__((noinline)) void px_rt_mix(float *xb, float *lb, float *sd, const float *x, int n, int cut)
+{
+    const float t = cut ? 0.0f : 1.0f;
+    float g = px_rt_g;
+    if (g != t || t == 0.0f) {
+        const float st = t > g ? 1.0f / 256.0f : -1.0f / 256.0f;
+        for (int k = 0; k < n; k++) {
+            if (g != t) { g += st; if (st > 0.0f ? g > 1.0f : g < 0.0f) g = t; }
+            xb[k] *= g;
+            if (lb) lb[k] *= g;
+            if (sd) sd[k] *= g;
+        }
+        px_rt_g = g;
+    }
+    if (x) for (int k = 0; k < n; k++) xb[k] += x[k];
+}
 #endif
 void px_engine_init(px_engine *e, float sr)
 {
@@ -2405,6 +2437,8 @@ void px_engine_init(px_engine *e, float sr)
     px_tl.ring[0] = px_tl.ring[1] = 0;                 /* (TAILS itself, a setting, stays) */
     px_sd_dirty[0] = px_sd_dirty[1] = px_sdm_dirty = 1u;   /* (test build 42: STEREO's side lines from silence; no octave waits) */
     px_lo_qr = px_lo_qw;
+    px_rt_g = 1.0f;                                    /* (test build 43: the guitar whole; the firmware sets the return each block) */
+    px_rt_at[0] = px_rt_at[1] = PX_RT_NONE; px_rt_x[0] = px_rt_x[1] = 0;
 #endif
     e->sr = sr;
     e->oct_ff = 1.0f; e->oct_ff2 = 1.0f;
@@ -4178,10 +4212,15 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
     int ns = 0, ip_drv = -100, ip_amp = -200;
 #if PX_OWN_FX
     int ip_pit = PX_NBLK;
+    /* test build 43: USB RETURN's place in st[] (before st[rt_i]; ns: after the last block; -1 none). A block's place is
+     * where the preset's order puts it, on or off */
+    const int rpi = part == PX_PART_POST, rt_at = px_rt_at[rpi];
+    int rt_i = rt_at == PX_RT_IN ? 0 : -1;
 #endif
     for (int i = 0; i < PX_NBLK; i++) {
         int b = e->ord[i];
 #if PX_OWN_FX
+        if (b == rt_at) rt_i = ns;
         if (b != PX_B_GATE && !p->on[b] && !((b == PX_B_DELAY && px_tl.ring[0]) || (b == PX_B_REVERB && px_tl.ring[1]))) {
             if (b == PX_B_DELAY || b == PX_B_REVERB) px_sd_dirty[b == PX_B_REVERB] = 1u;   /* (test build 42: STEREO's side) */
             if (b == PX_B_MOD) px_sdm_dirty = 1u;
@@ -4198,6 +4237,9 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
         tr[ns] = e->btr[b];
         st[ns++] = (uint8_t)b;
     }
+#if PX_OWN_FX
+    if (rt_at == PX_RT_END) rt_i = ns;
+#endif
 #if PX_OWN_FX   /* test build 25: the expression pedal (px_exp above) */
     const int ex_wham = p->on[PX_B_PITCH] && pit_t == PX_PIT_WHAMMY;
     const int ex_wah = px_exp.pos >= 0 && !ex_wham && p->on[PX_B_SFX] && sfx_t == PX_SFX_LFOWAH;
@@ -4279,6 +4321,7 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
         const int sblk = st[s];
         const float strim = tr[s];
 #if PX_OWN_FX
+        if (s == rt_i) px_rt_mix(xb, lo_on ? lb : 0, sd_on ? sd : 0, px_rt_x[rpi], n, px_rt_cut[rpi]);   /* (test build 43) */
         if (s == ex_vi) px_exp_vol(xb, lo_on && ip_pit < ex_vi ? lb : 0, n);
 #endif
         /* v38: a block fading in or out: its output mixed with its input, the mix ramped over the block */
@@ -4768,6 +4811,9 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
 #endif
         if (px_clock) e->pf[sblk] += px_clock() - pt0;
     }
+#if PX_OWN_FX   /* test build 43: USB RETURN at this pass's end: before the NAM amp (pass 0), or after the last block */
+    if (rt_i == s_hi) px_rt_mix(xb, lo_on ? lb : 0, sd_on ? sd : 0, px_rt_x[rpi], n, px_rt_cut[rpi]);
+#endif
     if (nam && pass == 0) {
         float *d = part == PX_PART_PRE ? out : e->nam_buf;
         for (int k = 0; k < n; k++) d[k] = xb[k];

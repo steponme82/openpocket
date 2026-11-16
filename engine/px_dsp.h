@@ -418,6 +418,15 @@ int  px_engine_ringing(const px_engine *e);
  *  PX_OUT_BASS   out: the guitar without the octave, r[0..n): the octave alone (silence without LOW OCTAVE). */
 enum { PX_OUT_MONO, PX_OUT_STEREO, PX_OUT_BASS };
 void px_engine_out(px_engine *e, int mode, float *r);
+/* test build 43: USB RETURN, the computer's sound into the chain (firmware/px_uaudio.h; SETTINGS' USB RETURN and GUITAR).
+ * px_engine_ret(e, part, x, at, cut), before each px_engine_part (part as passed there: PRE and POST run at once on the two
+ * cores, each with its own): x[0..n) the computer's sound, mono, at the input's scale (0.5 its full scale), or 0 for none;
+ * at, where it joins the chain: right before block `at` (a PX_B_* index, where the preset's order puts that block, on or
+ * off), PX_RT_IN (the chain's start), PX_RT_END (after its last block, before the preset LEVEL), PX_RT_NONE (nowhere: the
+ * chain as in build 42); cut: from there on the guitar fades out (5.8 ms, and back in when cut is 0), so the chain goes on
+ * with the computer's sound alone (LOW OCTAVE's octave and STEREO's side made before that point go with the guitar) */
+enum { PX_RT_NONE = -1, PX_RT_IN = PX_NBLK, PX_RT_END };
+void px_engine_ret(px_engine *e, int part, const float *x, int at, int cut);
 #endif
 void px_wet_swap(px_engine *e);
 int  px_wet_run(px_engine *e, uint32_t deadline, volatile const uint8_t *stop);

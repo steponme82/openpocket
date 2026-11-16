@@ -158,6 +158,20 @@ static volatile uint8_t a_nan;                         /* engine output a NaN/In
 static volatile uint8_t a_ua;
 static uint32_t a_uat;
 static void px_ua_block(int32_t *d, uint32_t n);
+#if PX_OWN_FX && OP_UAUDIO
+/* test build 43: USB RETURN (px_midi.h px_ua_route; px_uaudio.h px_ua_chain; engine/px_dsp.c px_engine_ret). CPU0 reads the
+ * block's computer sound in a_block, before the block is handed over, as it reads the music: a_rx (mono, the input's scale),
+ * a_rt_x 1 if it holds some; and latches where it joins the chain (a_rt_at, a PX_RT_* place) and whether the guitar is cut
+ * there (a_rt_cut). a_rt_out: the return is at the output, mixed in a_send as v42's (px_ua_block). Every engine call that
+ * makes the chain is told (A_RET), PRE and POST each their own: they run at once on the two cores */
+static float a_rx[A_FR];
+static int8_t a_rt_at = PX_RT_NONE;
+static uint8_t a_rt_x, a_rt_cut, a_rt_out = 1u;
+static void px_ua_chain(void);
+#define A_RET(part, o) px_engine_ret(&g_eng, (part), a_rt_x ? a_rx + (o) : 0, a_rt_at, a_rt_cut)
+#elif PX_OWN_FX
+#define A_RET(part, o) ((void)0)
+#endif
 static volatile uint32_t a_nan_count;
 static int a_running;
 
@@ -189,6 +203,7 @@ static void dsp_block(void)
         for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK) {
 #if PX_OWN_FX
             A_BASS(o);
+            A_RET(PX_PART_ALL, o);                     /* (test build 43: USB RETURN) */
 #endif
             px_engine_process(&g_eng, a_in + o, a_out + o, PX_MAX_BLOCK);
         }
@@ -310,7 +325,7 @@ static void dsp_out(void)                              /* a_out -> a_res: safety
     }
     a_gv = gv;
 #if PX_OWN_FX
-    a_res_sp = (uint8_t)sp;
+    a_res_sp = (uint8_t)(sp ? a_mode : 0u);            /* (test build 43: which split, for USB SEND, px_uaudio.h) */
 #endif
     if (clip) a_clip++;
 }
@@ -380,6 +395,7 @@ static void post_run(uint32_t prev, int run, int nbv)   /* run: the engine on; n
         for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK) {
 #if PX_OWN_FX
             A_BASS(o);
+            A_RET(PX_PART_POST, o);
 #endif
             px_engine_part(&g_eng, a_nb[prev] + o, a_out + o, PX_MAX_BLOCK, PX_PART_POST);
         }
@@ -411,8 +427,12 @@ static void dsp_pipe_run(int run)                      /* run: the engine on (el
     if (run) pxn_srv_begin(a_late > 0 ? a_late : 0);
     const int job = fm1_cpu1_run(run ? pipe_job : post_job, prev);
     if (run && !job) pxn_srv_end();
-    if (run) for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK)
+    if (run) for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK) {
+#if PX_OWN_FX
+        A_RET(PX_PART_PRE, o);
+#endif
         px_engine_part(&g_eng, a_in + o, a_nb[a_nbi] + o, PX_MAX_BLOCK, PX_PART_PRE);
+    }
     const uint32_t tpre = fm1_ticks();
     if (!job) post_job(prev);                          /* (CPU1 off: here) */
     if (run) for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK)
@@ -552,8 +572,12 @@ static void dsp_lp_run(int run, uint32_t t_irq)
     }
     uint32_t ta = 0;
     if (run) {
-        for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK)
+        for (uint32_t o = 0; o < A_FR; o += PX_MAX_BLOCK) {
+#if PX_OWN_FX
+            A_RET(PX_PART_PRE, o);
+#endif
             px_engine_part(&g_eng, a_in + o, a_nb[a_nbi] + o, PX_MAX_BLOCK, PX_PART_PRE);
+        }
         ta = fm1_ticks();
         if (!a_lpe1 && a_lpw) {
             /* the first two blocks after a change: CPU1's other work is not timed yet, and it has little (the pipeline
@@ -795,6 +819,9 @@ static void a_block(const uint8_t *data, int len)      /* a guitar block: its DS
     tn_capture(a_in, A_FR);
 #if OP_BT_AUDIO
     a_bt_fill();                                       /* (the music, on CPU0: the ring is in the radio's window) */
+#endif
+#if PX_OWN_FX && OP_UAUDIO
+    px_ua_chain();                                     /* (test build 43: USB RETURN, on CPU0 as the USB rings are) */
 #endif
 #if DSP_CPU1
     /* a NAM amp on two cores (px_nam_dual): pipelined here (dsp_pipe), CPU1 its helper */

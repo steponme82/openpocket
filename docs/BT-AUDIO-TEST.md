@@ -5,7 +5,7 @@ phone as **`OpenPocket`**, pairs with no PIN, and the phone's music plays **mixe
 
 It is a test image, its own build target (`make bt`). The normal firmware and the installer's packages are unchanged.
 
-> **Status: test build 42** (below; build 38 is the one played longest, about 2 hours of music). Test build 27 brought the web
+> **Status: test build 43** (below; build 38 is the one played longest, about 2 hours of music). Test build 27 brought the web
 > editor over Bluetooth. Up to test build 14: builds 1 to 10 ran on a pedal: the
 > radio starts, a phone sees the pedal and links, but no phone
 > could pair, and the guitar crackled. Build 11 paired an iPhone (below, "Test build 11"), but no music came out, and the guitar
@@ -29,10 +29,11 @@ It is a test image, its own build target (`make bt`). The normal firmware and th
 - **In since test build 24:** Bluetooth MIDI (BLE MIDI) beside the music, for a Chocolate (below, "Test build 24"); since
   test build 27 the web editor over Bluetooth too, on a second LE link beside the Chocolate's (below, "Test build 27: the web
   editor over Bluetooth"); since test build 28 the regular Chocolate too, the pedal as its central (below, "Test build 28").
+- **In since test build 43:** USB audio, the pedal as a USB sound card, as the release's (v42), with what the computer records
+  (the DI too) and where its sound comes back into the chain chosen on the pedal (below, "Test build 43").
 - **Not in:** play/pause from the pedal (AVRCP), a level setting on the pedal. (Stereo: since test build 42, with SETTINGS'
   OUTPUT on STEREO, the phone's music and the effects come out in stereo; MONO, the default, sums it as before.)
-- **Left out to make room** (the release image has them): USB audio, the pedal as a USB sound card (v42; `OP_UAUDIO` 0);
-  8 of the 12 factory NAM models, since test build 28 (it keeps TWIN, AC15, JCM900 and MARK IV; a preset with another one
+- **Left out to make room** (the release image has them): 8 of the 12 factory NAM models, since test build 28 (it keeps TWIN, AC15, JCM900 and MARK IV; a preset with another one
   plays a kept one; the capture slots the editor fills are all there); delay times over 780 ms, since test build 24 (TIME
   stops at 780 ms, REVERSE at 390 ms, against 2 s and 1 s).
 
@@ -1245,6 +1246,71 @@ start-up screen reads `v42 BT AUDIO TEST 42`:
 make serve-bt
 ```
 
+## Test build 43: the pedal as a USB sound card, the computer's sound back into the chain
+
+Build 42 with USB audio, asked by a player who plays guitar-to-MIDI on a computer: the pedal sends the clean guitar to the
+computer, a program such as MIDI Guitar turns it into a flute or a synth, and that sound comes back into the pedal before its
+delay and reverb, with the guitar itself cut.
+
+USB audio is the release's (v42, [USB-AUDIO.md](USB-AUDIO.md)): a class-compliant sound card, 2 channels, 16 bit, 44.1 kHz both
+ways, no driver to install. This image left it out for room; it now fits with both of its rings in the engine's pool (the
+playback ring 512 frames, half the release's). SETTINGS (hold FX) has four more rows after USB PORT; the last three are also
+in the editor's MIDI section:
+
+| Row | Values | What it does |
+| --- | --- | --- |
+| USB AUDIO | OFF, ON | the pedal is a USB sound card too. Applied when you leave the page: the pedal leaves USB for a second (as v42) |
+| USB SEND | OUTPUT, DI, DI + OUT | what the computer records: the pedal's sound (as v42; both channels of STEREO and GTR+BASS); the guitar as it enters the chain, before any block, on both channels (INPUT applied); or the DI on the left and the pedal's sound on the right |
+| USB RETURN | OUTPUT, INPUT, BEFORE GT ... BEFORE SYN | where the computer's sound comes in: at the output, in stereo, after MASTER (as v42); at the chain's start, through every block; or right before a block, wherever the preset puts it, so that the blocks after it play the computer's sound and the ones before it never touch it |
+| GUITAR | MIX, CUT | at USB RETURN's place: the guitar and the computer's sound together, or the guitar cut, so that only the computer's sound goes on from there |
+
+- The knob moves USB RETURN along the current preset's chain: INPUT, before each block after the first, OUTPUT. The setting
+  names a block, not a position: in a preset with another order the return follows that block. Before a block that is off,
+  the computer's sound comes in where the next block that is on is.
+- In the chain the computer's sound is mono (the middle of its two channels) at the input's scale: what USB SEND DI recorded
+  comes back at the level it left. Reamping works that way: record a DI take, then play it back with USB RETURN INPUT and
+  GUITAR CUT and record USB SEND OUTPUT. At OUTPUT it stays stereo, as v42.
+- GUITAR CUT acts only while the computer plays into the pedal (its output stream open): when the program stops or the cable
+  is pulled, the guitar comes back. It fades out and in over 5.8 ms. LOW OCTAVE's octave and STEREO's side made before the
+  return go with the guitar.
+- With USB RETURN in the chain and USB SEND on OUTPUT or DI + OUT, a program that passes its input to its output (input
+  monitoring on that track) feeds the pedal's sound back into the pedal: keep USB SEND on DI, or that monitoring off.
+- The delay through the computer, estimated from the rings' figures: the DI reaches the computer about 1.5 to 8.5 ms after
+  the string, and the pedal plays the computer's sound about 5 to 8 ms after it arrives (3 ms more with a NAM amp on two
+  cores and the return after the amp). Add the program's own buffers and the guitar-to-MIDI tracking, which waits for a
+  period or two of the note. Fine for pads, strings and flutes, late for staccato.
+- What it costs: the two rings take the pool's last 4 KB (852 bytes left), USB audio's code in the interrupt adds 0.9 KB to
+  the RAM code window (1,752 bytes left), the image is 6 KB larger (622,312 bytes, 22.6 KB of the slot left). With no program using the device nothing runs. The CPU it
+  takes beside the radio and a NAM amp is the open question: only the pedal can tell.
+
+`firmware/px_uaudio.h` (`px_ua_chain`, `px_ua_take`: the computer's sound read in `a_block`, on CPU0 like the music; the
+record ring per USB SEND), `engine/px_dsp.c` `px_engine_ret` / `px_rt_mix` (the return's place in the chain, the guitar's
+fade), `firmware/px_midi.h` `px_ua_route` (one byte, kept in the store's map record), `firmware/ui.h` (the four rows; the page
+scrolls, 8 rows at a time).
+
+### What to check
+
+1. SETTINGS, USB AUDIO ON, then leave the page: the computer shows a sound card named OpenPocket, with an input and an output.
+   The phone's music, the Chocolate and the editor over Bluetooth go on working.
+2. The load: note the DSP figure (PING, or the tuner page's footer) with a NAM preset, first with no program using the
+   device, then while a program records and plays through it. Any crackle, an `XRUN`, or the safety bypass: report it with
+   the log.
+3. USB SEND DI, record a track: the clean guitar, no effect on it, on both channels. DI + OUT: the DI left, the pedal's
+   sound right.
+4. The flute: MIDI Guitar (or another) on the OpenPocket input, its synth to the OpenPocket output; USB RETURN BEFORE DLY,
+   GUITAR CUT: only the flute, through the preset's delay and reverb. Turn USB RETURN: BEFORE AMP puts the flute through the
+   amp; INPUT through everything; OUTPUT gives the flute dry, in stereo. GUITAR MIX: both.
+5. Stop the program: the guitar comes back. Start it again: it is cut again.
+6. A long session with the phone's music on as well: a click, a dropout or a lost Bluetooth link, report it.
+7. Power off and on: USB AUDIO, USB SEND, USB RETURN and GUITAR are kept.
+
+Install it from this branch's folder (Chrome or Edge, the computer's USB cable in the pedal), then **Connect**, **Install**; the
+start-up screen reads `v42 BT AUDIO TEST 43`:
+
+```bash
+make serve-bt
+```
+
 ## Checked on a computer
 
 - `tests/test_bt_ring.c`: a phone at 44.1 kHz with 15 ms of jitter, the pedal at its real 44,117.6 Hz, 60 s: no underrun, the rate
@@ -1314,6 +1380,21 @@ make serve-bt
   (the cable's Program Change, a learned switch and CC 118 act as a computer's, nothing is sent to the footswitch, Bluetooth's
   messages not read while the cable's footswitch is connected and read again when it is lost, COMPUTER as before). Not
   covered: the host's register sequences (felucca-bsp's, unchanged but for the waits' hook): only the pedal can tell.
+- Test build 43, USB audio: `tests/engine/usbret.c` (23 checks, as the image builds the engine and with the host's flags): with
+  nothing given or the guitar kept, every place gives build 42's sound bit for bit; before DELAY with the guitar cut, a drive,
+  an amp and a cabinet on or off give the same output (the computer's sound skips them), inline and through the wet lanes; MIX
+  adds the two; before a block that is off it is where the next one on is; a REVERB moved before the amp takes the computer's
+  sound through the amp; the cut fades in 256 samples both ways with no step and takes LOW OCTAVE's octave with it; a NAM amp
+  on two cores gives the plain engine's output bit for bit at five places, cut or not; STEREO's two channels sum to the mono
+  sound. `tests/test_usb_audio.c` built as this image (its 512-frame playback ring): v42's tests, then USB SEND (DI at the
+  input's scale, clipped straight; DI + OUT; the right channel per OUTPUT), the computer's sound read into the chain over 10
+  minutes with the clocks 300 ppm apart either way (no gap, no jump, the ring's fill 34 to 127 frames of 512), not mixed at the
+  output as well, GUITAR CUT only while the computer plays, a flash write's mute, USB AUDIO off. `tests/uisim.c` (the four
+  rows, the page's scroll and bar, every value's text within its box), `tests/test_store.c` (the routing byte through power
+  cycles and saves, a copy of builds 39 to 42 read as the default, a byte that does not match or that no build writes read
+  as the default, the learned controls untouched), `tests/test_editor.mjs` (MAP's routing byte, an editor that sends none, an
+  invalid one refused, kept through a power cycle). Not covered: the load with the radio, a NAM amp and USB audio at once, and
+  the streams on a real computer with this image: only the pedal can tell.
 - Test build 13's cut, by hand (it is not in `tests/run_tests.sh`): the engine tests built with `-DPX_LOOP_GUARD=1` print the
   same as without it and leave `W` at 0; `rv_block` called with an n above 64 stops at k 64 in each of its four loops, records n
   and k, and writes nothing past frame 63. With the guard off (the release and BLE images) `engine/px_dsp.c` preprocesses to

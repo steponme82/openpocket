@@ -312,6 +312,18 @@ if (FX) {
   ok(bad.rc === 1 && dup.rc === 1 && bad.entries.filter(Boolean).length === 4, "MAP: a number the pedal does not read, or one controller number twice, is refused (the table kept)");
   m = await ed.setPedalMap(true, m.entries, 4, true, 2, 1);
   ok(m.rc === 0 && m.each && m.inputDb === 4 && m.tails && m.btPower === 2 && m.outMode === 1, "MAP: SWITCH LATCH, INPUT +4 dB, TAILS on, BT POWER LOW, OUTPUT STEREO");
+  // test build 43: USB audio's routing, the byte after the entries
+  ok(m.usb && m.usb.send === 0 && m.usb.ret === 0 && !m.usb.cut, "MAP: USB audio's routing read, the default (USB SEND OUTPUT, USB RETURN OUTPUT, GUITAR MIX)");
+  m = await ed.setPedalMap(true, m.entries, 4, true, 2, 1, { send: 2, ret: 2 + dly, cut: true });
+  ok(m.rc === 0 && m.usb.send === 2 && m.usb.ret === 2 + dly && m.usb.cut && m.outMode === 1 && m.entries.filter(Boolean).length === 4,
+     "MAP: USB SEND DI + OUT, USB RETURN before DELAY, GUITAR CUT (the rest kept)");
+  m = await ed.setPedalMap(true, m.entries, 4, true, 2, 1);
+  ok(m.rc === 0 && m.usb.send === 2 && m.usb.ret === 2 + dly && m.usb.cut, "MAP: an editor that sends no routing leaves it as it is");
+  {
+    const raw = [1, 1, 14, 1 | 2 << 1 | 1 << 3, ...m.entries.flatMap((e) => (e ? [1, e.src, e.dst, e.mode] : [0, 0, 0, 0]))];
+    const r1 = ed._map(await ed.request(30, [...raw, 3], 4000)), r2 = ed._map(await ed.request(30, [...raw, 15 << 3], 4000));
+    ok(r1.rc === 1 && r2.rc === 1 && r2.usb.ret === 2 + dly && r2.usb.send === 2, "MAP: a routing no build writes (SEND 3, RETURN 15) is refused, the one set kept");
+  }
   ed.onMidiIn = null;
 }
 await bleCheck(s);
@@ -334,6 +346,8 @@ if (FX) {
   const m = await ed.pedalMap();
   ok(m.rc === 0 && m.each && m.inputDb === 4 && m.tails && m.btPower === 2 && m.outMode === 1 && m.entries.filter(Boolean).length === 4 && m.entries[0].src === 80,
      "power cycle: the controls learned on the pedal, LATCH, INPUT, TAILS, BT POWER and OUTPUT are still there");
+  ok(m.usb && m.usb.send === 2 && m.usb.cut && m.usb.ret === 2 + cat.blocks.findIndex((b) => b.label === "DLY"),
+     "power cycle: USB SEND, USB RETURN and GUITAR are still there (test build 43)");
 }
 
 // ---- 7. v37: NAM models (an A2 file -> a user slot -> the AMP block's NAM type) ----

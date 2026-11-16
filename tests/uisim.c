@@ -58,6 +58,11 @@ static int n_catch, n_fade;
 static int usb_apply_n;                                 /* test build 41: SETTINGS' USB PORT to the port (px_usb.h's, counted) */
 static uint32_t usb_note;                               /* and the footswitch's note the host gives PLAY (px_usbhost.h pxu_note) */
 #define PX_USB_MODE_APPLY() (usb_apply_n++)
+#if PX_OWN_FX && OP_UAUDIO
+static volatile uint8_t a_ua;                           /* test build 43: USB audio on (px_audio.h's), and the streams the USB */
+static uint32_t ua_stat0;                               /* line shows (px_uaudio.h ed_ua_stat 0: 1 records, 4 plays) */
+static uint32_t ed_ua_stat(uint32_t k) { return k ? 0u : ua_stat0; }
+#endif
 #define PX_UI_NOTE() usb_note
 #endif
 #include "ui_text.h"
@@ -495,9 +500,11 @@ int main(int argc, char **argv)
     midi_push(); midi_knob(1); mid_usb_up = 1; mid_last[0] = PXM_CC; mid_last[1] = 25; mid_last[2] = 127; midi_draw(); shot(d, "midi_send_off_host_cc");
     midi_push(); midi_knob(1); mid_last[0] = PXM_PC; mid_last[1] = 11; midi_draw(); shot(d, "midi_clock_on_pc");
     mid_c1_off = 2; midi_draw(); shot(d, "midi_core2_off_late"); mid_c1_off = 0; midi_draw();   /* v41: the 2nd core retired */
+#if !PX_OWN_FX
     /* v42: the fourth row, USB AUDIO: the setting follows the row only when the page is left */
     midi_push(); midi_knob(1); midi_draw(); shot(d, "midi_usb_audio_on");
     if (px_ua_on) { printf("midi: USB AUDIO must not change while the page is open\n"); return 1; }
+#endif
 #if PX_OWN_FX   /* test build 39: a fifth row, SWITCH (MOMENT / LATCH), and the controls learned on the pedal counted */
     midi_push(); midi_knob(1);
     px_midi_map_clear();
@@ -548,7 +555,7 @@ int main(int argc, char **argv)
                                            "midi_usb_footsw_low_speed", "midi_usb_footsw_connected", "midi_usb_footsw_lost"};
         const int a0 = usb_apply_n;
         midi_push();
-        if (mi_row != MI_USB || MI_USB != MI_ROWS - 1u) { printf("midi: USB PORT must be the last row\n"); return 1; }
+        if (mi_row != MI_USB || MI_USB != MI_OUT + 1u) { printf("midi: USB PORT must follow OUTPUT\n"); return 1; }
         midi_draw(); shot(d, "midi_usb_port_computer");
         if (ft_width(&FT_SM, "COMPUTER") > 92u) { printf("midi: COMPUTER must fit the value's box\n"); return 1; }
         midi_knob(1);
@@ -570,13 +577,58 @@ int main(int argc, char **argv)
         if (px_usb_foot || usb_apply_n != a0 + 2) { printf("midi: USB PORT must come back to COMPUTER at once\n"); return 1; }
         px_uh.st = PXU_OFF;
     }
+#if OP_UAUDIO
+    {   /* test build 43: USB AUDIO, USB SEND, USB RETURN, GUITAR, the last four rows; the page scrolls to them */
+        midi_push();
+        if (mi_row != MI_UAUDIO || MI_UAUDIO != MI_USB + 1u || MI_UGTR != MI_ROWS - 1u) { printf("midi: USB AUDIO's rows must follow USB PORT, GUITAR last\n"); return 1; }
+        midi_knob(1); midi_draw(); shot(d, "midi_usb_audio_on");
+        if (px_ua_on) { printf("midi: USB AUDIO must not change while the page is open\n"); return 1; }
+        /* the selected row the last of the 8 shown, the bar at the right edge */
+        if (count_col(100, 36 + 7 * 15, 30, 3, C_CARD) < 60 || !count_col(237, 36, 2, 120, UI_DIM)) { printf("midi: the page must scroll to the selected row and show its bar\n"); return 1; }
+        midi_push();                                    /* USB SEND: OUTPUT, DI, DI + OUT, round both ways, at once */
+        if (PX_UA_SEND(px_ua_route) != 0u) { printf("midi: USB SEND must be OUTPUT at first\n"); return 1; }
+        midi_knob(1); if (PX_UA_SEND(px_ua_route) != 1u) { printf("midi: USB SEND must step OUTPUT -> DI\n"); return 1; }
+        midi_knob(1); midi_draw(); shot(d, "midi_usb_send_di_out");
+        if (PX_UA_SEND(px_ua_route) != 2u) { printf("midi: USB SEND must step DI -> DI + OUT\n"); return 1; }
+        midi_knob(1); if (PX_UA_SEND(px_ua_route) != 0u) { printf("midi: USB SEND must go round DI + OUT -> OUTPUT\n"); return 1; }
+        midi_knob(-1); if (PX_UA_SEND(px_ua_route) != 2u) { printf("midi: USB SEND must step back OUTPUT -> DI + OUT\n"); return 1; }
+        midi_push();                                    /* USB RETURN: along this preset's chain, INPUT .. OUTPUT, round */
+        {
+            uint8_t ord[PX_NBLK];
+            if (px_order_valid(PRESET.order)) memcpy(ord, PRESET.order, PX_NBLK); else px_order_default(ord);
+            if (PX_UA_RET(px_ua_route) != 0u) { printf("midi: USB RETURN must be OUTPUT at first\n"); return 1; }
+            midi_knob(1); if (PX_UA_RET(px_ua_route) != 1u) { printf("midi: USB RETURN must step OUTPUT -> INPUT\n"); return 1; }
+            for (int i = 1; i < PX_NBLK; i++) {
+                midi_knob(1);
+                if (PX_UA_RET(px_ua_route) != 2u + ord[i]) { printf("midi: USB RETURN must step to before the preset's block %d\n", i); return 1; }
+                char t[24] = "BEFORE "; strcat(t, px_block_label(ord[i]));
+                if (ft_width(&FT_SM, t) > 92u) { printf("midi: \"%s\" must fit the value's box\n", t); return 1; }
+            }
+            midi_knob(1); if (PX_UA_RET(px_ua_route) != 0u) { printf("midi: USB RETURN must go round to OUTPUT after the last block\n"); return 1; }
+            midi_knob(-1); if (PX_UA_RET(px_ua_route) != 2u + ord[PX_NBLK - 1]) { printf("midi: USB RETURN must step back OUTPUT -> before the last block\n"); return 1; }
+            while (PX_UA_RET(px_ua_route) != 2u + PX_B_DELAY) midi_knob(-1);
+            if (PX_UA_SEND(px_ua_route) != 2u) { printf("midi: USB RETURN must leave USB SEND as it is\n"); return 1; }
+            mid_usb_up = 1; a_ua = 1; ua_stat0 = 5u;
+            midi_draw(); shot(d, "midi_usb_return_before_dly_rec_play");
+        }
+        midi_push();                                    /* GUITAR: MIX / CUT */
+        if (PX_UA_CUT(px_ua_route)) { printf("midi: GUITAR must be MIX at first\n"); return 1; }
+        midi_knob(1); midi_draw(); shot(d, "midi_usb_guitar_cut");
+        if (!PX_UA_CUT(px_ua_route) || PX_UA_RET(px_ua_route) != 2u + PX_B_DELAY || PX_UA_SEND(px_ua_route) != 2u) { printf("midi: GUITAR must turn to CUT, the others as they were\n"); return 1; }
+        if (!px_ua_route_valid(px_ua_route)) { printf("midi: the routing must stay a valid byte\n"); return 1; }
+        a_ua = 0; ua_stat0 = 0;
+    }
+#endif
 #endif
     midi_push(); poison(); uc.screen = -1; ui_invalidate(); ui_render(); status();
     if (midi_saved != 1 || ui_mode != M_CHAIN) { printf("midi: leaving the page after a change must save once and return to the chain\n"); return 1; }
     if (!px_ua_on) { printf("midi: leaving the page must set USB AUDIO as the row showed\n"); return 1; }
     midi_open(); midi_close();
     if (midi_saved != 1) { printf("midi: leaving without a change must not save\n"); return 1; }
-    midi_open(); midi_push(); midi_push(); midi_push(); midi_knob(-1); midi_close();   /* (the fourth row: USB AUDIO) */
+#if PX_OWN_FX && OP_UAUDIO
+    if (px_ua_route != (2u | 4u | (2u + PX_B_DELAY) << 3)) { printf("midi: USB SEND, USB RETURN and GUITAR must stay as set after leaving\n"); return 1; }
+#endif
+    midi_open(); while (mi_row != MI_UAUDIO) midi_push(); midi_knob(-1); midi_close();   /* (USB AUDIO) */
     if (midi_saved != 2 || px_ua_on) { printf("midi: USB AUDIO off again must save once more\n"); return 1; }
 #if PX_OWN_FX
     {   /* test build 41: USB PORT alone changed: nothing is saved (every power-on is COMPUTER), and FOOTSW stays after the page */
@@ -593,6 +645,15 @@ int main(int argc, char **argv)
         if (midi_saved != s0 + 1 || px_out_mode == b0) { printf("midi: OUTPUT changed alone must be saved on leaving\n"); return 1; }
         px_out_mode = 0;
     }
+#if OP_UAUDIO
+    {   /* test build 43: GUITAR alone changed: saved on leaving */
+        const int s0 = midi_saved;
+        midi_open(); while (mi_row != MI_UGTR) midi_push();
+        midi_knob(1); midi_close();
+        if (midi_saved != s0 + 1 || PX_UA_CUT(px_ua_route)) { printf("midi: GUITAR changed alone must be saved on leaving\n"); return 1; }
+        px_ua_route = 0;
+    }
+#endif
 #endif
     mid_cfg.chan = 16; midi_open(); midi_knob(1); midi_draw(); shot(d, "midi_channel_wraps_to_omni");
     if (mid_cfg.chan != 0) { printf("midi: channel 16 + 1 must wrap to omni\n"); return 1; }

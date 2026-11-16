@@ -142,6 +142,9 @@ static void a_tails_apply(void) { a_tails_n++; }
 static void midi_persist(void) { }
 static void b_num(char *d, uint32_t v) { char t[12]; int n = 0; while (*d) d++; do { t[n++] = (char)('0' + v % 10u); v /= 10u; } while (v); while (n) *d++ = t[--n]; *d = 0; }
 static void b_str(char *d, const char *s) { while (*d) d++; while (*s) *d++ = *s++; *d = 0; }
+#if PX_OWN_FX && OP_UAUDIO
+static volatile uint8_t a_ua;                       /* test build 43: USB audio running (px_audio.h's; SETTINGS' USB line) */
+#endif
 #include "../firmware/ui_text.h"
 #include "../firmware/ui.h"
 static uint32_t dsp_load = 42u;

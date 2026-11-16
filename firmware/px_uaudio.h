@@ -99,14 +99,110 @@ static int uad_loop(int32_t *d, uint32_t n)
 }
 #endif
 
+#if PX_OWN_FX
+/* ---- test build 43, the Bluetooth audio image: USB SEND, USB RETURN, GUITAR (px_midi.h px_ua_route) ----
+ * What the computer records: dsp_out's knee then 16 bits, as v42's (ua_knee16); the DI straight, clipped at full scale. */
+static inline uint32_t ua_knee16(float v)
+{
+    float m = v < 0.0f ? -v : v;
+    if (m > 0.8f) {
+        const float t = (m - 0.8f) * 5.0f;
+        m = 0.8f + 0.2f * t / (1.0f + t);
+        v = v < 0.0f ? -m : m;
+    }
+    return (uint32_t)(uint16_t)(int16_t)(v * 32767.0f);
+}
+static inline uint32_t ua_clip16(float v)
+{
+    v = v > 1.0f ? 1.0f : v < -1.0f ? -1.0f : v;
+    return (uint32_t)(uint16_t)(int16_t)(v * 32767.0f);
+}
+/* USB RETURN in the chain: the computer's playback read from the ring as uac_play reads it (its priming at UO_TGT, its steering
+ * of the read rate by the fill, its priming again when the ring runs dry), into x as mono, (L + R) / 2, at the input's scale
+ * (0.5 its full scale: a DI the pedal sent comes back at the level it left). 0, x untouched, while the computer does not play.
+ * In a_block (CPU0), before the block is handed over */
+static __attribute__((noinline)) int px_ua_take(float *x, uint32_t n)
+{
+    uint32_t r = uo_r, fill = uo_w - r, i, pos = uo.pos, step;
+    float adj;
+    if (!uo.alt || !usb.config) {
+        uo.go = 0;
+        return 0;
+    }
+    if (!uo.go) {
+        if (uo.stale) {                                 /* a new stream: not the end of the one before */
+            uo.stale = 0;
+            RING_PUBLISH();
+            uo_r = uo_w;
+            return 0;
+        }
+        if (fill < UO_TGT)
+            return 0;                                   /* priming */
+        r = uo_w - UO_TGT;
+        pos = 0;
+        uo.err = 0.0f;
+        uo.go = 1;
+        fill = UO_TGT;
+    }
+    uo.err += ((float)fill - (float)UO_TGT - uo.err) * 0.05f;
+    adj = uo.err * 2.0f;
+    adj = adj > 400.0f ? 400.0f : adj < -400.0f ? -400.0f : adj;
+    step = (uint32_t)(65510.0f + adj);                  /* 65536 x 44100 / 44117.6, steered */
+    if (fill < (uint32_t)(((uint64_t)n * step) >> 16) + 2u) {
+        uo.underruns++;                                 /* ran dry: prime again */
+        uo.go = 0;
+        RING_PUBLISH();
+        uo_r = uo_w;
+        return 0;
+    }
+    RING_PUBLISH();
+    for (i = 0; i < n; i++) {
+        const uint32_t k = pos >> 16, a = uo_ring[(r + k) & (UO_N - 1u)], b = uo_ring[(r + k + 1u) & (UO_N - 1u)];
+        const float m0 = (float)((int32_t)(int16_t)a + (int16_t)(a >> 16)), m1 = (float)((int32_t)(int16_t)b + (int16_t)(b >> 16));
+        x[i] = (m0 + (m1 - m0) * ((float)(pos & 0xFFFFu) * (1.0f / 65536.0f))) * (0.25f / 32768.0f);
+        pos += step;
+    }
+    RING_PUBLISH();
+    uo_r = r + (pos >> 16);
+    uo.pos = pos & 0xFFFFu;
+    uo.step = step;
+    return 1;
+}
+/* the block's routing, latched (a_block, CPU0; px_audio.h a_rt_*): where the return joins, the guitar cut while the computer
+ * plays into the pedal (its playback stream open: when it closes, or the cable goes, the guitar comes back), and the return
+ * itself when it is in the chain. USB RETURN OUTPUT is v42's (a_send's uac_play), the chain told only of the cut */
+static __attribute__((noinline)) void px_ua_chain(void)
+{
+    const uint32_t r = px_ua_route, ret = PX_UA_RET(r), cut = PX_UA_CUT(r);
+    a_rt_out = (uint8_t)(ret == 0u);
+    if (!a_ua) {                                        /* (USB AUDIO off: the chain as in build 42) */
+        a_rt_at = PX_RT_NONE;
+        a_rt_x = a_rt_cut = 0;
+        return;
+    }
+    a_rt_cut = (uint8_t)(cut && usb.config && uo.alt);
+    a_rt_at = (int8_t)(ret == 0u ? (cut ? PX_RT_END : PX_RT_NONE) : ret == 1u ? PX_RT_IN : (int)ret - 2);
+    if (ret == 0u) a_rt_x = 0;
+    else if (a_mute) { uo.go = 0; a_rt_x = 0; }         /* (a flash write is coming: primed again after it) */
+    else a_rt_x = (uint8_t)px_ua_take(a_rx, A_FR);
+}
+#endif
+
 /* One output block (a_send: the I2S interrupt on CPU0, where the block CPU1 made is whole; TIMER5's usb_poll, which
  * sends and takes the packets, nests in it as it does in felucca-bsp's render).
  * To the computer: a_out, the chain's output after the mutes and the change fade and before MASTER, through the
  * output's soft knee: what the output plays with MASTER at 100, so the recording's level does not follow the knob.
  * Mono, on both channels, 16 bits. The ring and its pacing are usb.c's (uac_render_start, uac_packet).
  * From the computer: usb.c's uac_play adds its stereo playback to the block, resampled to the pedal's clock, at
- * MASTER's gain, and clips the sum to the 24 bits the I2S takes. It is not in the recording. */
+ * MASTER's gain, and clips the sum to the 24 bits the I2S takes. It is not in the recording.
+ * Test build 43 (the Bluetooth audio image): USB SEND chooses what is recorded (OUTPUT, the two channels when OUTPUT splits them;
+ * DI, a_in back at the input's full scale, INPUT applied; DI + OUT), and the playback is mixed here only when USB RETURN is
+ * OUTPUT (a_rt_out). Out of the RAM code (noinline): the RAM code window is full */
+#if PX_OWN_FX
+static __attribute__((noinline)) void px_ua_block(int32_t *d, uint32_t n)
+#else
 static void px_ua_block(int32_t *d, uint32_t n)
+#endif
 {
     uint32_t i;
 #if OP_UADEV
@@ -117,6 +213,20 @@ static void px_ua_block(int32_t *d, uint32_t n)
     if (uac.feed) {
         const uint32_t w = ua_w;
         if (UA_N - (w - ua_r) < n) uac.overruns++;   /* (nobody reads: the block is dropped) */
+#if PX_OWN_FX
+        else {
+            const uint32_t sm = PX_UA_SEND(px_ua_route), om = a_res_sp;   /* (om: OUTPUT, 0 MONO, 1 STEREO, 2 GTR+BASS) */
+            for (i = 0; i < n; i++) {
+                const uint32_t o = ua_knee16(a_out[i]), l = sm ? ua_clip16(a_in[i] * 2.0f) : o;
+                const uint32_t rr = sm == 1u ? l
+                                  : sm == 2u ? (om == 1u ? ua_knee16(0.5f * (a_out[i] + a_outr[i])) : om == 2u ? ua_knee16(a_out[i] + a_outr[i]) : o)
+                                  : om ? ua_knee16(a_outr[i]) : o;
+                ua_ring[(w + i) & (UA_N - 1u)] = l | rr << 16;
+            }
+            RING_PUBLISH();
+            ua_w = w + n;
+        }
+#else
         else {
             for (i = 0; i < n; i++) {
                 float v = a_out[i], m = v < 0.0f ? -v : v;
@@ -138,9 +248,13 @@ static void px_ua_block(int32_t *d, uint32_t n)
             RING_PUBLISH();
             ua_w = w + n;
         }
+#endif
     }
 #if OP_UADEV
     if (lb) return;
+#endif
+#if PX_OWN_FX
+    if (!a_rt_out) return;                      /* (test build 43: USB RETURN is in the chain: a_block read it) */
 #endif
     if (a_mute) uo.go = 0;                      /* (a flash write is coming: the output is zeros; primed again after it) */
     else if (uo.alt) uac_play(d, n, (uint32_t)(a_gv * 4096.0f));

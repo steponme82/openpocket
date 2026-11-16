@@ -46,12 +46,27 @@ is not in the recording.
   the same time is not sample-locked to it, as with any two sound cards.
 - USB audio adds up to 1 point of DSP load while the computer records and up to 2 while it also plays (see "Cost"
   below). Nothing is added while no program uses the device, or with the setting off.
-- The Bluetooth test image has no USB audio (its memory is full).
+- The Bluetooth audio test image has it too since its test build 43, with three more settings (below, "In the Bluetooth
+  audio test image").
 
 **If the computer does not see the device**, switch USB AUDIO off on the pedal's MIDI page: the pedal is then the plain
 MIDI device again and the editor and installer reach it as before. Tested so far: macOS 26 on Apple silicon. Windows,
 iOS, iPadOS, Linux and macOS 13 to 15 are not tested yet; the descriptors follow what felucca-bsp found those systems
 to need (see below).
+
+### In the Bluetooth audio test image: USB SEND, USB RETURN, GUITAR
+
+The Bluetooth audio test image (test build 43, [BT-AUDIO-TEST.md](BT-AUDIO-TEST.md)) has USB audio too, its rows on SETTINGS
+after USB PORT, with three more:
+
+- **USB SEND**, what the computer records: OUTPUT (the pedal's sound, as above), DI (the guitar as it enters the chain, before
+  any block, on both channels: what a guitar-to-MIDI program tracks best) or DI + OUT (the DI left, the pedal's sound right).
+- **USB RETURN**, where the computer's sound comes in: OUTPUT (as above), INPUT (through the whole chain) or right before any
+  block of the preset's chain, so that the blocks after it play the computer's sound: a synth from MIDI Guitar through the
+  pedal's delay and reverb.
+- **GUITAR**, MIX or CUT: at USB RETURN's place the guitar is kept, or cut while the computer plays into the pedal.
+
+That image's playback ring is 512 frames (2 KB), half this one's, for room; the target fill is the same.
 
 ## How it works
 

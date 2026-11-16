@@ -49,7 +49,9 @@ static uint8_t st_usb;                          /* the USB settings byte (header
  * their own mark and CRC16: "OPMP", PXM_MAP_N entries of 3 bytes, the CRC, 2 bytes 0. The header's CRC covers the slots
  * only, as before, so other firmware reads this copy as it always did and never looks here; a copy it writes has none
  * (the sector is erased), and then nothing is learned. Written before the header like the slots, so a power cut keeps the
- * previous copy whole, its learned controls with it. */
+ * previous copy whole, its learned controls with it.
+ * Test build 43: the last 2 bytes carry USB audio's routing (px_midi.h px_ua_route) and the same ^ 0x5A, which builds 39 to
+ * 42 wrote as 0, 0 and do not read: a pair that does not match is the default, 0 */
 #define ST_MAP_OFF (0x1000u + (ST_NSLOT - ST_S0N) * ST_SLOT)   /* 0x17E0: under 0xF00 of sector 1 */
 #define ST_MAP_LEN (4u + PXM_MAP_N * 3u + 4u)
 #define ST_MAP_MAGIC 0x504D504Fu                        /* "OPMP" */
@@ -61,17 +63,22 @@ static void st_map_pack(uint8_t *b)
     memcpy(b + 4, mid_map, PXM_MAP_N * 3u);
     c = ota_crc16(b + 4, PXM_MAP_N * 3u, 0);
     b[4u + PXM_MAP_N * 3u] = (uint8_t)c; b[5u + PXM_MAP_N * 3u] = (uint8_t)(c >> 8);
-    b[6u + PXM_MAP_N * 3u] = b[7u + PXM_MAP_N * 3u] = 0;
+    b[6u + PXM_MAP_N * 3u] = px_ua_route; b[7u + PXM_MAP_N * 3u] = (uint8_t)(px_ua_route ^ 0x5Au);   /* (test build 43) */
 }
 static void st_map_load(uint32_t base)                 /* the copy's learned controls, or none */
 {
     uint8_t b[ST_MAP_LEN];
     uint32_t i, c;
     px_midi_map_clear();
+    px_ua_route = 0;
     if (!base || ota_fread(base + ST_MAP_OFF, b, ST_MAP_LEN)) return;
     if ((b[0] | b[1] << 8 | b[2] << 16 | (uint32_t)b[3] << 24) != ST_MAP_MAGIC) return;
     c = ota_crc16(b + 4, PXM_MAP_N * 3u, 0);
     if ((b[4u + PXM_MAP_N * 3u] | b[5u + PXM_MAP_N * 3u] << 8) != (c & 0xFFFFu)) return;
+    {   /* test build 43: USB audio's routing (a pair that does not match, as builds 39 to 42 wrote it: the default) */
+        const uint8_t r = b[6u + PXM_MAP_N * 3u];
+        if ((uint8_t)(r ^ 0x5Au) == b[7u + PXM_MAP_N * 3u] && px_ua_route_valid(r)) px_ua_route = r;
+    }
     for (i = 0; i < PXM_MAP_N; i++) if (!px_midi_map_valid((const px_map_t *)(b + 4u + i * 3u))) return;
     memcpy(mid_map, b + 4, PXM_MAP_N * 3u);
 }

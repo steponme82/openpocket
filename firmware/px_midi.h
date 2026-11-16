@@ -46,8 +46,9 @@ static void px_midi_cfg_unpack(px_midi_cfg_t *c, uint8_t b)
 }
 /* v42: USB AUDIO (docs/USB-AUDIO.md): 1 = the pedal is a USB sound card too. The MIDI page's fourth row and the editor
  * (USB_AUDIO) set it, the store keeps it (px_store.h, st_usb), px_usb.h presents the USB device with or without the
- * audio streams. Not in the Bluetooth test image, whose RAM is full: OP_UAUDIO 0 leaves the row and the streams out. */
-#if OP_BLE_TEST
+ * audio streams. Not in the BLE test image, whose RAM is full: OP_UAUDIO 0 leaves the row and the streams out. The
+ * Bluetooth audio image has it since test build 43 (with USB SEND, USB RETURN and GUITAR below) */
+#if OP_BLE_TEST && !OP_BT_AUDIO
 #define OP_UAUDIO 0
 #else
 #define OP_UAUDIO 1
@@ -93,6 +94,21 @@ static uint8_t px_out_mode;
 #define PX_ST_OUT_SH 2u
 #define PX_ST_OUT_MASK 0x0Cu
 static pxu_t px_uh;
+/* test build 43: USB audio's routing (px_uaudio.h, docs/USB-AUDIO.md), SETTINGS' three rows after USB AUDIO, one byte (7 bits,
+ * as the editor's MAP sends it):
+ *   bits 0-1  USB SEND, what the computer records: 0 OUTPUT (the pedal's sound, as v42; both channels of STEREO and GTR+BASS),
+ *             1 DI (the guitar as it enters the chain, on both channels), 2 DI + OUT (the DI left, the pedal's sound right)
+ *   bit 2     GUITAR: 0 MIX, 1 CUT: from USB RETURN's place on, the guitar is cut while the computer plays into the pedal
+ *             (its playback stream open), and comes back when it stops
+ *   bits 3-6  USB RETURN, where the computer's sound comes in: 0 OUTPUT (added at the output, stereo, as v42), 1 INPUT (the
+ *             chain's start: the whole chain), 2 + b right before block b (PX_B_*, wherever the preset's order puts it)
+ * Kept in the store's map record (px_store.h st_map_pack); 0, the default, is v42's USB audio */
+static uint8_t px_ua_route;
+#define PX_UA_SEND(r) ((r) & 3u)
+#define PX_UA_CUT(r) (((r) >> 2) & 1u)
+#define PX_UA_RET(r) (((r) >> 3) & 15u)
+#define PX_UA_RET_N (2u + PX_NBLK)                     /* OUTPUT, INPUT, before each block */
+static int px_ua_route_valid(uint32_t r) { return r < 128u && PX_UA_SEND(r) <= 2u && PX_UA_RET(r) < PX_UA_RET_N; }
 #endif
 /* the pedal's MIDI state, shared by the screen (ui.h) and the glue (px_midi_io.h) */
 static px_midi_cfg_t mid_cfg;           /* all-zero until the store is read: omni, send on, clock off */

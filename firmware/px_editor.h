@@ -396,10 +396,14 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
                                                         * TAILS, BT POWER */
         rc = 0;
         if (n >= 1u && a[0] == 1u) {                   /* 1, each, INPUT + 10, flags (bit 0 TAILS, bits 1-2 BT POWER), then
-                                                        * PXM_MAP_N x (present, src, dst, mode) */
+                                                        * PXM_MAP_N x (present, src, dst, mode); test build 43: then, if
+                                                        * there, USB audio's routing (px_midi.h px_ua_route) */
             static px_map_t mq[PXM_MAP_N];
             uint32_t want = 4u + PXM_MAP_N * 4u;
             if (n < want || a[2] > (uint32_t)(PX_IN_DB_MAX - PX_IN_DB_MIN) || ((a[3] >> 1) & 3u) > 2u || ((a[3] >> 3) & 3u) > 2u) rc = 1;
+#if OP_UAUDIO
+            if (!rc && n > want && !px_ua_route_valid(a[want])) rc = 1;
+#endif
             for (k = 0; !rc && k < PXM_MAP_N; k++) {
                 const uint8_t *e = a + 4u + k * 4u;
                 mq[k].src = e[0] ? e[1] : 0xFFu; mq[k].dst = e[2]; mq[k].mode = e[3];
@@ -418,6 +422,9 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
                 if (((a[3] >> 1) & 3u) != px_bt_pwr) { px_bt_pwr = (uint8_t)((a[3] >> 1) & 3u); PX_BT_POWER_APPLY(); }
                 px_out_mode = (uint8_t)((a[3] >> 3) & 3u);   /* test build 42: OUTPUT (the audio reads it each block) */
                 st_usb = (uint8_t)((st_usb & ~PX_ST_OUT_MASK) | (px_out_mode << PX_ST_OUT_SH));
+#if OP_UAUDIO
+                if (n > want) px_ua_route = a[want];   /* test build 43: USB SEND, USB RETURN, GUITAR (heard at once) */
+#endif
                 st_midi = px_midi_cfg_pack(&mid_cfg);
                 if (st_commit()) rc = 2;               /* (it stays in RAM and works: the next save writes it) */
                 st_gen++;
@@ -431,6 +438,9 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
             const int on = e->src != 0xFFu;
             ed_b(on ? 1u : 0u); ed_b(on ? e->src : 0u); ed_b(on ? e->dst : 0u); ed_b(on ? e->mode : 0u);
         }
+#if OP_UAUDIO
+        ed_b(px_ua_route);                             /* (test build 43: after the entries, where builds 39 to 42 ended) */
+#endif
         break;
     }
 #endif

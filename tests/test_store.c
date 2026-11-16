@@ -398,6 +398,40 @@ int main(void)
         CHECK(px_out_mode == 0, "OUTPUT: 3 read as MONO");
         st_usb = 0; px_out_mode = 0; px_ua_on = 0;
         CHECK(st_commit() == 0, "OUTPUT: back to MONO");
+        /* test build 43: USB audio's routing in the map record's last two bytes (the value, the value ^ 0x5A) */
+        {
+            const uint32_t at = ST_MAP_OFF + ST_MAP_LEN - 2u;
+            mid_map[2] = (px_map_t){ 90, 8 + PX_B_MOD, PXM_MAP_PRESS };
+            px_ua_route = 0;
+            CHECK(st_commit() == 0, "USB routing: a commit with the default");
+            nor[st_cur + at] = 0; nor[st_cur + at + 1u] = 0;        /* (as builds 39 to 42 wrote them) */
+            px_ua_route = 0x55;
+            reboot();
+            CHECK(px_ua_route == 0 && px_midi_map_count() == 1, "USB routing: a copy of builds 39 to 42 (0, 0) reads as the default, the learned controls kept");
+            px_ua_route = (uint8_t)(2u | 4u | (2u + PX_B_DELAY) << 3);   /* DI + OUT, GUITAR CUT, before DELAY */
+            CHECK(st_commit() == 0, "USB routing: a commit");
+            px_ua_route = 0;
+            reboot();
+            CHECK(px_ua_route == (2u | 4u | (2u + PX_B_DELAY) << 3) && px_midi_map_count() == 1, "USB routing: DI + OUT, CUT, before DELAY survive a power cycle");
+            {
+                px_preset_t q;
+                px_preset_factory(&q, 9);
+                CHECK(st_save(9, &q) == 0, "USB routing: a preset save");
+                reboot();
+                CHECK(PX_UA_RET(px_ua_route) == 2u + PX_B_DELAY && st_saved(9), "USB routing: still there after a preset save");
+            }
+            nor[st_cur + at + 1u] ^= 0x10;                  /* the pair no longer matches */
+            reboot();
+            CHECK(px_ua_route == 0 && px_midi_map_count() == 1, "USB routing: a pair that does not match = the default (the learned controls kept)");
+            nor[st_cur + at] = (uint8_t)(15u << 3); nor[st_cur + at + 1u] = (uint8_t)((15u << 3) ^ 0x5Au);   /* RETURN 15: no such place */
+            reboot();
+            CHECK(px_ua_route == 0, "USB routing: a value no build writes (RETURN 15) = the default");
+            nor[st_cur + at] = 3u; nor[st_cur + at + 1u] = (uint8_t)(3u ^ 0x5Au);   /* SEND 3: none */
+            reboot();
+            CHECK(px_ua_route == 0, "USB routing: SEND 3 = the default");
+            px_midi_map_clear(); px_ua_route = 0;
+            CHECK(st_commit() == 0, "USB routing: back to the default");
+        }
     }
 #endif
     loader_bytes_clear();

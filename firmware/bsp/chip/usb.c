@@ -215,7 +215,10 @@ static struct {
 #ifndef UO_TGT
 #define UO_TGT (2u * HALF_FRAMES)   /* the fill a render aims to start at: ~11.6 ms with 256-frame halves */
 #endif
-static uint32_t uo_ring[UO_N];
+#ifndef FELUCCA_UAC_OUT_RING_ATTR
+#define FELUCCA_UAC_OUT_RING_ATTR    /* (an app may place the ring in another section, as FELUCCA_UAC_RING_ATTR) */
+#endif
+static uint32_t uo_ring[UO_N] FELUCCA_UAC_OUT_RING_ATTR;
 static volatile uint32_t uo_w, uo_r;
 static uint32_t ep4rx[UO_MAXF + 1u] __attribute__((aligned(4)));
 static struct {

@@ -10,7 +10,18 @@
 #define FELUCCA_UAC_MIDI_LAST 1                 /* audio control, the streams, then MIDI: the order macOS 13-15 need (usb.c) */
 #define FELUCCA_UAC_SWITCH 1                    /* only while the setting is on (usb_uac_on) */
 #define HALF_FRAMES A_FR                        /* the frames a block feeds the record ring */
+#if OP_BT_AUDIO
+/* test build 43, the Bluetooth audio image: both rings in the engine pool's free end (.pool.tail, zeroed at boot; the 96 KB RAM
+ * is full), CPU0's only (the USB poll, a_block, a_send); the playback ring of 512 frames (2 KB): the target, a block and a
+ * packet are 385, which leaves a block read 3 ms late. (On a PC, tests/test_usb_audio.c: plain arrays) */
+#if defined(__PI32V2__)
+#define FELUCCA_UAC_RING_ATTR __attribute__((section(".pool.tail.ua_ring"), aligned(4)))
+#define FELUCCA_UAC_OUT_RING_ATTR __attribute__((section(".pool.tail.uo_ring"), aligned(4)))
+#endif
+#define UO_N 512u
+#else
 #define UO_N 1024u                              /* the playback ring: 4 KB (the target, a block and a packet either way) */
+#endif
 /* v42: the rings' fills, for the pedal's blocks (px_uaudio.h). A block is written and read where its sound is ready
  * (a_send, px_audio.h): 0.3 to 2.5 ms after the interrupt's start, by the preset, but steady within a preset (measured
  * over the 52 presets with a guitar playing: within 0.06 ms, 0.2 ms on ORGAN) since v42 keeps the callbacks' order

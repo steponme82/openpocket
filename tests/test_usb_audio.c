@@ -14,7 +14,11 @@
  *     blocks that start up to 0.7 ms late: every frame the pedal made arrives once, in order (no gap, no repeat), the
  *     ring's fill stays in its band;
  *   - the playback stream over 10 minutes at the same clock differences: no gap, the ring neither empties nor
- *     overflows, the level follows MASTER, the sum with the pedal's sound is clipped, a flash write's mute stops it. */
+ *     overflows, the level follows MASTER, the sum with the pedal's sound is clipped, a flash write's mute stops it.
+ * Built with -DPX_OWN_FX=1 -DOP_BT_AUDIO=1 (the Bluetooth audio image, test build 43: its 512-frame playback ring) the same,
+ * and USB SEND (DI, DI + OUT, the two channels OUTPUT splits), USB RETURN in the chain (the playback read in a_block's place
+ * over 10 minutes at the same clock differences: no gap, no jump, the input's scale; not mixed at the output then) and
+ * GUITAR CUT only while the computer plays. */
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -164,7 +168,16 @@ static int desc_main(void)
 static float a_out[A_FR], a_gv = 1.0f;
 static volatile uint8_t a_mute, a_ua;
 static uint32_t a_uat, a_swaps;
+#if PX_OWN_FX
+#include "px_dsp.h"
+#include "px_midi.h"                            /* (px_ua_on, px_ua_route and its fields) */
+static float a_in[A_FR], a_outr[A_FR], a_rx[A_FR];
+static volatile uint8_t a_res_sp;
+static int8_t a_rt_at = PX_RT_NONE;
+static uint8_t a_rt_x, a_rt_cut, a_rt_out = 1u;
+#else
 static uint8_t px_ua_on;
+#endif
 #include "px_uaudio.h"
 
 static int fails;
@@ -474,6 +487,156 @@ static void test_knee(void)                       /* the record stream's level: 
     }
 }
 
+#if PX_OWN_FX
+/* ---- test build 43: USB SEND, USB RETURN in the chain, GUITAR CUT ---- */
+static void test_send(void)
+{
+    int32_t d[2 * A_FR];
+    uint32_t i, k;
+    px_ua_on = 1; usb_uac_on = 1; a_ua = 1;
+    enumerate();
+    ctrl(0x01, 11, 1, 1, 0, 0);
+    uac.flowing = 1;
+    px_ua_route = 0; a_res_sp = 0;
+    px_ua_block(d, A_FR);                         /* primes the ring */
+    for (i = 0; i < A_FR; i++) { a_in[i] = 0.1f + 0.001f * (float)i; a_out[i] = -0.3f; a_outr[i] = 0.2f; }
+    a_in[5] = 0.7f;                               /* (x 2 above full scale: clipped) */
+    px_ua_route = 1;                              /* DI */
+    ua_r = ua_w - 8u; px_ua_block(d, A_FR); k = ua_w - A_FR;   /* (the computer took the rest: room, and still primed) */
+    {
+        const int16_t *s = (const int16_t *)&ua_ring[k & (UA_N - 1u)];
+        CHECK(s[0] == (int16_t)(0.2f * 32767.0f) && s[1] == s[0] && s[2] == (int16_t)((0.1f + 0.001f) * 2.0f * 32767.0f),
+              "USB SEND DI: the guitar as it enters the chain, back at the input's full scale, on both channels");
+        CHECK(s[10] == 32767 && s[11] == 32767, "USB SEND DI: above full scale clipped, straight (no knee)");
+    }
+    px_ua_route = 2;                              /* DI + OUT */
+    ua_r = ua_w - 8u; px_ua_block(d, A_FR); k = ua_w - A_FR;   /* (the computer took the rest: room, and still primed) */
+    {
+        const int16_t *s = (const int16_t *)&ua_ring[k & (UA_N - 1u)];
+        CHECK(s[0] == (int16_t)(0.2f * 32767.0f) && s[1] == (int16_t)(-0.3f * 32767.0f), "USB SEND DI + OUT: the DI left, the pedal's sound right");
+    }
+    a_res_sp = 1;                                 /* OUTPUT STEREO: the right is the two channels' middle */
+    ua_r = ua_w - 8u; px_ua_block(d, A_FR); k = ua_w - A_FR;   /* (the computer took the rest: room, and still primed) */
+    CHECK(((const int16_t *)&ua_ring[k & (UA_N - 1u)])[1] == (int16_t)(0.5f * (-0.3f + 0.2f) * 32767.0f), "USB SEND DI + OUT, OUTPUT STEREO: the right is (L + R) / 2, the mono sound");
+    a_res_sp = 2;                                 /* GTR+BASS: the right is the two summed */
+    ua_r = ua_w - 8u; px_ua_block(d, A_FR); k = ua_w - A_FR;   /* (the computer took the rest: room, and still primed) */
+    CHECK(((const int16_t *)&ua_ring[k & (UA_N - 1u)])[1] == (int16_t)((-0.3f + 0.2f) * 32767.0f), "USB SEND DI + OUT, OUTPUT GTR+BASS: the right is the guitar and the bass summed");
+    px_ua_route = 0; a_res_sp = 1;                /* OUTPUT, split: the two channels as the output plays them */
+    ua_r = ua_w - 8u; px_ua_block(d, A_FR); k = ua_w - A_FR;   /* (the computer took the rest: room, and still primed) */
+    {
+        const int16_t *s = (const int16_t *)&ua_ring[k & (UA_N - 1u)];
+        CHECK(s[0] == (int16_t)(-0.3f * 32767.0f) && s[1] == (int16_t)(0.2f * 32767.0f), "USB SEND OUTPUT, OUTPUT STEREO: left and right as the output plays them");
+    }
+    a_res_sp = 0; px_ua_route = 0;
+    ctrl(0x01, 11, 0, 1, 0, 0);
+}
+static void play_packets(int k6)                  /* k6 x 0.5 ms of the computer's packets (play_v on both channels), the polls taking them */
+{
+    for (int k = 0; k < k6; k++) {
+        if (!(m_ep[4][4] & 0x01u)) {
+            for (uint32_t i = 0; i < 45u; i++) ep4rx[i] = play_v | play_v << 16;
+            m_ep[4][4] |= 0x01u; m_ep[4][6] = 180u; m_ep[4][7] = 0;
+        }
+        usb_poll();
+    }
+}
+static void test_chain(void)
+{
+    int32_t d[2 * A_FR];
+    int i;
+    px_ua_on = 1; usb_uac_on = 1; a_ua = 1; a_gv = 1.0f; a_mute = 0;
+    enumerate();
+    px_ua_route = (uint8_t)((2u + PX_B_DELAY) << 3);   /* USB RETURN before DELAY, GUITAR MIX */
+    px_ua_chain();
+    CHECK(a_rt_at == PX_B_DELAY && !a_rt_x && !a_rt_cut && !a_rt_out, "USB RETURN before DELAY: the place, nothing yet (no stream)");
+    ctrl(0x01, 11, 1, 2, 0, 0);                   /* the computer plays */
+    for (i = 0; i < 40; i++) { play_packets(6); px_ua_chain(); memset(d, 0, sizeof d); px_ua_block(d, A_FR); }
+    CHECK(a_rt_x && fabsf(a_rx[0] - 20000.0f / 65536.0f) < 1e-6f && fabsf(a_rx[A_FR - 1u] - 20000.0f / 65536.0f) < 1e-6f,
+          "USB RETURN in the chain: the computer's sound in a_rx, mono, at the input's scale (16 bits' full scale = 0.5)");
+    CHECK(d[0] == 0 && d[2 * A_FR - 1u] == 0, "USB RETURN in the chain: not mixed at the output as well");
+    px_ua_route |= 4u;                            /* GUITAR CUT */
+    play_packets(6); px_ua_chain();
+    CHECK(a_rt_cut, "GUITAR CUT: the guitar cut while the computer plays");
+    ctrl(0x01, 11, 0, 2, 0, 0);                   /* it stops */
+    play_packets(6); px_ua_chain();
+    CHECK(!a_rt_cut && !a_rt_x && !uo.go, "GUITAR CUT: the guitar back as soon as the computer stops playing");
+    ctrl(0x01, 11, 1, 2, 0, 0);
+    px_ua_route = 4u;                             /* USB RETURN OUTPUT, GUITAR CUT: the chain told only of the cut */
+    for (i = 0; i < 40; i++) { play_packets(6); px_ua_chain(); memset(d, 0, sizeof d); px_ua_block(d, A_FR); }
+    CHECK(a_rt_out && a_rt_at == PX_RT_END && a_rt_cut && !a_rt_x && d[0] == 20000 * 256, "USB RETURN OUTPUT, GUITAR CUT: the chain's end cut, the computer's sound at the output as v42");
+    a_mute = 1; px_ua_route = (uint8_t)((2u + PX_B_DELAY) << 3);
+    play_packets(6); px_ua_chain();
+    CHECK(!a_rt_x && !uo.go, "USB RETURN in the chain: a flash write's mute stops it");
+    a_mute = 0; a_ua = 0;
+    play_packets(6); px_ua_chain();
+    CHECK(a_rt_at == PX_RT_NONE && !a_rt_x && !a_rt_cut, "USB AUDIO off: the chain as in build 42");
+    a_ua = 1; px_ua_route = 0;
+    ctrl(0x01, 11, 0, 2, 0, 0);
+}
+static void test_take(double ppm, const char *name)   /* the playback read into the chain, as a_block reads it, over 10 minutes */
+{
+    const double dev = 1.0 + ppm * 1e-6, t_poll = 0.5 * T_FS * dev, t_blk = 128.0 / 44117.647 * 1000.0 * T_FS * dev;
+    const double w = 2.0 * 3.14159265358979 * 200.0 / 44100.0;
+    double tp = t_poll, tb = t_blk, th = T_FS, end = 600.0e3 * T_FS;
+    uint32_t sent = 0, acc = 0, n_out = 0, jumps = 0, quiet = 0, fmin = ~0u, fmax = 0, un0, ov0;
+    int32_t d[2 * A_FR];
+    float last = 0.0f, peak = 0.0f;
+    char msg[200];
+    px_ua_on = 1; usb_uac_on = 1; a_ua = 1; a_gv = 1.0f; a_mute = 0;
+    px_ua_route = (uint8_t)((2u + PX_B_REVERB) << 3);
+    enumerate();
+    uo_r = uo_w; uo.go = 0;                       /* (a clean start: the tests before left the ring part full; a stream opened
+                                                   * again drops what it holds at its first read anyway, usb.c uo.stale) */
+    ctrl(0x01, 11, 1, 2, 0, 0);
+    un0 = uo.underruns; ov0 = uo.overruns;
+    while (th < end) {
+        if (tp <= tb && tp <= th) { usb_poll(); tp += t_poll; continue; }
+        if (tb <= th) {                          /* a block: a_block reads the return first, a_send then records */
+            px_ua_chain();
+            if (th > 2000.0 * T_FS) {
+                if (a_rt_x) {
+                    const uint32_t f = uo_w - uo_r;
+                    if (f < fmin) fmin = f;
+                    if (f > fmax) fmax = f;
+                    for (uint32_t i = 0; i < A_FR; i++) {
+                        const float x = a_rx[i], st = fabsf(x - last);
+                        if (n_out && st > 0.1526f * 0.03f) jumps++;   /* (a 200 Hz sine of 0.1526 moves 0.0044 a frame at most) */
+                        if (fabsf(x) > peak) peak = fabsf(x);
+                        last = x; n_out++;
+                    }
+                } else quiet++;
+            }
+            memset(d, 0, sizeof d);
+            px_ua_block(d, A_FR);
+            tb += t_blk;
+            continue;
+        }
+        if (!(m_ep[4][4] & 0x01u)) {             /* the computer's frame: 44 or 45 frames, the same sine on both channels */
+            uint32_t nf = 44u;
+            acc += 100u;
+            if (acc >= 1000u) { acc -= 1000u; nf++; }
+            for (uint32_t i = 0; i < nf; i++) {
+                const int16_t s16 = (int16_t)lrint(10000.0 * sin(w * (double)(sent + i)));
+                ep4rx[i] = (uint32_t)(uint16_t)s16 | (uint32_t)(uint16_t)s16 << 16;
+            }
+            sent += nf;
+            m_ep[4][4] |= 0x01u; m_ep[4][6] = (uint8_t)(nf * 4u); m_ep[4][7] = 0;
+        }
+        th += T_FS;
+    }
+    snprintf(msg, sizeof msg, "%s: into the chain without a gap (%u frames, %u jumps, %u silent blocks, ring empty %u, ring full %u)", name,
+             n_out, jumps, quiet, uo.underruns - un0, uo.overruns - ov0);
+    CHECK(n_out > 26000000u && !jumps && !quiet && uo.underruns == un0 && uo.overruns == ov0, msg);
+    snprintf(msg, sizeof msg, "%s: at the input's scale (peak %.4f, 10000 / 65536 = 0.1526)", name, (double)peak);
+    CHECK(fabsf(peak - 10000.0f / 65536.0f) < 0.0005f, msg);
+    snprintf(msg, sizeof msg, "%s: the ring's fill after a read leaves 0.6 ms in hand and room for a block late by 3 ms (%u..%u of %u)", name, fmin, fmax, (unsigned)UO_N);
+    CHECK(fmin >= 26u && fmax + 45u + 128u < UO_N, msg);
+    printf("  %s: fill %u..%u frames (target %u)\n", name, fmin, fmax, (unsigned)UO_TGT);
+    px_ua_route = 0;
+    ctrl(0x01, 11, 0, 2, 0, 0);
+}
+#endif
+
 int main(int argc, char **argv)
 {
     if (argc > 1 && !strcmp(argv[1], "desc")) { px_ua_on = 0; usb_uac_on = 0; return desc_main(); }
@@ -489,6 +652,13 @@ int main(int argc, char **argv)
     test_play(0.0, "playback, the nominal clocks");
     test_play(+300.0, "playback, the pedal 300 ppm slow");
     test_play(-300.0, "playback, the pedal 300 ppm fast");
+#if PX_OWN_FX
+    test_send();
+    test_chain();
+    test_take(0.0, "USB RETURN in the chain, the nominal clocks");
+    test_take(+300.0, "USB RETURN in the chain, the pedal 300 ppm slow");
+    test_take(-300.0, "USB RETURN in the chain, the pedal 300 ppm fast");
+#endif
     printf("USB audio: %s (%d failures)\n", fails ? "FAIL" : "ok", fails);
     return fails ? 1 : 0;
 }

@@ -16,7 +16,9 @@
 #    (tests/engine/tails.c); TREBLE BOOST (test build 40): its knobs, RANGE's shape, lopsided clipping, BOOST, its level at
 #    noon matching the dry guitar's loudness over the DI loops (tests/engine/treble.c); LOW OCTAVE's octave out of the chain
 #    (test build 42): the reverb's tail the same with it on and off, its 41 Hz whole, the right channel alone, bit for bit
-#    on two cores, fades, the volume pedal, its level against the amps' (tests/engine/bassout.c)
+#    on two cores, fades, the volume pedal, its level against the amps' (tests/engine/bassout.c); USB RETURN (test build
+#    43): the computer's sound into the chain before any block, skipping the ones before it, mixed or with the guitar cut,
+#    following the preset's order, bit for bit on two cores (tests/engine/usbret.c)
 #  - changes without clicks (v38): knob changes glide to exactly where a full set goes, blocks on / off fade, fewer clicks
 #  - USER IR (v38): the partitioned FFT convolution against the direct FIR, slots, names
 #  - wet lanes (v39): the delay through its lane as inline bit for bit, the reverb's tail lag frames later, the pipeline
@@ -86,10 +88,10 @@ $CC -O2 $FX -Iengine tests/engine/pipe_test.c engine/px_dsp.c firmware/px_math.c
 $CC -O2 $FX -Iengine tests/engine/long.c engine/px_dsp.c firmware/px_math.c -lm -o build/long_fx && build/long_fx "LOW OCTAVE" PAD "TREBLE BOOST" | tail -1
 echo "== the Bluetooth audio image's own effects: LOW OCTAVE (PIT), SYN PAD, TREBLE BOOST (DRV) (docs/OWN-FX.md)"
 for D in "$FX" "-DPX_OWN_FX=1"; do                     # as the image builds the engine, and with the host's defaults (PX_RUNS 1)
-  for t in lowoct pad exp nam_keep tails treble bassout; do   # (exp: test build 25's expression pedal; nam_keep: test
-                                                        # build 28's factory models left out, PXN_KEEP below; tails, treble:
-                                                        # test build 40's TAILS and TREBLE BOOST; bassout: test build 42's
-                                                        # LOW OCTAVE out of the chain)
+  for t in lowoct pad exp nam_keep tails treble bassout usbret; do   # (exp: test build 25's expression pedal; nam_keep:
+                                                        # test build 28's factory models left out, PXN_KEEP below; tails,
+                                                        # treble: test build 40's TAILS and TREBLE BOOST; bassout: test build
+                                                        # 42's LOW OCTAVE out of the chain; usbret: test build 43's USB RETURN)
     $CC -O2 $D -Iengine tests/engine/$t.c engine/px_dsp.c firmware/px_math.c -lm -o build/$t
     build/$t > build/$t.log || { cat build/$t.log; exit 1; }; tail -1 build/$t.log
   done
@@ -116,6 +118,10 @@ if cmp -s build/usb_desc_off.txt build/usb_desc_ref.txt; then echo "USB AUDIO of
 else echo "USB AUDIO off: the descriptors differ from the earlier device's"; diff build/usb_desc_ref.txt build/usb_desc_off.txt; exit 1; fi
 build/test_usb_audio > build/usb_audio.log || { cat build/usb_audio.log; exit 1; }
 tail -1 build/usb_audio.log
+# test build 43: the Bluetooth audio image's (its 512-frame playback ring; USB SEND, USB RETURN in the chain, GUITAR CUT)
+$CC $UAF -DPX_OWN_FX=1 -DOP_BT_AUDIO=1 tests/test_usb_audio.c engine/px_dsp.c firmware/px_math.c -lm -o build/test_usb_audio_bt
+build/test_usb_audio_bt > build/usb_audio_bt.log || { cat build/usb_audio_bt.log; exit 1; }
+tail -1 build/usb_audio_bt.log
 echo "== screen (every page fully drawn)"
 mkdir -p build/ui && $CC -O1 -Wall -Wno-unused-function -Iengine -Ifirmware -o build/uisim tests/uisim.c engine/px_dsp.c firmware/px_math.c -lm
 build/uisim build/ui > build/ui/log.txt
