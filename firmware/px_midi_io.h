@@ -19,6 +19,9 @@
 #if PX_OWN_FX && !defined(PXM_STEP)
 #define PXM_STEP(dd) ui_preset_step(dd)    /* test build 39: CC 118 / 119, as the footswitches (ui.h) */
 #endif
+#if PX_OWN_FX && !defined(PXM_SCENE)
+#define PXM_SCENE(n) ui_scene_recall(n)    /* test build 49: CC 65 to 68, a scene (ui.h) */
+#endif
 
 static px_midi_tx_t mid_tx;
 static px_midi_clock_t mid_clk;
@@ -29,10 +32,20 @@ static void midi_persist(void)                  /* the page's HOME: save the set
     st_usb = (uint8_t)((st_usb & ~1u) | (px_ua_on & 1u));   /* v42: USB AUDIO (px_usb.h then presents the device anew) */
 #if PX_OWN_FX
     st_usb = (uint8_t)((st_usb & ~PX_ST_OUT_MASK) | (px_out_mode << PX_ST_OUT_SH));   /* test build 42: OUTPUT */
+    st_usb = (uint8_t)((st_usb & 0x0Fu) | (uint32_t)px_live << 4 | (px_sc_rule ? PX_ST_SCRULE : 0u) |
+                       (px_sc_feet ? PX_ST_SCFEET : 0u));   /* test build 47: PLAY VIEW; 49: of three, the scenes' two rows */
 #endif
     ft_box(0, 186, 240, "SAVING...", &FT_MD, UI_ACC, UI_BG, 1);
     if (st_ok) (void)st_commit();
 }
+
+#if PX_OWN_FX
+static void learn_persist(void)                 /* test build 46: a control learned or cleared on a block page, to the store
+                                                 * (as a save: the sound itself is not touched) */
+{
+    if (st_ok) (void)st_commit();
+}
+#endif
 
 #if OP_BLE_TEST
 /* what a Bluetooth write leaves here (px_midi_ble_write) goes through the same px_midi_in as USB. The writer is the Bluetooth
@@ -107,7 +120,8 @@ static void px_midi_in(uint32_t pkt, uint32_t ms, int free_ui, int *touched)
     mid_in_n++;                                        /* (the controller's own number: the MIDI page and the editor show it) */
     if (m.type == PXM_CC) {                            /* test build 39: a control learned on the pedal, as the pedal's own */
         uint32_t c = m.d1, v = m.d2;
-        if (!px_midi_map_in(&c, &v)) return;           /* (a switch's release) */
+        if (px_learn_feed(c, v)) return;               /* (test build 46: a learn on a block page takes it, not played) */
+        if (!px_midi_map_in(&c, &v, cur_preset)) return;   /* (a switch's release) */
         m.d1 = (uint8_t)c; m.d2 = (uint8_t)v;
     }
 #endif
@@ -130,6 +144,9 @@ static void px_midi_in(uint32_t pkt, uint32_t ms, int free_ui, int *touched)
     } else if (m.d1 == PXM_CC_NEXT || m.d1 == PXM_CC_PREV) {   /* CC 118 / 119 at 64 and up: the next / previous preset, as
                                                         * the footswitches (test build 39: a footswitch in its CC mode) */
         if (m.d2 >= 64u && free_ui) { PXM_STEP(m.d1 == PXM_CC_NEXT ? 1 : -1); *touched = 1; }
+    } else if (m.d1 >= PXM_CC_SCENE0 && m.d1 < PXM_CC_SCENE0 + PX_SC_N) {   /* test build 49: CC 65 to 68, any value: a scene
+                                                        * (a switch that alternates 127 and 0 recalls it at each press) */
+        if (free_ui) { PXM_SCENE(m.d1 - PXM_CC_SCENE0); *touched = 1; }
 #endif
     } else {
         uint32_t mv = master_vol;

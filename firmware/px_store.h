@@ -82,6 +82,70 @@ static void st_map_load(uint32_t base)                 /* the copy's learned con
     for (i = 0; i < PXM_MAP_N; i++) if (!px_midi_map_valid((const px_map_t *)(b + 4u + i * 3u))) return;
     memcpy(mid_map, b + 4, PXM_MAP_N * 3u);
 }
+/* test build 46: each preset's own learned controls (px_midi.h mid_pl), right after the learned map. Test build 48's record:
+ * "OPP3", PXM_PL_N entries of 8 bytes (slot, controller's number, the pedal's number, mode, a pedal's setting at the heel and
+ * at the toe, the values the pedal sends there), the CRC, then SETTINGS' GUITAR TONE and PICKUP (px_inz_pack) and the same
+ * ^ 0x5A. Written and checked as the map is. Read as well: 47's "OPP2" (entries of 6 bytes: the pedal's whole travel); 46's
+ * "OPPL" no longer (47 wrote its own over it at its first save). A copy without either (other firmware) has none, and the input
+ * as it is. An entry that does not read right is dropped alone; a settings pair that does not match: the input as it is */
+#define ST_PL_OFF (ST_MAP_OFF + ST_MAP_LEN)            /* 0x1800 */
+#define ST_PL_LEN (4u + PXM_PL_N * 8u + 4u)
+#define ST_PL_MAGIC 0x3350504Fu                        /* "OPP3" */
+#define ST_PL2_MAGIC 0x3250504Fu                       /* "OPP2" (47's) */
+typedef char st_pl_check[(ST_PL_OFF + ST_PL_LEN <= 0x1F00u && sizeof(px_pl_t) == 8u && PXM_PL_SLOTS == ST_NSLOT) ? 1 : -1];
+/* test build 49: the presets' scenes (px_midi.h px_sc_tab), right after: "OPSC", ST_NSLOT entries of 10 bytes (the four
+ * scenes' blocks on, the scene playing, the scenes stored), the CRC, 2 spare. A copy without it: no scenes */
+#define ST_SC_OFF (ST_PL_OFF + ST_PL_LEN)              /* 0x1A08 */
+#define ST_SC_LEN (4u + ST_NSLOT * 10u + 4u)
+#define ST_SC_MAGIC 0x4353504Fu                        /* "OPSC" */
+typedef char st_sc_check[(ST_SC_OFF + ST_SC_LEN <= 0x1F00u && sizeof(px_sc_t) == 10u && sizeof px_sc_tab == ST_NSLOT * 10u) ? 1 : -1];
+static uint8_t st_pl_buf[ST_SC_LEN > ST_PL_LEN ? ST_SC_LEN : ST_PL_LEN];   /* (one buffer: boot's reads, a save's writes) */
+static void st_sc_pack(uint8_t *b)
+{
+    const uint32_t T = 4u + ST_NSLOT * 10u, c = ota_crc16((const uint8_t *)px_sc_tab, ST_NSLOT * 10u, 0);
+    b[0] = ST_SC_MAGIC & 0xFFu; b[1] = (ST_SC_MAGIC >> 8) & 0xFFu; b[2] = (ST_SC_MAGIC >> 16) & 0xFFu; b[3] = ST_SC_MAGIC >> 24;
+    memcpy(b + 4, px_sc_tab, ST_NSLOT * 10u);
+    b[T] = (uint8_t)c; b[T + 1u] = (uint8_t)(c >> 8); b[T + 2u] = b[T + 3u] = 0xFFu;
+}
+static void st_sc_load(uint32_t base)                  /* the copy's scenes, or none */
+{
+    uint8_t *const b = st_pl_buf;
+    const uint32_t T = 4u + ST_NSLOT * 10u;
+    memset(px_sc_tab, 0, sizeof px_sc_tab);
+    if (!base || ota_fread(base + ST_SC_OFF, b, ST_SC_LEN)) return;
+    if ((b[0] | b[1] << 8 | b[2] << 16 | (uint32_t)b[3] << 24) != ST_SC_MAGIC) return;
+    if ((b[T] | b[T + 1u] << 8) != (ota_crc16(b + 4, ST_NSLOT * 10u, 0) & 0xFFFFu)) return;
+    memcpy(px_sc_tab, b + 4, sizeof px_sc_tab);
+    for (uint32_t i = 0; i < ST_NSLOT; i++)            /* (an entry that does not read right: none) */
+        if (px_sc_tab[i].cur >= PX_SC_N || (px_sc_tab[i].set & ~0x0Fu)) memset(&px_sc_tab[i], 0, sizeof px_sc_tab[i]);
+}
+static void st_pl_pack(uint8_t *b)
+{
+    const uint32_t T = 4u + PXM_PL_N * 8u, c = ota_crc16((const uint8_t *)mid_pl, PXM_PL_N * 8u, 0);
+    b[0] = ST_PL_MAGIC & 0xFFu; b[1] = (ST_PL_MAGIC >> 8) & 0xFFu; b[2] = (ST_PL_MAGIC >> 16) & 0xFFu; b[3] = ST_PL_MAGIC >> 24;
+    memcpy(b + 4, mid_pl, PXM_PL_N * 8u);
+    b[T] = (uint8_t)c; b[T + 1u] = (uint8_t)(c >> 8);
+    b[T + 2u] = px_inz_pack(); b[T + 3u] = (uint8_t)(px_inz_pack() ^ 0x5Au);
+}
+static void st_pl_load(uint32_t base)                  /* the copy's preset-own learned controls, or none */
+{
+    uint8_t *const b = st_pl_buf;
+    uint32_t i, m, w, T;
+    px_midi_pl_clear();
+    px_inz_unpack(0);
+    if (!base || ota_fread(base + ST_PL_OFF, b, ST_PL_LEN)) return;
+    m = b[0] | b[1] << 8 | b[2] << 16 | (uint32_t)b[3] << 24;
+    w = m == ST_PL_MAGIC ? 8u : m == ST_PL2_MAGIC ? 6u : 0u;   /* (an entry's bytes) */
+    if (!w) return;
+    T = 4u + PXM_PL_N * w;
+    if ((uint8_t)(b[T + 2u] ^ 0x5Au) == b[T + 3u]) px_inz_unpack(b[T + 2u]);
+    if ((b[T] | b[T + 1u] << 8) != (ota_crc16(b + 4, PXM_PL_N * w, 0) & 0xFFFFu)) return;
+    for (i = 0; i < PXM_PL_N; i++) {
+        px_pl_t e = { 0, 0, 0, 0, 0, 0, 0u, 127u };    /* (47's: the pedal's whole travel) */
+        memcpy(&e, b + 4u + i * w, w);
+        if (e.slot != 0xFFu && px_midi_pl_valid(&e)) mid_pl[i] = e;
+    }
+}
 #endif
 
 static uint32_t st_slot_off(uint32_t base, uint32_t k)
@@ -200,6 +264,8 @@ static void st_load(void)
     if (st_last >= ST_NSLOT) st_last = 0;
 #if PX_OWN_FX
     st_map_load(best);                              /* test build 39: the controls learned on the pedal */
+    st_pl_load(best);                               /* test build 46: and each preset's own */
+    st_sc_load(best);                               /* test build 49: and their scenes */
 #endif
     if (best && bh.ver < 3u) st_types_v34();        /* saved before v34: the old amp / drive / cab numbers */
     if (best && bh.ver < 4u) st_time_v35();         /* saved before v35: delay TIME on the 1 s scale */
@@ -230,6 +296,21 @@ static void st_audio_hold(int on)
     }
 }
 
+#if PX_OWN_FX
+/* a record in a copy being written: packed into the shared buffer, written, read back before the buffer packs the next (test
+ * build 49: the scenes' record shares it with the learned controls') */
+static int st_rec_write(uint32_t at, void (*pack)(uint8_t *), uint32_t len)
+{
+    static uint8_t chk[64];
+    pack(st_pl_buf);
+    if (fl_write(at, st_pl_buf, len)) return -3;
+    for (uint32_t k = 0; k < len; k += sizeof chk) {
+        const uint32_t n = len - k < sizeof chk ? len - k : (uint32_t)sizeof chk;
+        if (ota_fread(at + k, chk, n) || memcmp(chk, st_pl_buf + k, n)) return -5;
+    }
+    return 0;
+}
+#endif
 /* write the whole store as a new copy (the one not in use); 0 = ok */
 static int st_commit(void)
 {
@@ -238,6 +319,10 @@ static int st_commit(void)
     int rc = 0;
     if (!st_ok) return -1;
     memset(&h, 0, sizeof h);
+#if PX_OWN_FX
+    st_usb = (uint8_t)((st_usb & 0x0Fu) | (uint32_t)px_live << 4 | (px_sc_rule ? PX_ST_SCRULE : 0u) | (px_sc_feet ? PX_ST_SCFEET : 0u));
+                                                  /* (test build 49: PLAY VIEW as CAB left it, with whatever is written) */
+#endif
     h.magic = ST_MAGIC; h.seq = st_seq + 1u; h.crc = (uint16_t)st_crc(); h.ver = ST_VER; h.nslot = ST_NSLOT; h.last = st_last; h.pad[0] = st_midi; h.pad[1] = st_usb;
 #if PX_OWN_FX
     h.pad[2] = px_set_pack();                     /* test build 40: INPUT, BT POWER, TAILS */
@@ -250,6 +335,8 @@ static int st_commit(void)
     static uint8_t mb[ST_MAP_LEN];                /* test build 39: the learned controls, before the header like the slots */
     st_map_pack(mb);
     if (!rc && fl_write(base + ST_MAP_OFF, mb, ST_MAP_LEN)) rc = -3;
+    if (!rc) rc = st_rec_write(base + ST_PL_OFF, st_pl_pack, ST_PL_LEN);   /* test build 46: each preset's own */
+    if (!rc) rc = st_rec_write(base + ST_SC_OFF, st_sc_pack, ST_SC_LEN);   /* test build 49: their scenes */
 #endif
     if (!rc && fl_write(base + 16u, st_slot[0], ST_S0N * ST_SLOT)) rc = -3;   /* sector 0's slots: st_slot's rows are contiguous */
     if (!rc && fl_write(base, (const uint8_t *)&h, sizeof h)) rc = -4;      /* header last */
@@ -284,6 +371,10 @@ static int st_reset(uint32_t k)
 {
     if (k >= ST_NSLOT) return -1;
     memset(st_slot[k], 0xFF, ST_SLOT);
+#if PX_OWN_FX
+    px_midi_pl_drop_slot(k);                      /* test build 46: its own learned controls go with its sound */
+    memset(&px_sc_tab[k], 0, sizeof px_sc_tab[k]);   /* test build 49: and its scenes */
+#endif
     return st_commit();
 }
 
@@ -294,7 +385,7 @@ static void px_store_boot(void)
     st_ok = px_flash_ok;
     if (st_ok) st_load();
 #if PX_OWN_FX
-    else px_midi_map_clear();                     /* (test build 39: nothing learned without a store) */
+    else { px_midi_map_clear(); px_midi_pl_clear(); px_inz_unpack(0); }   /* (test build 39: nothing learned without a store) */
 #endif
     ST_IRQ_OFF();                                 /* (ota_fread turned them on) */
     cur_preset = st_last;
@@ -303,8 +394,12 @@ static void px_store_boot(void)
     px_ua_on = st_usb & 1u;
 #if PX_OWN_FX
     px_out_mode = (uint8_t)((st_usb & PX_ST_OUT_MASK) >> PX_ST_OUT_SH);   /* test build 42: OUTPUT */
+    px_live = (uint8_t)((st_usb & PX_ST_VIEW) >> 4); /* test build 47: PLAY VIEW; 49: of three, and the scenes' two rows */
+    if (px_live > 2u) px_live = 0;
+    px_sc_rule = (uint8_t)!!(st_usb & PX_ST_SCRULE); px_sc_feet = (uint8_t)!!(st_usb & PX_ST_SCFEET);
     if (px_out_mode > 2u) px_out_mode = 0;
     a_in_gain_apply();                            /* test build 39: INPUT as stored; test build 40: TAILS to the engine */
     a_tails_apply();
+    a_inz_apply();                                /* test build 46: IN-Z and PICKUP */
 #endif
 }

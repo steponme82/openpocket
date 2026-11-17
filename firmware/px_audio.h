@@ -95,6 +95,21 @@ static volatile uint8_t a_res_sp;
 static volatile float a_in_k = 0.5f / 8388608.0f;
 static void a_in_gain_apply(void) { a_in_k = (0.5f / 8388608.0f) * powf(10.0f, (float)px_in_db * 0.05f); }
 static void a_tails_apply(void) { px_engine_tails(&g_eng, px_tails); }   /* test build 40: TAILS (px_midi.h) */
+/* test build 46: IN-Z (px_midi.h px_inz, px_pickup, px_inz_coefs: the pickup loaded as an input of that impedance would load
+ * it), one biquad over the input after INPUT. Off (1M): nothing done to the input, bit for bit */
+static volatile uint8_t a_inz_on;
+static float a_inz_c[5], a_inz_z[2];                   /* b0 b1 b2 a1 a2; the state (the interrupt's own) */
+static int a_running;                                  /* (defined below: the audio interrupt is on) */
+static void a_inz_apply(void)                          /* (the main loop: SETTINGS, the store at boot) */
+{
+    float c[5];
+    if (!px_inz_coefs(g_eng.sr, c)) { a_inz_on = 0; return; }
+    if (a_running) fm1_irq_mask(FM1_IRQ_ALNK0);         /* (the interrupt reads the five as one set; at boot it is not on yet) */
+    for (int i = 0; i < 5; i++) a_inz_c[i] = c[i];
+    if (!a_inz_on) a_inz_z[0] = a_inz_z[1] = 0.0f;
+    a_inz_on = 1;
+    if (a_running) fm1_irq_unmask(FM1_IRQ_ALNK0);
+}
 #endif
 #if OP_BT_AUDIO
 /* output, 24-bit right-aligned, in the RAM code window's free end (app-bt.ld .bss_hi), where test builds 12 and 13 kept two
@@ -805,6 +820,18 @@ static void a_block(const uint8_t *data, int len)      /* a guitar block: its DS
                                                           as the old (L + R) / 2, settings are unchanged */
 #endif
     }
+#if PX_OWN_FX
+    if (a_inz_on) {                                    /* (test build 46: IN-Z, the pickup loaded) */
+        float z1 = a_inz_z[0], z2 = a_inz_z[1];
+        const float b0 = a_inz_c[0], b1 = a_inz_c[1], b2 = a_inz_c[2], a1 = a_inz_c[3], a2 = a_inz_c[4];
+        for (uint32_t i = 0; i < n; i++) {
+            const float x = a_in[i], y = b0 * x + z1;
+            z1 = b1 * x - a1 * y + z2; z2 = b2 * x - a2 * y;
+            a_in[i] = y;
+        }
+        a_inz_z[0] = z1; a_inz_z[1] = z2;
+    }
+#endif
     for (uint32_t i = n; i < A_FR; i++) a_in[i] = 0.0f;
     if (n) {                                           /* input levels L / R (tuner screen) */
         a_lvl[0] += (sl / (float)n - a_lvl[0]) * 0.0625f;

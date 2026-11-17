@@ -18,7 +18,7 @@
 #endif
 #define FELUCCA_ID "FM-1_900"
 /* the Bluetooth audio test build (docs/BT-AUDIO-TEST.md): its boot text and its id for the second core's bar (app_main) */
-#define BT_TEST_BUILD 44
+#define BT_TEST_BUILD 49
 #define BT_STR_(x) #x
 #define BT_STR(x) BT_STR_(x)
 #define BT_TEST_BUILD_TEXT BT_STR(BT_TEST_BUILD)
@@ -287,7 +287,11 @@ static uint32_t cur_preset = 0;
 static uint32_t master_vol = 80;        /* 0..100, follows the MASTER knob (ADC channel 2) */
 static void st_get(uint32_t k, px_preset_t *p);   /* px_store.h: the saved preset of slot k, else the factory one */
 static uint8_t preset_new;                             /* v40.3: a preset was loaded: the sound follows at once */
+#if PX_OWN_FX
+static void load_preset(uint32_t i) { st_get(i, &PRESET); preset_new = 1; PX_SC_LOAD(i); }   /* (test build 49: its scenes) */
+#else
 static void load_preset(uint32_t i) { st_get(i, &PRESET); preset_new = 1; }
+#endif
 
 #if AUDIO_PROBE
 void fm1_timer5_irq(void) { }

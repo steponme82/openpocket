@@ -563,3 +563,22 @@ a.tone-u[href] { text-decoration: underline; }
 @media (min-width: 900px) {
   body[data-view="presets"] #view-sound { display: block; }
 }
+
+/* ---- scenes (editor protocol 6: the Bluetooth audio image's test build 49) ---- */
+.scenes { margin-block: 2px 14px; }
+.sc-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.sc-l { font-size: 0.8125rem; font-weight: 700; color: var(--dim); margin-inline-end: 4px; }
+.sc-b { display: inline-grid; gap: 5px; justify-items: start; min-block-size: 44px; padding: 6px 10px; border-radius: var(--r); border: 1px solid var(--line); background: var(--raised); font-weight: 700; font-size: 0.8125rem; }
+.sc-b.on { border-color: var(--acc); box-shadow: inset 0 0 0 1px var(--acc); }
+.sc-b.empty { color: var(--faint); border-style: dashed; }
+.sc-dots { display: flex; gap: 3px; }
+.sc-dots i { inline-size: 6px; block-size: 6px; border-radius: 50%; background: var(--line); }
+.sc-dots i.on { background: var(--c); }
+.sc-grid { margin-block-start: 10px; display: grid; gap: 8px; }
+.sc-wrap { overflow-x: auto; }
+.sc-grid table { border-collapse: collapse; font-size: 0.8125rem; }
+.sc-grid th, .sc-grid td { padding: 4px 12px; text-align: center; border-block-end: 1px solid var(--line-soft); }
+.sc-grid thead small { display: block; font-weight: 500; color: var(--dim); }
+.sc-grid tbody th { text-align: start; border-inline-start: 3px solid var(--c); }
+.sc-grid input { inline-size: 20px; block-size: 20px; accent-color: var(--acc); }
+.sc-forget { display: flex; flex-wrap: wrap; gap: 6px; }

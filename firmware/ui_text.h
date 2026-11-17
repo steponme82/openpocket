@@ -6,9 +6,16 @@
  * ft_box(x, y, w, ...) draws a box of fixed width w and of the font's height: padding + text + padding,
  * in a single pixel stream (background included). Nothing is cleared first: no flicker. align 0 = left,
  * 1 = centre, 2 = right. Text that is too long is clipped. */
+#if PX_OWN_FX
+#include "fonts_caps.h"                                /* (test build 49: no lowercase, drawn as capitals: 11 KB of flash) */
+#else
 #include "fonts.h"
+#endif
 static int ft_glyph(const op_font *f, char c)
 {
+#if PX_OWN_FX
+    if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+#endif
     for (int i = 0; i < f->n; i++) if (f->chars[i] == c) return i;
     return 0;                                          /* unknown -> 1st character (space) */
 }

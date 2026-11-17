@@ -23,7 +23,8 @@
 #define ED_H1 0x4Fu
 #define ED_H2 0x50u
 #if PX_OWN_FX
-#define ED_PROTO 5u                             /* 5: the Bluetooth audio image's test build 39, WATCH's MIDI bit, MIDI_IN, MAP */
+#define ED_PROTO 6u                             /* 6: PL, SCENE and MAP's two settings bytes (test builds 46 to 49); 5: the
+                                                 * Bluetooth audio image's test build 39, WATCH's MIDI bit, MIDI_IN, MAP */
 #else
 #define ED_PROTO 4u                             /* 4: v42, USB_AUDIO; 3: v38, cabinet IRs (IR_LIST .. IR_ERASE); 2: v37, NAM models */
 #endif
@@ -44,7 +45,8 @@ enum { ED_INFO = 1, ED_CAT_BLOCK, ED_CAT_TYPE, ED_TEXTS, ED_STATE, ED_SET, ED_OR
        ED_IR_LIST, ED_IR_WRITE, ED_IR_COMMIT, ED_IR_ERASE,     /* v38: 24..27 */
        ED_USB_AUDIO,                                           /* v42: 28 */
        ED_MIDI_IN, ED_MAP,                                     /* test build 39 (PX_OWN_FX): 29, pushed while watched; 30 */
-       ED_NAM_RENAME };                                        /* test build 40 (PX_OWN_FX): 31 */
+       ED_NAM_RENAME,                                          /* test build 40 (PX_OWN_FX): 31 */
+       ED_PL, ED_SCENE };                                      /* protocol 6 (PX_OWN_FX): 32, 33 */
 
 #ifndef ED_OUT_BYTES
 #define ED_OUT_BYTES 1024u   /* a reply's bytes at most (an image with longer DIAG lines sets more) */
@@ -137,10 +139,14 @@ static int ed_take_preset(const uint8_t *a, px_preset_t *q)
 /* the sound differs from what its slot holds (the pedal's "*") */
 static int ed_dirty(void)
 {
+#if PX_OWN_FX   /* protocol 6: as the pedal's EDITED (ui.h ui_dirty), the scenes counted: a recall is no change, a scene set is */
+    return ui_dirty() != 0;
+#else
     static px_preset_t ref;
     static uint32_t ref_slot = ~0u, ref_gen = ~0u;
     if (ref_slot != cur_preset || ref_gen != st_gen) { st_get(cur_preset, &ref); ref_slot = cur_preset; ref_gen = st_gen; }
     return memcmp(&ref, &PRESET, sizeof ref) != 0;
+#endif
 }
 static uint32_t ed_state_hash(void)
 {
@@ -149,8 +155,21 @@ static uint32_t ed_state_hash(void)
     for (i = 0; i < sizeof PRESET; i++) h = (h ^ b[i]) * 16777619u;
     h = (h ^ cur_preset) * 16777619u;
     h = (h ^ ui_blk) * 16777619u;
+#if PX_OWN_FX
+    h = (h ^ px_sc.cur ^ (uint32_t)px_sc.set << 8) * 16777619u;   /* (protocol 6: a scene recalled on the pedal is pushed too) */
+#endif
     return (h ^ st_gen) * 16777619u;
 }
+#if PX_OWN_FX
+/* protocol 6: MAP's settings bytes as no build writes them (GUITAR TONE past BRIGHT, PICKUP past P90, PLAY VIEW past SCENES, a
+ * bit no build sets), and a preset's scenes as SCENE sends them (the scene playing, the ones stored, the four masks in 2 bytes) */
+static int ed_more_bad(uint32_t t, uint32_t v) { return (t & 15u) >= PX_INZ_N || ((t >> 4) & 3u) > 2u || t > 0x3Fu || (v & 3u) > 2u || v > 15u; }
+static void ed_sc(const px_sc_t *c)
+{
+    ed_b(c->cur); ed_b(c->set);
+    for (uint32_t i = 0; i < PX_SC_N; i++) { ed_b(c->mask[i]); ed_b((uint32_t)c->mask[i] >> 7); }
+}
+#endif
 static void ed_state_frame(void)
 {
     ed_begin(ED_STATE);
@@ -176,8 +195,10 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
 #if PX_OWN_FX   /* the Bluetooth audio image's own models (LOW OCTAVE, PAD, TREBLE BOOST): a version text of its own, because
                  * the web editor keeps each firmware's catalogue under its identity and version (docs/pxedit.js) and would
                  * otherwise show a v42 pedal's, without them. "v42 FX2" since test build 40 (TREBLE BOOST): an editor that
-                 * kept build 38's "v42 FX" catalogue reads it again. "v42 FX3" since test build 44 (TAPE FLUTE) */
-        ed_b(ED_PROTO); ed_str(OP_VERSION " FX3", 15); ed_str(FELUCCA_ID_PTR, 27);
+                 * kept build 38's "v42 FX" catalogue reads it again. "v42 FX3" since test build 44 (TAPE FLUTE); "v42 FX4" since
+                 * test build 45 (SFX's WAH, WHAMMY's PEDAL); "v42 FX5" since test build 47 (12-STRING's DETUNE in cents to 3.0);
+                 * "v42 FX6" since test build 48 (PRESET LVL down to -INF) */
+        ed_b(ED_PROTO); ed_str(OP_VERSION " FX6", 15); ed_str(FELUCCA_ID_PTR, 27);
 #else
         ed_b(ED_PROTO); ed_str(OP_VERSION, 15); ed_str(FELUCCA_ID_PTR, 27);
 #endif
@@ -297,6 +318,10 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
         break;
     case ED_SAVE:
         if (n < 1u || a[0] >= ST_NSLOT) return;
+#if PX_OWN_FX
+        if (a[0] != cur_preset) (void)px_midi_pl_copy(cur_preset, a[0]);   /* (test build 46: its learned controls go with it) */
+        sc_fold(); px_sc_tab[a[0]] = px_sc;            /* (test build 49: and its scenes) */
+#endif
         rc = st_save(a[0], &PRESET) ? 2 : 0;
         if (!rc) cur_preset = a[0];
         st_gen++;
@@ -404,6 +429,7 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
 #if OP_UAUDIO
             if (!rc && n > want && !px_ua_route_valid(a[want])) rc = 1;
 #endif
+            if (!rc && n > want + 2u && ed_more_bad(a[want + 1u], a[want + 2u])) rc = 1;   /* (protocol 6) */
             for (k = 0; !rc && k < PXM_MAP_N; k++) {
                 const uint8_t *e = a + 4u + k * 4u;
                 mq[k].src = e[0] ? e[1] : 0xFFu; mq[k].dst = e[2]; mq[k].mode = e[3];
@@ -425,6 +451,14 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
 #if OP_UAUDIO
                 if (n > want) px_ua_route = a[want];   /* test build 43: USB SEND, USB RETURN, GUITAR (heard at once) */
 #endif
+                if (n > want + 2u) {                   /* protocol 6: GUITAR TONE and PICKUP (heard at once), PLAY VIEW, the
+                                                        * scene rows (st_commit keeps them: the store's settings and OPP3) */
+                    const uint8_t was = px_inz_pack();
+                    px_inz_unpack(a[want + 1u]);
+                    if (px_inz_pack() != was) a_inz_apply();
+                    px_live = (uint8_t)(a[want + 2u] & 3u);
+                    px_sc_rule = (uint8_t)((a[want + 2u] >> 2) & 1u); px_sc_feet = (uint8_t)((a[want + 2u] >> 3) & 1u);
+                }
                 st_midi = px_midi_cfg_pack(&mid_cfg);
                 if (st_commit()) rc = 2;               /* (it stays in RAM and works: the next save writes it) */
                 st_gen++;
@@ -440,9 +474,50 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
         }
 #if OP_UAUDIO
         ed_b(px_ua_route);                             /* (test build 43: after the entries, where builds 39 to 42 ended) */
+#else
+        ed_b(0u);                                      /* (no routing: its place kept for the two bytes after it) */
 #endif
+        ed_b(px_inz_pack()); ed_b(px_live | (uint32_t)px_sc_rule << 2 | (uint32_t)px_sc_feet << 3);   /* (protocol 6) */
         break;
     }
+    case ED_PL: {                                      /* protocol 6: a preset's own controls (px_midi.h mid_pl): slot (read);
+                                                        * slot, 1, src, dst, mode, lo, hi, clo, chi (learn one, in place of the
+                                                        * preset's for the same control or the same row); slot, 2, src (forget) */
+        const uint32_t s = n ? a[0] : PXM_PL_SLOTS;
+        if (s >= PXM_PL_SLOTS) return;
+        rc = 0;
+        if (n >= 9u && a[1] == 1u) {
+            const px_pl_t e = { (uint8_t)s, a[2], a[3], a[4], a[5], a[6], a[7], a[8] };
+            const uint32_t d = e.dst, o = d >= PXM_CC_TOGGLE0 && d < PXM_CC_ON0 ? d + PX_NBLK      /* (a block's ON: its flip */
+                                     : d >= PXM_CC_ON0 && d < PXM_CC_ON0 + PX_NBLK ? d - PX_NBLK : d;   /* and its on/off number) */
+            if (!px_midi_pl_valid(&e)) rc = 1;
+            else if (px_midi_pl_put(s, e.src, d, e.mode, o, e.lo, e.hi) < 0) rc = 3;
+            else for (k = 0; k < PXM_PL_N; k++) if (mid_pl[k].slot == s && mid_pl[k].src == e.src) { mid_pl[k].clo = e.clo; mid_pl[k].chi = e.chi; }
+        } else if (n >= 3u && a[1] == 2u) {
+            for (k = 0; k < PXM_PL_N; k++) if (mid_pl[k].slot == s && mid_pl[k].src == a[2]) memset(&mid_pl[k], 0xFF, sizeof mid_pl[k]);
+        } else if (n >= 2u) rc = 1;
+        if (n >= 2u && !rc) { if (st_commit()) rc = 2; st_gen++; }   /* (as a save: an unsaved sound stays as it is) */
+        ed_b((uint32_t)rc); ed_b(s); ed_b(px_midi_pl_count(PXM_PL_SLOTS)); ed_b(PXM_PL_N); ed_b(px_midi_pl_count(s));
+        for (k = 0; k < PXM_PL_N; k++)
+            if (mid_pl[k].slot == s) { const uint8_t *b = &mid_pl[k].src; for (i = 0; i < 7u; i++) ed_b(b[i]); }
+        break;
+    }
+    case ED_SCENE:                                     /* protocol 6: the playing preset's scenes (px_midi.h px_sc): nothing
+                                                        * (read); 1, n (recall, as CC 65 + n); 2, n, mask (2 bytes: scene n's
+                                                        * blocks; the scene playing switches them); 3, n (forget). SAVE keeps them */
+        rc = 0;
+        if (n) {
+            const uint32_t sn = n >= 2u ? a[1] : PX_SC_N;
+            if (sn >= PX_SC_N) rc = 1;
+            else if (a[0] == 1u) ui_scene_recall(sn);
+            else if (a[0] == 2u && n >= 4u && a[3] < 32u) {
+                px_sc.mask[sn] = (uint16_t)(a[2] | (uint32_t)a[3] << 7); px_sc.set |= (uint8_t)(1u << sn);
+                if (sn == px_sc.cur) for (k = 0; k < PX_NBLK; k++) PRESET.on[k] = (uint8_t)(px_sc.mask[sn] >> k & 1u);
+            } else if (a[0] == 3u) px_sc.set &= (uint8_t)~(1u << sn);
+            else rc = 1;
+        }
+        ed_b((uint32_t)rc); ed_sc(&px_sc); ed_sc(&px_sc_tab[cur_preset < 52u ? cur_preset : 0u]);
+        break;
 #endif
 #ifdef ED_DIAG_LINES
     case ED_DIAG: {                                    /* read only: nothing here changes the pedal */

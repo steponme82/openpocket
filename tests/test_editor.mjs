@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url";
 import { Editor, presetToJSON, presetFromJSON, filePresets, parsePresetFile, clonePreset } from "../docs/pxedit.js";
 import { parseNam, levelTrim, packModel, readDi, a2Run, KERNELS, DILATIONS, NW } from "../docs/pxnam.js";
 import { parseWav, prepareIr, packIr, irName, resample, IR_LEN } from "../docs/pxir.js";
-import { pedalLearn, switchMode, MAP_EACH, MAP_VALUE, PEDAL_MAP_N, CC_NEXT } from "../docs/pxmidi.js";
+import { pedalLearn, switchMode, MAP_EACH, MAP_VALUE, PEDAL_MAP_N, CC_NEXT, MAP_PRESS, ccParam, presetEntry, PRESET_MAP_N, CC_SCENE0 } from "../docs/pxmidi.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 // EDSIM_BLE=1: the same tests over BLE MIDI, as the Bluetooth audio image (test build 27) talks to the editor, against
@@ -128,7 +128,7 @@ let s = sim(["--dump", flash1]);
 await s.ready;
 let ed = new Editor(s.access);
 const info = await ed.connect();
-ok(info && info.proto === (FX ? 5 : 4) && info.version === (FX ? "v39 FX3" : "v39") && info.identity === "PocketX_939", `INFO: ${info && `${info.version} ${info.identity}`}`);
+ok(info && info.proto === (FX ? 6 : 4) && info.version === (FX ? "v39 FX6" : "v39") && info.identity === "PocketX_939", `INFO: ${info && `${info.version} ${info.identity}`}`);
 ok(info && info.nblk === 12 && info.npar === 5 && info.nslot === 52 && info.nameMax === 13, "INFO: 12 blocks, 5 parameters, 52 slots, names of 13");
 const t0 = Date.now();
 const cat = await ed.catalog();
@@ -451,6 +451,128 @@ st = await ed.state();
 ok(st.slot === 4, "power cycle: the pedal starts on the last slot SAVEd (imports do not move it)");
 await bleCheck(s);
 await s.end();
+
+// ---- 8. protocol 6 (the Bluetooth audio image's editor for test builds 46 to 49): MAP's settings bytes, a preset's own
+// controls learned on the pedal (PL), scenes (SCENE); then a power cycle. A store of its own (section 6's stays as it is) ----
+if (FX) {
+  const flash2 = join(TMP, "flash2.bin");
+  s = sim(["--dump", flash2]);
+  await s.ready;
+  ed = new Editor(s.access);
+  const inf = await ed.connect();
+  const eq = cat.blocks.findIndex((b) => b.label === "EQ"), dly = cat.blocks.findIndex((b) => b.label === "DLY");
+  ok(inf.proto === 6 && ed.hasPresetLearn && ed.hasScenes, "protocol 6: a preset's own controls, scenes, MAP's settings bytes");
+  // MAP: GUITAR TONE and PICKUP, PLAY VIEW, SCENE+SWITCH, SCENE FOOTSW
+  let m = await ed.pedalMap();
+  ok(m.rc === 0 && m.more && m.more.tone === 0 && m.more.pickup === 0 && m.more.view === 0 && !m.more.sceneWins && !m.more.feetPresets,
+     "MAP: GUITAR TONE NATURAL, PICKUP SINGLE, PLAY VIEW CHAIN, SWITCH WINS, the footswitches on the scenes (the defaults)");
+  m = await ed.setPedalMap(m.each, m.entries, m.inputDb, m.tails, m.btPower, m.outMode, { send: 1, ret: 0, cut: false },
+    { tone: 8, pickup: 1, view: 2, sceneWins: true, feetPresets: true });
+  ok(m.rc === 0 && m.more.tone === 8 && m.more.pickup === 1 && m.more.view === 2 && m.more.sceneWins && m.more.feetPresets && m.usb.send === 1,
+     "MAP: GUITAR TONE BRIGHT, PICKUP HUMBUCK, PLAY VIEW SCENES, SCENE WINS, the footswitches on the presets (and the routing)");
+  m = await ed.setPedalMap(m.each, m.entries, m.inputDb, m.tails, m.btPower, m.outMode, m.usb);
+  ok(m.rc === 0 && m.more.tone === 8 && m.more.pickup === 1 && m.more.view === 2 && m.more.feetPresets, "MAP: an editor that sends no settings bytes leaves them as they are");
+  {
+    const raw = [1, m.each ? 1 : 0, m.inputDb + 10, (m.tails ? 1 : 0) | m.btPower << 1 | m.outMode << 3,
+      ...m.entries.flatMap((e) => (e ? [1, e.src, e.dst, e.mode] : [0, 0, 0, 0])), m.usb.send | (m.usb.cut ? 4 : 0) | m.usb.ret << 3];
+    const r1 = ed._map(await ed.request(30, [...raw, 9, 2], 4000)), r2 = ed._map(await ed.request(30, [...raw, 3 << 4, 2], 4000));
+    const r3 = ed._map(await ed.request(30, [...raw, 8, 3], 4000)), r4 = ed._map(await ed.request(30, [...raw, 8, 16], 4000));
+    ok(r1.rc === 1 && r2.rc === 1 && r3.rc === 1 && r4.rc === 1 && r4.more.tone === 8 && r4.more.view === 2,
+       "MAP: a GUITAR TONE, PICKUP or PLAY VIEW no build writes is refused, the ones set kept");
+  }
+  // PL: a preset's own controls
+  const slot = (await ed.state()).slot, other = (slot + 7) % 52;
+  let pl = await ed.presetMap(slot);
+  ok(pl.rc === 0 && pl.slot === slot && pl.used === 0 && pl.places === PRESET_MAP_N && !pl.entries.length, "PL: none in this preset, 64 places for all the presets");
+  pl = await ed.presetPut(slot, { ...presetEntry(30, { kind: "param", b: eq, k: 0 }, MAP_PRESS), lo: 20, hi: 80 });
+  ok(pl.rc === 0 && pl.used === 1 && pl.entries.length === 1 && pl.entries[0].src === 30 && pl.entries[0].dst === ccParam(eq, 0) &&
+     pl.entries[0].mode === MAP_VALUE && pl.entries[0].lo === 20 && pl.entries[0].hi === 80 && pl.entries[0].clo === 0 && pl.entries[0].chi === 127,
+     "PL: CC 30 learned as a pedal on the EQ's first setting, in this preset, 20 at the heel and 80 at the toe");
+  const at = async (v) => { s.cc(30, v); await sleep(100); return (await ed.state()).preset.p[eq][0]; };
+  const heel = await at(0), toe = await at(127), mid = await at(64);
+  ok(heel === 20 && toe === 80 && mid >= 49 && mid <= 51, `CC 30 drives it between the heel's and the toe's values (${heel}, ${mid}, ${toe})`);
+  pl = await ed.presetPut(slot, presetEntry(31, { kind: "on", b: dly }, MAP_PRESS));
+  pl = await ed.presetPut(slot, presetEntry(32, { kind: "scene", n: 2 }, MAP_PRESS));
+  ok(pl.rc === 0 && pl.entries.length === 3 && pl.used === 3 && pl.entries.some((e) => e.src === 32 && e.dst === CC_SCENE0 + 2),
+     "PL: CC 31 on the delay's ON, CC 32 on scene 3");
+  const was = (await ed.state()).preset.on[dly];
+  s.cc(31, 127); await sleep(80); s.cc(31, 0); await sleep(80);
+  ok((await ed.state()).preset.on[dly] === 1 - was, "CC 31's press flips the delay, its release does nothing");
+  pl = await ed.presetPut(slot, presetEntry(33, { kind: "on", b: dly }, MAP_EACH));
+  ok(pl.rc === 0 && pl.entries.length === 3 && !pl.entries.some((e) => e.src === 31) && pl.entries.some((e) => e.src === 33 && e.mode === MAP_EACH),
+     "PL: another control on the same row takes its place (one control a row)");
+  pl = await ed.presetPut(slot, { ...presetEntry(33, { kind: "param", b: eq, k: 0 }, MAP_PRESS), lo: 100, hi: 0 });
+  ok(pl.rc === 0 && pl.entries.length === 2 && pl.entries.find((e) => e.src === 33).dst === ccParam(eq, 0) && !pl.entries.some((e) => e.src === 30),
+     "PL: a control moved to another row leaves its old one, and that row's control goes (one row a control)");
+  const bad1 = await ed.presetPut(slot, { src: 40, dst: 3, mode: 0, lo: 0, hi: 100, clo: 0, chi: 127 });
+  const bad2 = await ed.presetPut(slot, { src: 40, dst: ccParam(eq, 1), mode: MAP_VALUE, lo: 0, hi: 101, clo: 0, chi: 127 });
+  ok(bad1.rc === 1 && bad2.rc === 1 && bad2.entries.length === 2, "PL: a number the pedal does not read, or a value out of range, is refused (the preset's kept)");
+  pl = await ed.presetForget(slot, 33);
+  ok(pl.rc === 0 && pl.entries.length === 1 && pl.used === 1 && pl.entries[0].src === 32, "PL: CC 33 forgotten");
+  {   // the 64 places, all the presets together
+    const room = (slot + 20) % 52, rows = [];
+    for (let b = 0; b < 12; b++) for (let k = 0; k < 5; k++) rows.push(ccParam(b, k));
+    for (let b = 0; b < 12; b++) rows.push(8 + b);
+    let r = null;
+    for (let i = 0; i < PRESET_MAP_N - 1; i++) r = await ed.presetPut(room, { src: 60 + i, dst: rows[i], mode: rows[i] < 20 ? MAP_PRESS : MAP_VALUE, lo: 0, hi: 100, clo: 0, chi: 127 });
+    const full = await ed.presetPut(room, { src: 124, dst: rows[PRESET_MAP_N], mode: MAP_PRESS, lo: 0, hi: 100, clo: 0, chi: 127 });
+    ok(r.rc === 0 && r.used === PRESET_MAP_N && full.rc === 3 && full.used === PRESET_MAP_N, "PL: 64 places for all the presets, the 65th refused (rc 3)");
+    for (let i = 0; i < PRESET_MAP_N - 1; i++) r = await ed.presetForget(room, 60 + i);
+    ok(r.rc === 0 && r.used === 1 && !r.entries.length, "PL: forgotten again, one by one");
+  }
+  // SCENE
+  const onNow = async () => (await ed.state()).preset.on;
+  const maskNow = async () => (await onNow()).reduce((a, v, b) => a | (v ? 1 << b : 0), 0);
+  let sc = await ed.scenes();
+  ok(sc.rc === 0 && sc.cur === 0 && sc.set === 0 && sc.saved.set === 0, "SCENE: none stored, scene 1 playing");
+  const m0 = await maskNow();
+  sc = await ed.sceneSet(2, 1 << dly);
+  ok(sc.rc === 0 && sc.set === 4 && sc.masks[2] === 1 << dly && sc.cur === 0 && await maskNow() === m0, "SCENE: scene 3 set to the delay alone and stored; scene 1 plays on");
+  sc = await ed.sceneRecall(2);
+  ok(sc.rc === 0 && sc.cur === 2 && (sc.set & 5) === 5 && sc.masks[0] === m0 && await maskNow() === 1 << dly,
+     "SCENE: scene 3 recalled, the delay alone on (SCENE WINS); scene 1 kept as it played");
+  ok((await ed.state()).dirty, "SCENE: scenes not saved yet: the preset differs from its saved one");
+  let pushes = 0;
+  ok(await ed.watch(true) > 0, "WATCH: on");
+  ed.onState = () => pushes++;
+  s.cc(CC_SCENE0, 127); await sleep(150);
+  sc = await ed.scenes();
+  ok(sc.cur === 0 && await maskNow() === m0 && pushes > 0, "CC 65 from a controller recalls scene 1, the blocks as they played; the change pushed");
+  s.cc(32, 127); await sleep(80); s.cc(32, 0); await sleep(80);
+  sc = await ed.scenes();
+  ok(sc.cur === 2 && await maskNow() === 1 << dly, "the preset's own CC 32 recalls scene 3");
+  ed.onState = null;
+  ok(await ed.save(slot) === 0, "SAVE: the preset with its scenes");
+  sc = await ed.sceneRecall(0);
+  ok(sc.saved.set === sc.set && sc.saved.masks[2] === 1 << dly && sc.cur === 0 && !(await ed.state()).dirty, "SCENE: saved with the sound; recalling one is no change");
+  sc = await ed.sceneSet(1, 0);
+  ok(sc.rc === 0 && (sc.set & 2) && sc.masks[1] === 0 && (await ed.state()).dirty, "SCENE: scene 2 set to no block: a change until SAVE");
+  sc = await ed.sceneForget(1);
+  ok(sc.rc === 0 && !(sc.set & 2) && !(await ed.state()).dirty, "SCENE: scene 2 forgotten: as saved again");
+  const badSc = await ed.request(33, [2, 4, 0, 0]);
+  ok(badSc[0] === 1, "SCENE: a fifth scene is refused");
+  ok(await ed.save(other) === 0 && (await ed.state()).slot === other, "SAVE into another slot");
+  const pl2 = await ed.presetMap(other), sc2 = await ed.scenes();
+  ok(pl2.entries.length === 1 && pl2.entries[0].src === 32 && pl2.used === 2 && sc2.saved.set === sc.set && sc2.saved.masks[2] === 1 << dly,
+     "SAVE into another slot takes the preset's own controls and its scenes along");
+  await bleCheck(s);
+  await s.end();
+  // a power cycle: all of it read back from the flash
+  s = sim([flash2]);
+  await s.ready;
+  ed = new Editor(s.access);
+  await ed.connect();
+  m = await ed.pedalMap();
+  ok(m.more && m.more.tone === 8 && m.more.pickup === 1 && m.more.view === 2 && m.more.sceneWins && m.more.feetPresets,
+     "power cycle: GUITAR TONE, PICKUP, PLAY VIEW and the two scene rows are still there");
+  ok((await ed.state()).slot === other, "power cycle: the pedal starts on the slot saved last");
+  pl = await ed.presetMap(other);
+  sc = await ed.scenes();
+  ok(pl.entries.length === 1 && pl.entries[0].dst === CC_SCENE0 + 2 && pl.used === 2, "power cycle: the preset's own controls are still there");
+  ok(sc.set === sc2.saved.set && sc.masks[2] === 1 << dly && sc.cur === sc2.saved.cur, "power cycle: the preset opens with its scenes, in the scene it was saved in");
+  await bleCheck(s);
+  await s.end();
+}
 
 console.log(failed ? `\n${failed} FAILED` : "\nall editor tests passed");
 process.exit(failed ? 1 : 0);

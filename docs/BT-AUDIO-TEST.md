@@ -1348,6 +1348,221 @@ start-up screen reads `v42 BT AUDIO TEST 44`:
 make serve-bt
 ```
 
+## Test build 45: MONO SYNTH through hum, TAPE FLUTE on the note, WHAMMY one way, a WAH on the pedal
+
+Build 44 with a player's second round ([OWN-FX.md](OWN-FX.md), "Test build 45"):
+
+- **MONO SYNTH**: it tracked the clean loops, not a guitar. Hum lifted every dip of the tracker's difference function over its
+  fixed threshold, so it heard no note and the last one went on; and with hum or noise above its gate's level the gate never
+  shut, so the synth droned the last note at 60 % through every pause. Now the period is the first dip near the deepest, a
+  note that stops being heard lets go after 93 ms, and the gate opens at a third of the level it took (a single coil with its
+  volume down opened it for 4 notes in 10). On the lead loop with a hum 15 dB under the playing: 557 notes right of 598 (497),
+  2 blips (19), no drone in its pauses (all of them). The riff's high C6s are C6s again: build 44 held them an octave down
+  for 46 ms.
+- **TAPE FLUTE**: the nearest semitone (A 440), played straight: no more gliding into the note. It holds while the guitar stays
+  within 60 cents of it, and moves on a new note heard clearly three times in a row (13 ms).
+- **WHAMMY**: SHIFT is four intervals, `-2 OCT`, `-1 OCT`, `+1 OCT`, `+2 OCT`, and the expression pedal (CC 117) goes from the
+  note at the heel to the interval at the toe (it was -24 to +24 semitones in steps of 0.48, the screen rounding: its "0"
+  could be 48 cents sharp). At the heel the note itself (the shifter's copy, up to 32 ms late, made a comb with MIX under
+  100). The pedal's ends are 4 values wide, so a pedal that never sends 0 or 127 still reaches them. A new knob, **PEDAL**, is
+  the position without an expression pedal (0 the note, 100 the interval), and the one to learn a pedal onto in the editor.
+  A saved SHIFT keeps its meaning: +12 is `+1 OCT`, +24 `+2 OCT`.
+- **WAH** (new, the last SFX model): a wah pedal on the expression pedal: the heel 372 Hz, the toe 2.33 kHz, on a wah's
+  taper; **PEDAL** (its position without a pedal), **Q** (2 to 10), **RANGE** (the heel, 280 to 490 Hz), **LEVEL** (+-12 dB).
+  At noon as loud as the amp alone.
+
+The web editor reads the catalogue again (its version text is now `v42 FX4`). MONO's and TAPE FLUTE's note choice runs from
+the flash; the room left is test build 46's, below.
+
+### What to check
+
+1. MONO SYNTH: single notes all over the neck, with the guitar's volume down too; let a note ring out: the synth stops with it.
+2. TAPE FLUTE on a melody: each note on its pitch from the start.
+3. WHAMMY with the expression pedal: heel the dry note, toe exactly the interval; try the four SHIFTs.
+4. WAH with the expression pedal: heel to toe; Q and RANGE to taste.
+5. The organs: if ORGAN or CHURCH crackles with other blocks on, run this with the pedal on the computer's USB (it plays every
+   saved preset for about 8 seconds, turn the volume down, then goes back to the preset it had), and say which presets
+   crackle:
+
+   ```bash
+   node tools/op.mjs dsp
+   ```
+
+Install it from this branch's folder (Chrome or Edge, the computer's USB cable in the pedal), then **Connect**, **Install**; the
+start-up screen reads `v42 BT AUDIO TEST 45`:
+
+```bash
+make serve-bt
+```
+
+## Test build 46: controls learned live on the pedal, each a preset's own
+
+Build 45 with a player's request: teach a controller's switch or pedal to the pedal without the editor, and keep it per preset
+([MIDI.md](MIDI.md), "Learned live, one preset's own"):
+
+- On a block page, select **ON** or a setting, **hold FX**, then press the controller's switch or move its pedal. The footer
+  says `LEARN: SWITCH OR PEDAL`, then `LEARNED: CC 30`; it is written at once.
+- On ON a switch flips the block (a momentary switch or one that sends a message a press, told apart by itself), a pedal
+  switches it; on a setting the pedal moves the value.
+- It works only in the preset where it was learned, and goes along when the sound is saved into another slot.
+- A learned setting shows its number after its name (`GAIN CC4`); hold FX on it again to forget it. Hold FX on MODEL: the
+  preset's MIDI table, every control it has (KNOB picks one, hold FX forgets it, HOME back), the editor's in grey.
+- Hold FX on PLAY still opens SETTINGS (from a block page it is now the learn: HOME first).
+- **IN-Z** and **PICKUP** (SETTINGS, after INPUT), for every preset: the guitar's pickup as a lower input impedance would load
+  it, as Helix's input impedance does. The pedal's own input stays what it is (about 1 MOhm); a filter does what the load
+  would: IN-Z 1M (nothing done), 230K, 136K, 90K, 70K (the pickup's resonant peak down 6 to 14 dB), 32K, 22K, 10K (the top
+  going too); PICKUP, the pickup the filter assumes (SINGLE, HUMBUCK, P90: their resonances 3.9, 2.7 and 2.4 kHz). The lows keep
+  their level: it changes the tone, not the volume. Within 0.4 dB of the loaded pickup's response up to 5 kHz.
+
+Room: the image is 638,272 bytes (6.5 KB of the slot left), the RAM code window has 504 bytes free (IN-Z's filter is a few
+instructions in the audio interrupt; the learn and its table run from the flash with the rest of the screen and MIDI code), the
+RAM 2,336, the pool 852.
+
+### What to check
+
+1. On a preset, learn a Chocolate switch on the DELAY's ON, and the expression pedal on the DELAY's MIX (or the AMP's GAIN).
+   Play: the switch flips the delay, the pedal moves the value, in that preset only.
+2. In another preset the same switch and pedal do what they did before (the expression pedal: volume, WHAMMY or WAH).
+3. Switch the pedal off and on: the learned controls are still there. Save the sound into another slot: they go with it.
+4. Hold FX on MODEL: the table lists them; forget one there, and learn another one on a row.
+5. SETTINGS, IN-Z: from 1M down to 10K with your guitar, PICKUP on what it has.
+
+Install it from this branch's folder (Chrome or Edge, the computer's USB cable in the pedal), then **Connect**, **Install**; the
+start-up screen reads `v42 BT AUDIO TEST 46`:
+
+```bash
+make serve-bt
+```
+
+## Test build 47: a learned pedal's heel and toe, PLAY VIEW, GUITAR TONE by its sound, 12-STRING steady
+
+Build 46 with a player's round on it ([MIDI.md](MIDI.md), "Learned live, one preset's own" and "PLAY VIEW"):
+
+- **IN-Z and PICKUP showed nothing as the knob turned** (the sound changed; the page drew the value only when another row was
+  selected). Fixed: the value is drawn at once.
+- **GUITAR TONE** (was IN-Z): named by what it does to the sound, from the brightest: **BRIGHT** (new: as a buffer right at the
+  guitar, the cable's capacitance mostly gone, the pickup's peak higher and stronger), **NATURAL** (the input as it is, as IN-Z
+  1M), **SMOOTH**, **WARM**, **WARMER** (the pickup's resonant peak tamed: 230K, 136K, 90K), **PUNCHY** (the peak gone, the mids
+  forward: 70K), **DARK**, **DARKER** (the top going: 32K, 22K), **MUDDY** (10K). A saved IN-Z keeps its sound under its new
+  name.
+- **SETTINGS with the footswitches**: the right one goes down a row, the left one up (round), as well as PUSH.
+- **A learned pedal's heel and toe**: after a pedal (or a switch) is learned on a setting, the footer asks
+  `HEEL: KNOB, PUSH`, then `TOE: KNOB, PUSH`: turn the knob to the value you want there (you hear it), PUSH. The toe starts from
+  the preset's own value, so PUSH alone keeps it. The preset keeps its own value until the pedal moves (46 jumped the setting
+  to wherever the pedal was, and its range was the whole knob: a preset volume learned there went from -15 to +15 dB). Any
+  other button instead of PUSH: the whole range, as 46. A switch on a setting asks `OFF` and `ON`. The preset's MIDI table
+  (hold FX on MODEL) shows the selected one's range in the setting's units (`RANGE -1 TO +2`).
+- **PLAY VIEW** (SETTINGS, after SWITCH): **SWITCHES** shows on PLAY, in place of the chain, the blocks the preset's controller
+  switches turn on and off, big: the block, the controller's number, the model, in the block's colour when on, grey when
+  off; the preset's own learned switches, then the editor's for every preset, in the controllers' order, 6 at most. A preset
+  with none shows the chain. Turning the knob shows the chain for 5 s. **CHAIN** (the default): PLAY as always.
+- **12-STRING steady** ([OWN-FX.md](OWN-FX.md), "Test build 47"): DETUNE is 0 to 3 cents (was 15) and the swept unison copy is
+  gone: at noon on held notes the level moves a quarter as fast as in 46; at 0 nothing moves but the guitar. The web editor
+  reads the catalogue again (`v42 FX5`).
+
+Room: the image is 640,196 bytes (4.6 KB of the slot left), the RAM code window has 744 bytes free (240 more: 12-STRING's
+unison copy is gone from the audio code; the heel and toe, PLAY VIEW and GUITAR TONE's names run from the flash with the rest
+of the screen and MIDI code), the RAM 2,048, the pool 852. The release image is v42's, byte for byte.
+
+### What to check
+
+1. SETTINGS (hold FX on PLAY): GUITAR TONE from BRIGHT to MUDDY with your guitar, the name changing as you turn; PICKUP. Walk
+   the rows with the footswitches.
+2. On a preset, learn the expression pedal on a setting (the GT page's PRESET LVL, or the DELAY's MIX): set the heel and the
+   toe with the knob and PUSH. Move the pedal: the setting goes from the one to the other. Change preset and come back: the
+   preset starts at its own value until the pedal moves.
+3. Learn two or three Chocolate switches on blocks' ON rows, then SETTINGS, PLAY VIEW: SWITCHES. On PLAY, press them: the
+   tiles light up and go grey.
+4. 12-STRING on its own, DETUNE at noon and at 0, against build 46 (renders: `renders47.zip` beside this build's draft
+   release).
+
+Install it from this branch's folder (Chrome or Edge, the computer's USB cable in the pedal), then **Connect**, **Install**; the
+start-up screen reads `v42 BT AUDIO TEST 47`:
+
+```bash
+make serve-bt
+```
+
+## Test build 48: the guided learn, PRESET LVL down to silence
+
+Build 47 with a player's report on it: learning the expression pedal on the GT page's PRESET LVL, the heel set to -15 and
+confirmed, the pedal then went from -15 to +15. On the simulated pedal the same steps with PUSH (pressing the knob) at the
+heel and the toe kept the range; the confirm had been another button, and in 47 any control but PUSH ended the heel and toe
+with the whole range, saying `LEARNED` all the same.
+
+- **The guided learn** ([MIDI.md](MIDI.md), "Learned live, one preset's own"): hold FX on ON or a setting opens a page of its
+  own, a step at a time, the one to do lit, what to do in big letters, the controls in the footer:
+  1. **PEDAL OR SWITCH**: the knob chooses, PUSH;
+  2. **MOVE THE PEDAL** / **PRESS THE SWITCH**: it waits as long as it takes;
+  3. **PEDAL AT THE HEEL** (a switch: **SWITCH OFF**): the pedal at its heel, the knob to the value there (heard), PUSH;
+  4. **PEDAL AT THE TOE** (**SWITCH ON**): the pedal at its toe, the knob (from the preset's own value), PUSH: learned.
+
+  HOME at any step: cancelled, nothing changed. Nothing else does anything on the page. Where the pedal is at the heel and at
+  the toe is taken too: a pedal that never sends 0 or 127 still gives both values exactly.
+- **PRESET LVL down to `-INF`** ([OWN-FX.md](OWN-FX.md), "Test build 48"): 0 is silence, 1 to 19 fall 2 dB a step from -9 dB
+  (a pedal fades out smoothly), 20 and up as before. It is the preset's level at the chain's end: at `-INF` the delay's and
+  the reverb's tails go too (CC 117's own volume, before the delay, lets them ring).
+- The web editor reads the catalogue again (`v42 FX6`).
+
+Room: the image is 642,308 bytes (2.6 KB of the slot left: the flash is now the tight one), the RAM code window has 744 bytes
+free (the page runs from the flash with the rest of the screen), the RAM 1,760 (the entries' two more bytes and the record's
+buffer: 256), the pool 852. The release image is v42's, byte for byte.
+
+### What to check
+
+1. On a preset, the GT page, PRESET LVL, hold FX. PEDAL, PUSH; move the expression pedal; with the pedal at its heel turn the
+   knob down to `-INF`, PUSH; with the pedal at its toe, PUSH (the preset's level) or turn up to `+4.2 DB`, PUSH. Move the
+   pedal: from silence to the level. Change preset and come back: the preset starts at its own level until the pedal moves.
+2. Learn a Chocolate switch on a block's ON row: SWITCH, PUSH, press it.
+3. HOME in the middle of a learn: nothing learned, the setting as it was.
+
+Install it from this branch's folder (Chrome or Edge, the computer's USB cable in the pedal), then **Connect**, **Install**; the
+start-up screen reads `v42 BT AUDIO TEST 48`:
+
+```bash
+make serve-bt
+```
+
+## Test build 49: scenes, PLAY's three views on CAB held
+
+Build 48 with Helix-style scenes, for the blocks' on and off ([MIDI.md](MIDI.md), "Scenes"):
+
+- **Scenes**: four a preset, each a set of blocks on and off. Recalled by CC 65 to 68 (any value), by a Chocolate switch
+  learned on one in the preset, by the footswitches in SCENES' view, or there by the knob and PUSH. The scene playing keeps
+  what is switched while it plays; SAVE writes the preset with its scenes, and the preset opens in the scene it was saved in.
+  A recall is no edit; `SCENE 2` shows on PLAY where `EDITED` goes.
+- **Hold CAB** (a short press still opens CAB) turns PLAY's view round: CHAIN, SWITCHES (each controller switch in this preset:
+  a block or a scene, lit when on or playing), SCENES (the four; the knob picks one, PUSH recalls it, hold FX learns or clears
+  its switch, the footswitches step through them).
+- SETTINGS: **SCENE+SWITCH** (SWITCH WINS: a block with its own switch is left to it; SCENE WINS: the scenes set it too) and
+  **SCENE FOOTSW** (SCENES, or PRESETS: the footswitches stay on the presets in SCENES' view). PLAY VIEW has the three.
+- The screen draws lowercase letters as capitals (`4X12 GREEN`): the fonts without them leave 11 KB of flash for this and what
+  comes next. The release's screen is as it was.
+- The web editor, editor protocol 6: its MIDI section has GUITAR TONE, PICKUP, PLAY VIEW, SCENE+SWITCH and SCENE FOOTSW, the
+  preset's own learned controls with their heel and toe, a control learned for this preset only (the footswitch's too), and
+  SCENE 1 to 4 among what a control can learn; its Sound view has the four scenes under the chain (a tap recalls one, a grid
+  sets their blocks). Its own copy of the preset, for EDITED, is gone: the pedal's is used (128 bytes of RAM).
+
+Room: the image is 634,816 bytes (10.1 KB of the slot left, from 2.6: the fonts gave 11 KB, the scenes took about 3, the
+editor's protocol 6 0.7), the RAM code window has 744 bytes free, the RAM 1,280 (the presets' scenes: 520), the pool 852. The
+release image is v42's, byte for byte.
+
+### What to check
+
+1. On a preset, hold CAB twice: SCENES. Turn the knob to SCENE 2, PUSH: switch some blocks on and off (their buttons, or the
+   Chocolate's switches). SCENE 1 with the left footswitch, SCENE 2 with the right: each as you left it. Hold PUSH, SAVE.
+2. Hold FX on SCENE 1's tile, press a Chocolate switch; the same on SCENE 2 with another switch. Learn a third switch on a
+   block's ON row (DLY). Hold CAB to SWITCHES: the three tiles, in the switches' order. Press them.
+3. SETTINGS, SCENE+SWITCH on SCENE WINS: the scenes now set DLY too.
+4. Change preset and come back: it opens in the scene it was saved in.
+
+Install it from this branch's folder (Chrome or Edge, the computer's USB cable in the pedal), then **Connect**, **Install**; the
+start-up screen reads `v42 BT AUDIO TEST 49`:
+
+```bash
+make serve-bt
+```
+
 ## Checked on a computer
 
 - `tests/test_bt_ring.c`: a phone at 44.1 kHz with 15 ms of jitter, the pedal at its real 44,117.6 Hz, 60 s: no underrun, the rate

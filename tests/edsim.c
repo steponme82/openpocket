@@ -122,7 +122,11 @@ static uint8_t px_flash_ok = 1;
 static px_preset_t PRESET;
 static uint32_t cur_preset;
 static void st_get(uint32_t k, px_preset_t *p);
+#if PX_OWN_FX
+static void load_preset(uint32_t i);                    /* (test build 49: and its scenes, once px_midi.h is in: below) */
+#else
 static void load_preset(uint32_t i) { st_get(i, &PRESET); }
+#endif
 static uint32_t master_vol = 80;
 static int bat_mv = 3920, bat_usb_mv = 0;
 static int32_t bat_raw[5] = {612, 1, 0, 3, 91};   /* bat_read's raw values (the tuner page shows them) */
@@ -134,12 +138,18 @@ static volatile uint8_t a_tmute;
 static float tuner_hz;
 #include "../firmware/px_midi.h"          /* (ui.h's MIDI page, #10) */
 #if PX_OWN_FX
+static void load_preset(uint32_t i) { st_get(i, &PRESET); PX_SC_LOAD(i); }
+#endif
+#if PX_OWN_FX
 static int a_in_gain_n;                                  /* test build 39: INPUT applied (px_audio.h's, counted here) */
 static void a_in_gain_apply(void) { a_in_gain_n++; }
 static int a_tails_n;                                    /* test build 40: TAILS to the engine (px_audio.h's, counted here) */
 static void a_tails_apply(void) { a_tails_n++; }
+static int a_inz_n;
+static void a_inz_apply(void) { a_inz_n++; }      /* (test build 46: IN-Z to the input, counted) */
 #endif
 static void midi_persist(void) { }
+static void learn_persist(void) { }                  /* (test build 46: ui.h's learn; the store is edsim's own) */
 static void b_num(char *d, uint32_t v) { char t[12]; int n = 0; while (*d) d++; do { t[n++] = (char)('0' + v % 10u); v /= 10u; } while (v); while (n) *d++ = t[--n]; *d = 0; }
 static void b_str(char *d, const char *s) { while (*d) d++; while (*s) *d++ = *s++; *d = 0; }
 #if PX_OWN_FX && OP_UAUDIO
@@ -333,7 +343,7 @@ static void json_list(const uint8_t *a, int n)
 }
 static void status(void)
 {
-    static const char *const MODE[] = {"chain", "block", "edit", "tuner", "save", "move", "midi", "list", "diag"};
+    static const char *const MODE[] = {"chain", "block", "edit", "tuner", "save", "move", "midi", "list", "diag", "learn", "guide"};
     frame_draw();
     printf("#status {\"slot\":%u,\"name\":", cur_preset);
     json_str(PRESET.name);
@@ -437,13 +447,16 @@ static void command(const char *l)
     else if (sscanf(l, "#cc %d %d", &v, &w) == 2 && v >= 0 && v < 128 && w >= 0 && w < 128) {
         /* test build 39: a Control Change from a controller (the footswitch linked over Bluetooth, or one on USB), as
          * px_midi_io.h's px_midi_in takes it: counted (MIDI_IN to a watching editor), read through the controls learned on the
-         * pedal, then the pedal's own map (118 / 119 step the preset; 64, 116, 117 are not simulated) */
+         * pedal, then the pedal's own map (118 / 119 step the preset; test build 49: 65 to 68 recall a scene; 64, 116, 117
+         * are not simulated) */
         uint32_t c = (uint32_t)v, x = (uint32_t)w, mv = master_vol;
         int mset = 0;
         mid_last[0] = PXM_CC; mid_last[1] = (uint8_t)v; mid_last[2] = (uint8_t)w;
         mid_in_n++;
-        if (px_midi_map_in(&c, &x)) {
+        if (px_learn_feed(c, x)) { }                   /* (test build 46: a learn on a block page takes it) */
+        else if (px_midi_map_in(&c, &x, cur_preset)) {
             if (c == PXM_CC_NEXT || c == PXM_CC_PREV) { if (x >= 64u) ui_preset_step(c == PXM_CC_NEXT ? 1 : -1); }
+            else if (c - PXM_CC_SCENE0 < PX_SC_N) ui_scene_recall(c - PXM_CC_SCENE0);
             else if (px_midi_cc_apply(&PRESET, c, x, &mv, &mset) == 0 && mset) master_vol = mv;
         }
         printf("#cc ok\n");

@@ -92,6 +92,17 @@ static inline float sin_hq(float ph)                   /* refined parabola (0.1 
 static inline float lfo_tri(float ph) { return 4.0f * px_abs(ph - 0.5f) - 1.0f; }
 static inline float f01(uint8_t v) { return (float)(v > 100 ? 100 : v) * 0.01f; }
 static inline float db2lin(float db) { return powf(10.0f, db / 20.0f); }
+#if PX_OWN_FX
+/* test build 48: PRESET LVL down to silence. 0 is none at all; 1 to 19 fall 2 dB a step from -9 dB (-47 dB at 1), so a pedal
+ * learned on it fades the sound out smoothly (patch_g glides); 20 and up as before, 0.3 dB a step (50 = 0 dB, 100 = +15) */
+static float patch_gain(int v)
+{
+    return v <= 0 ? 0.0f : powf(10.0f, (v < 20 ? -9.0f - (float)(20 - v) * 2.0f : ((float)v - 50.0f) * 0.3f) * 0.05f);
+}
+#define PATCH_G(v) patch_gain(v)
+#else
+#define PATCH_G(v) powf(10.0f, ((float)(v) - 50.0f) * 0.3f * 0.05f)
+#endif
 static inline float wrap1(float ph) { if (ph >= 1.0f) ph -= 1.0f; else if (ph < 0.0f) ph += 1.0f; return ph; }
 static float onepole_k(float sr, float sec) { return 1.0f - expf(-1.0f / (sec * sr)); }
 
@@ -377,14 +388,20 @@ static const tdef T_COMP[PX_CMP_COUNT] = {
 
 static const char *const PN_OCT[] = {"DRY", "SUB -1", "SUB -2", "UP +1", "TONE"};
 static const char *const PN_POLY[] = {"DRY", "OCT -1", "OCT +1"};
+#if PX_OWN_FX   /* test build 45: SHIFT the interval the pedal sweeps to, PEDAL the sweep without an expression pedal on CC 117 */
+static const char *const PN_WHAM[] = {"SHIFT", "MIX", "GLIDE", "PEDAL"};
+#define PX_WHAM_NP 4
+#else
 static const char *const PN_WHAM[] = {"SHIFT", "MIX", "GLIDE"};
+#define PX_WHAM_NP 3
+#endif
 static const char *const PN_HARM[] = {"INTERVAL", "MIX"};
 static const char *const PN_DET[] = {"CENTS", "MIX"};
 #if PX_OWN_FX
 static const char *const PN_LOWOCT[] = {"RANGE", "OCT -1", "DRY", "GROWL", "COMP"};
 #endif
 static const tdef T_PITCH[PX_PIT_COUNT] = {
-    {"OCTAVER", 5, PN_OCT}, {"POLY OCTAVE", 3, PN_POLY}, {"WHAMMY", 3, PN_WHAM}, {"HARMONIZER", 2, PN_HARM},
+    {"OCTAVER", 5, PN_OCT}, {"POLY OCTAVE", 3, PN_POLY}, {"WHAMMY", PX_WHAM_NP, PN_WHAM}, {"HARMONIZER", 2, PN_HARM},
 #if PX_OWN_FX
     {"DETUNE", 2, PN_DET}, {"LOW OCTAVE", 5, PN_LOWOCT}};
 #else
@@ -398,9 +415,16 @@ static const char *const PN_CRUSH[] = {"BITS", "SR DIV", "MIX"};
 static const char *const PN_SLICE[] = {"RATE", "DEPTH", "PATTERN"};
 static const char *const PN_LOFI[] = {"TONE", "DRIVE", "MIX"};
 static const char *const PN_SYN[] = {"SWEEP", "RESO", "SUB", "MIX"};
+#if PX_OWN_FX
+static const char *const PN_WAH[] = {"PEDAL", "Q", "RANGE", "LEVEL"};
+#endif
 static const tdef T_SFX[PX_SFX_COUNT] = {
     {"ENVELOPE WAH", 4, PN_AWAH}, {"AUTO WAH", 4, PN_LWAH}, {"RING MOD", 3, PN_RING}, {"BITCRUSHER", 3, PN_CRUSH},
+#if PX_OWN_FX
+    {"SLICER", 3, PN_SLICE}, {"LO-FI RADIO", 3, PN_LOFI}, {"SQUARE SYNTH", 4, PN_SYN}, {"WAH", 4, PN_WAH}};
+#else
     {"SLICER", 3, PN_SLICE}, {"LO-FI RADIO", 3, PN_LOFI}, {"SQUARE SYNTH", 4, PN_SYN}};
+#endif
 
 /* synth / instrument (v29): keyboard machines (polyphonic: octave shifters + key envelope), synths that follow
  * the note (mono: tracker + oscillator + ladder filter) or the waveform (PWM, bass: comparator / dividers), and
@@ -646,6 +670,17 @@ static const int8_t HARM_ST[10] = {-12, -7, -5, -4, -3, 3, 4, 5, 7, 12};
 static const char *const HARM_TXT[10] = {"-OCT", "-5TH", "-4TH", "-3RD", "-m3", "+m3", "+3RD", "+4TH", "+5TH", "+OCT"};
 static const char *const HEAD_TXT[7] = {"1", "2", "3", "1+2", "2+3", "1+3", "ALL"};
 static int harm_idx(int v) { int i = v * 10 / 101; return i < 0 ? 0 : (i > 9 ? 9 : i); }
+#if PX_OWN_FX
+static float wah_heel(float x) { return 280.0f * powf(2.0f, x * 0.8f); }   /* test build 45: WAH's RANGE, the heel's 280..490 Hz */
+#endif
+#if PX_OWN_FX
+/* test build 45: WHAMMY's SHIFT, the interval at the toe: it was -24 to +24 semitones in steps of 0.48, the screen rounding
+ * (49, 50 and 51 all read 0: two of them 48 cents off), and a pedal learned onto it swept the whole of it. Its zones keep a
+ * saved SHIFT's meaning (+12 was 75: +1 OCT; +24 was 100: +2 OCT) */
+static const int8_t WHAM_ST[4] = {-24, -12, 12, 24};
+static const char *const WHAM_TXT[4] = {"-2 OCT", "-1 OCT", "+1 OCT", "+2 OCT"};
+static int wham_idx(int v) { return v <= 12 ? 0 : v <= 49 ? 1 : v <= 87 ? 2 : 3; }
+#endif
 /* TIME (v35): 20..1000 ms in steps of 12.25 ms up to 80, then to 2 s in steps of 50 ms; REVERSE: 250..1000 ms */
 static float dly_ms(int t, int v)
 {
@@ -785,6 +820,16 @@ int px_param_text(int b, int t, int k, int v, char *buf)
     switch (b) {
     case PX_B_GATE:
         if (k == PX_PATCH_LEVEL) {                     /* "+1.5 DB": 0.3 dB a step */
+#if PX_OWN_FX
+            if (v == 0) { put_str(buf, "-INF"); return 1; }   /* (test build 48: silence, then 2 dB steps up to -9 dB) */
+            if (v < 20) {
+                int i = 0;
+                put_int(buf, -9 - (20 - v) * 2, 0);
+                while (buf[i]) i++;
+                buf[i++] = ' '; buf[i++] = 'D'; buf[i++] = 'B'; buf[i] = 0;
+                return 1;
+            }
+#endif
             int d = (v - 50) * 3, a = d < 0 ? -d : d, i = 0;
             buf[i++] = d < 0 ? '-' : '+';
             if (a >= 100) buf[i++] = (char)('0' + a / 100);
@@ -816,7 +861,11 @@ int px_param_text(int b, int t, int k, int v, char *buf)
         break;
     case PX_B_PITCH:
         if (t == PX_PIT_HARMONY && k == 0) { put_str(buf, HARM_TXT[harm_idx(v)]); return 1; }
+#if PX_OWN_FX
+        if (t == PX_PIT_WHAMMY && k == 0) { put_str(buf, WHAM_TXT[wham_idx(v)]); return 1; }
+#else
         if (t == PX_PIT_WHAMMY && k == 0) { float st = (x - 0.5f) * 48.0f; put_int(buf, (int)(st + (st >= 0 ? 0.5f : -0.5f)), 1); return 1; }
+#endif
         if (t == PX_PIT_DETUNE && k == 0) { put_int(buf, (int)(3.0f + x * 27.0f + 0.5f), 0); return 1; }
 #if PX_OWN_FX
         if (t == PX_PIT_LOWOCT && k == 0) { lo_note(buf, v); return 1; }
@@ -828,6 +877,11 @@ int px_param_text(int b, int t, int k, int v, char *buf)
         if (t == PX_SFX_CRUSH && k == 1) { put_int(buf, 1 + (int)(x * 39.0f + 0.5f), 0); return 1; }
         if (t == PX_SFX_RING && k == 0) { put_int(buf, (int)(20.0f * powf(100.0f, x) + 0.5f), 0); return 1; }
         if (t == PX_SFX_SLICER && k == 2) { buf[0] = 'P'; put_int(buf + 1, 1 + (int)(x * 7.99f), 0); return 1; }
+#if PX_OWN_FX   /* test build 45: WAH's Q, its heel (Hz), its LEVEL (dB) */
+        if (t == PX_SFX_WAH && k == 1) { put_int(buf, (int)(2.0f + x * 8.0f + 0.5f), 0); return 1; }
+        if (t == PX_SFX_WAH && k == 2) { put_int(buf, (int)(wah_heel(x) + 0.5f), 0); return 1; }
+        if (t == PX_SFX_WAH && k == 3) { float db = (x - 0.5f) * 24.0f; put_int(buf, (int)(db + (db >= 0 ? 0.5f : -0.5f)), 1); return 1; }
+#endif
         break;
 #if PX_OWN_FX
     case PX_B_DRIVE:
@@ -847,7 +901,18 @@ int px_param_text(int b, int t, int k, int v, char *buf)
         if ((t == PX_SYN_STRINGS || t == PX_SYN_CHOIR) && k == 0) { put_int(buf, (int)(syn_att_ms(x) + 0.5f), 0); return 1; }
         if ((t == PX_SYN_STRINGS || t == PX_SYN_CHOIR) && k == 1) { put_int(buf, (int)(syn_rel_ms(x) + 0.5f), 0); return 1; }
         if (t == PX_SYN_MONO && k == 1) { put_int(buf, syn_oct(v), 1); return 1; }
+#if PX_OWN_FX
+        if (t == PX_SYN_12STR && k == 1) {             /* (test build 47: 0.0 to 3.0 cents) */
+            const int c10 = (int)(x * 30.0f + 0.5f);
+            int i = 0;
+            put_int(buf, c10 / 10, 0);
+            while (buf[i]) i++;
+            buf[i] = '.'; buf[i + 1] = (char)('0' + c10 % 10); buf[i + 2] = 0;
+            return 1;
+        }
+#else
         if (t == PX_SYN_12STR && k == 1) { put_int(buf, (int)(x * 15.0f + 0.5f), 0); return 1; }
+#endif
         if (t == PX_SYN_SITAR && k == 0) { put_str(buf, NOTE_TXT[syn_key_idx(v)]); return 1; }
         if (t == PX_SYN_BARI && k == 0) { put_int(buf, syn_bari_st(v), 0); return 1; }
 #if PX_OWN_FX
@@ -1107,7 +1172,11 @@ static void rc_pitch(px_engine *e)
         e->ps_W[1] = 1000.0f; e->ps_inc[1] = -1.0f / 1000.0f; e->ps_lvl[1] = f01(q[2]);
         break;
     case PX_PIT_WHAMMY: {
+#if PX_OWN_FX   /* test build 45: from the note (PEDAL 0) to SHIFT's interval (PEDAL 100); an expression pedal takes over */
+        float st = (float)WHAM_ST[wham_idx(q[0])] * f01(q[3]), m = f01(q[1]);
+#else
         float st = (f01(q[0]) - 0.5f) * 48.0f, m = f01(q[1]);
+#endif
         e->ps_nv = 1; e->ps_dry = 1.0f - m; e->ps_lvl[0] = m;
         e->ps_W[0] = 1400.0f; e->ps_invW = 1.0f / 1400.0f;
         e->ps_rt = expf(st * 0.05776227f);             /* 2^(st/12) */
@@ -1202,6 +1271,17 @@ static void rc_sfx(px_engine *e)
         e->sfx_c = 1.0f + f01(q[1]) * 8.0f;
         e->sfx_mix = f01(q[2]);
         break;
+#if PX_OWN_FX
+    case PX_SFX_WAH:   /* test build 45: a wah pedal. The heel at RANGE's 280..490 Hz (369 at noon), the toe 2.65 octaves up
+                        * (2.3 kHz: a Cry Baby's), Q 2 to 10 (6 at noon) */
+        e->sfx_d = f01(q[0]);                          /* PEDAL: the position without an expression pedal */
+        e->sfx_qd = 1.0f / (2.0f + f01(q[1]) * 8.0f);
+        e->sfx_c = wah_heel(f01(q[2]));
+        e->sfx_inc = 2.65f;
+        /* LEVEL, and Q's own: a wider band let more through (Q 2 was 4.5 dB louder than 6, 10 1.1 dB quieter) */
+        e->sfx_mix = db2lin((f01(q[3]) - 0.5f) * 24.0f) * powf((2.0f + f01(q[1]) * 8.0f) * (1.0f / 6.0f), 0.45f);
+        break;
+#endif
     default:                                           /* square synth: square + sub through a swept low-pass */
         bq_lowpass(&e->sfx_f1, sr, 700.0f, 0.7f);
         e->sfx_c = f01(q[0]);
@@ -2161,6 +2241,20 @@ static float px_sit_mu[6];                             /* each tarab string's le
 static int px_mt_dw, px_mt_cn;                         /* test build 44, MONO's tracker (mono_est): the decimated ring's next
                                                         * place; a new note heard once (1) */
 static float px_mt_cf;                                 /* (and its frequency) */
+static int px_mt_un;                                   /* (test build 45: estimates in a row that heard no note) */
+static float px_wh_u;                                  /* (test build 45: WHAMMY's shifter against the note, 0 at unison) */
+static int px_flu_n = -1000, px_flu_c;                /* (test build 45: TAPE FLUTE's note, semitones from A 440, -1000 none;
+                                                        * a new one heard once) */
+/* MONO's and TAPE FLUTE's tracker's input (mono_yin): the fundamentals up to 1.4 kHz, a tilt towards them. Test build 45: the
+ * gate opens at a third of the level it took (a single coil with its volume down opened it for 4 notes in 10), the tracker
+ * telling the note's end (mono_est) */
+static void mt_filters(px_engine *e, float sr)
+{
+    bq_lowpass(&e->syn_f[0], sr, 1400.0f, 0.54f); bq_lowpass(&e->syn_f[1], sr, 1400.0f, 1.31f);
+    bq_highpass(&e->syn_f[2], sr, 60.0f, 0.7f);        /* (a steeper one, 70 Hz 24 dB: the low E's octave errors) */
+    e->syn_lpk = opk(sr, 300.0f);
+    e->syn_thr = 0.001f;
+}
 #endif
 static void rc_syn(px_engine *e)
 {
@@ -2177,7 +2271,7 @@ static void rc_syn(px_engine *e)
         memset(e->syn_buf, 0, sizeof e->syn_buf); memset(e->syn_cb, 0, sizeof e->syn_cb);
         e->syn_f0 = 0.0f; e->syn_per = 0.0f; e->syn_p1 = e->syn_p2 = 0.0f;
 #if PX_OWN_FX
-        e->syn_w = 0; e->syn_lp = 0.0f; px_mt_dw = 0; px_mt_cn = 0;   /* (test build 44: MONO's tracker from silence) */
+        e->syn_w = 0; e->syn_lp = 0.0f; px_mt_dw = 0; px_mt_cn = 0; px_mt_un = 0; px_flu_n = -1000;   /* (test build 44: MONO's tracker from silence) */
         e->pad_capr = -1; e->pad_act = -1; e->pad_k = 0; e->pad_y0 = e->pad_y1 = 0.0f; e->pad_attp = 0;
         e->pad_env = e->pad_slow = 0.0f;
         for (int r = 0; r < 3; r++) { e->pad_g[r] = e->pad_gt[r] = 0.0f; for (int g = 0; g < PX_PAD_NG; g++) e->pad_gt0[r][g] = (float)g / (float)PX_PAD_NG; }
@@ -2245,9 +2339,7 @@ static void rc_syn(px_engine *e)
          * flute's tone (its fundamental, a little of the 2nd and 3rd) at the note's pitch, the breath (noise about 2.6 kHz,
          * more at the start: the chiff), the tape's wow (0.55 Hz) and flutter (7.3 Hz, WOW), its soft saturation and top
          * (TONE); it swells in over ATTACK when the note is heard, and lets go in 90 ms */
-        bq_lowpass(&e->syn_f[0], sr, 1400.0f, 0.54f); bq_lowpass(&e->syn_f[1], sr, 1400.0f, 1.31f);
-        bq_highpass(&e->syn_f[2], sr, 60.0f, 0.7f);
-        e->syn_lpk = opk(sr, 300.0f);
+        mt_filters(e, sr);
         bq_bandpass(&e->syn_f[3], sr, 2600.0f, 0.9f);
         bq_lowpass(&e->syn_f[4], sr, 2500.0f + d * 6000.0f, 0.7f);
         bq_highpass(&e->syn_f[5], sr, 120.0f, 0.7f);
@@ -2284,9 +2376,7 @@ static void rc_syn(px_engine *e)
     } break;
     case PX_SYN_MONO:                                  /* one note: tracker -> oscillator -> 24 dB ladder */
 #if PX_OWN_FX   /* test build 44: the tracker's input for YIN (mono_yin): the fundamentals up to 1.4 kHz, a tilt towards them */
-        bq_lowpass(&e->syn_f[0], sr, 1400.0f, 0.54f); bq_lowpass(&e->syn_f[1], sr, 1400.0f, 1.31f);
-        bq_highpass(&e->syn_f[2], sr, 60.0f, 0.7f);
-        e->syn_lpk = opk(sr, 300.0f);
+        mt_filters(e, sr);
 #else
         bq_lowpass(&e->syn_f[0], sr, 110.0f, 0.54f); bq_lowpass(&e->syn_f[1], sr, 110.0f, 1.31f);
         bq_highpass(&e->syn_f[2], sr, 50.0f, 0.7f);   /* no DC / rumble in the tracker */
@@ -2313,11 +2403,21 @@ static void rc_syn(px_engine *e)
         e->syn_dry = f; e->syn_out = 0.22f;
         break;
     case PX_SYN_12STR: {                               /* octave strings (+12, detuned, thin) + unison doubling */
+#if PX_OWN_FX
+        /* test build 47: it moved a lot alone. Its octave is in tune (half a cent); the motion was DETUNE's 15 cents (the octave
+         * beating against the note's own 2nd harmonic, 3 times a second at E4) and the unison copy's sweep. DETUNE is 0 to 3
+         * cents (0: still; at 3 the beat takes a second at E4, three at the low E) and the unison copy is gone: on held notes
+         * its level swings 0.4 dB on average at DETUNE 0 (2.1 dB at the old noon) */
+        syn_voice(e, 0, 12.0f + b * 0.03f, 1000.0f, a * 0.85f);
+        e->syn_hpk = opk(sr, 150.0f + c * c * 1500.0f);
+        e->syn_dry = 1.0f; e->syn_out = 0.0f;
+#else
         float cents = b * 15.0f;
         syn_voice(e, 0, 12.0f + cents * 0.01f, 1000.0f, a * 0.85f);
         e->syn_hpk = opk(sr, 150.0f + c * c * 1500.0f);
         e->syn_cdep[0] = 0.0004f * sr * b; e->syn_linc[0] = 0.35f / sr; e->syn_cbase = 0.006f * sr;
         e->syn_dry = 1.0f; e->syn_out = 0.35f * b;     /* unison copy level */
+#endif
     } break;
     case PX_SYN_ACOUSTIC: {                            /* magnetic pickup -> flat-top: body, top, sparkle, air */
         float fb = 135.0f - a * 45.0f;                 /* body size: parlour .. jumbo */
@@ -2432,7 +2532,7 @@ static void px_recalc(px_engine *e)
     for (int b = 0; b < PX_NBLK; b++)
         e->btr[b] = DB[b] ? powf(10.0f, DB[b][p->type[b] % NT[b]] * 0.05f) : 1.0f;
     /* preset LEVEL (v36): -15..+15 dB, 0.3 dB a step, kept in the gate block's spare 5th setting */
-    e->patch_g = powf(10.0f, ((float)p->p[PX_B_GATE][PX_PATCH_LEVEL] - 50.0f) * 0.3f * 0.05f);
+    e->patch_g = PATCH_G(p->p[PX_B_GATE][PX_PATCH_LEVEL]);
 }
 
 #if PX_OWN_FX
@@ -2697,7 +2797,7 @@ void px_engine_knobs(px_engine *e, const px_preset_t *p)
         }
     }
     px_may_load = 1;
-    e->patch_g = powf(10.0f, ((float)p->p[PX_B_GATE][PX_PATCH_LEVEL] - 50.0f) * 0.3f * 0.05f);
+    e->patch_g = PATCH_G(p->p[PX_B_GATE][PX_PATCH_LEVEL]);
     int any = 0;
     for (int i = 0; i < GL_N; i++) {                   /* from where they were (mid-glide too) to the new values */
         float *v = GLP(e, i);
@@ -3401,16 +3501,23 @@ static inline int syn_track(px_engine *e, float x)
  * of it 60 dB down, under the hum and the noise, and the median of three periods kept the note before for two periods. And
  * after a silence the gate opened at the last note's pitch until the tracker caught up: every phrase began with a wrong
  * note. Now YIN (de Cheveigne & Kawahara 2002) on the note, its fundamentals up to 1.4 kHz with a tilt towards them: every
- * 128 samples, its difference function over 8.7 ms at sr / 8 (MT_W8) for 60 Hz to 1.4 kHz, the first dip under 0.15 of
- * its cumulative mean (the highest period that repeats: no octave below), else the deepest under 0.35; then refined at the
- * full rate within +-10 samples (MT_WF, every 2nd sample) and between samples. A new note is taken when two estimates in a row
- * agree within 3 %, and played at once (the old one glided there, 12 ms a step: 40 ms of wrong notes); a note that moves less
- * (vibrato, a bend) is followed through the glide. After a silence the gate waits for the first
- * clear estimate (under 0.2): the first sound is the new note. In the flash: it runs once a block, about 8,000 multiply-adds
- * (tests/engine/synfix.c). syn_buf holds the full-rate ring (MT_RING) and the decimated one (MT_DR) */
+ * 128 samples, its difference function over 11.6 ms at sr / 8 (MT_W8) for 60 Hz to 1.4 kHz, normalised by its cumulative
+ * mean; then refined at the full rate within +-10 samples (MT_WF, every 2nd sample) and between samples. A new note is taken
+ * when two estimates in a row agree within 3 %, and played at once (the old one glided there, 12 ms a step: 40 ms of wrong
+ * notes); a note that moves less (vibrato, a bend) is followed through the glide. After a silence the gate waits for the
+ * first clear estimate: the first sound is the new note. In the flash: it runs once a block, about 9,000 multiply-adds
+ * (tests/engine/synfix.c). syn_buf holds the full-rate ring (MT_RING) and the decimated one (MT_DR).
+ * Test build 45, a guitar's hum and noise (build/shim's loops with hum 35 dB under the playing: 517 notes of 598 right, the
+ * last note droning on through every pause):
+ * - the period is the first dip within 0.15 of the deepest (YIN's own rule is a fixed 0.15 or 0.2: hum lifts every dip, and
+ *   the tracker heard nothing, so the last note went on). It also keeps a note whose 2nd harmonic leads at its pick: half
+ *   its period dips less deep. No more octave check, nor 46 ms before an octave: the riff's C6s are C6s (their C5 50 dB
+ *   down), and both played the wrong octave
+ * - 8 estimates in a row (93 ms) that hear no note let it go, and the gate waits for the next clear one (under 0.3): hum
+ *   and noise kept the gate open forever, and the synth played the last note on at 60 % */
 #define MT_RING 1024
 #define MT_DR 256
-#define MT_W8 48
+#define MT_W8 64
 #define MT_T8 92                                       /* 60 Hz at sr / 8 */
 #define MT_WF 256
 typedef char mt_fit_check[(MT_WF + 8 * MT_T8 + 12 < MT_RING && MT_W8 + MT_T8 + 2 < MT_DR && MT_RING + MT_DR <= PX_PS_N) ? 1 : -1];
@@ -3430,15 +3537,11 @@ static float mono_yin(px_engine *e, float *clear)      /* the note's frequency, 
         cum += s;
         d[t] = cum > 1e-20f ? s * (float)t / cum : 1.0f;
     }
-    int tau = -1;
-    for (int t = 4; t <= MT_T8; t++)
-        if (d[t] < 0.15f) { while (t < MT_T8 && d[t + 1] < d[t]) t++; tau = t; break; }
-    if (tau < 0) {
-        int tm = 4;
-        for (int t = 5; t <= MT_T8; t++) if (d[t] < d[tm]) tm = t;
-        if (d[tm] < 0.35f) tau = tm;
-    }
-    if (tau < 0) return 0.0f;
+    int tau = 4, tm = 4;
+    for (int t = 5; t <= MT_T8; t++) if (d[t] < d[tm]) tm = t;
+    if (d[tm] > 0.45f) return 0.0f;                    /* (no period at all: hum, noise, a chord) */
+    while (d[tau] >= d[tm] + 0.15f) tau++;             /* the first dip near the deepest, to its bottom (none past tm) */
+    while (tau < MT_T8 && d[tau + 1] < d[tau]) tau++;
     *clear = d[tau];
     float a = d[tau - 1], b = d[tau], c = d[tau + 1], den = a - 2.0f * b + c;
     const float t8 = (float)tau + (den > 1e-9f ? 0.5f * (a - c) / den : 0.0f);
@@ -3455,8 +3558,7 @@ static float mono_yin(px_engine *e, float *clear)      /* the note's frequency, 
     }
     if (bi <= 1 || bi >= hi - lo + 1) return e->sr / (t8 * 8.0f);   /* (its minimum at an end: the coarse one) */
     a = px_mt_df[bi - 1]; b = px_mt_df[bi]; c = px_mt_df[bi + 1]; den = a - 2.0f * b + c;
-    const float tp = (float)(lo - 1 + bi) + (den > 1e-12f ? 0.5f * (a - c) / den : 0.0f);
-    return e->sr / tp;
+    return e->sr / ((float)(lo - 1 + bi) + (den > 1e-12f ? 0.5f * (a - c) / den : 0.0f));
 }
 static __attribute__((noinline)) void mono_est(px_engine *e);
 PX_AINL static inline void mt_feed(px_engine *e, float x)   /* YIN's input, its two rings, an estimate every 128 samples */
@@ -3468,20 +3570,47 @@ PX_AINL static inline void mt_feed(px_engine *e, float x)   /* YIN's input, its 
     if (!(e->syn_w & 7)) { e->syn_buf[MT_RING + px_mt_dw] = e->syn_lp; px_mt_dw = (px_mt_dw + 1) & (MT_DR - 1); }
     if (!(e->syn_w & 127)) mono_est(e);
 }
+/* Test build 45: TAPE FLUTE's note on the nearest semitone (A 440), played straight: it followed the guitar, gliding, and a
+ * note picked a little sharp slid into place. It stays while the guitar is within 60 cents of it (vibrato, a guitar tuned
+ * off: one 55 cents flat flipped between two semitones with a window of 3 %), and moves when a note past that is heard
+ * clearly (under 0.15) three times in a row on the same semitone: a string still ringing under the new note blurs the period,
+ * and two estimates flipped it a semitone and back (the loops: 3 such blips on the lead instead of 15, 3 on the chugs
+ * instead of 73, none with hum or noise) */
+static void flu_note(px_engine *e, float f, float clear, int now)
+{
+    const float st = 17.312340f * logf(f * (1.0f / 440.0f));   /* (12 / ln 2) */
+    const int n = st >= 0.0f ? (int)(st + 0.5f) : -(int)(0.5f - st);   /* (the nearest: the pedal's libm has no floorf) */
+    if (!now) {
+        if (px_flu_n != -1000 && st < (float)px_flu_n + 0.6f && st > (float)px_flu_n - 0.6f) { px_mt_cn = 0; return; }
+        if (clear > 0.15f) { px_mt_cn = 0; return; }
+        if (!px_mt_cn || n != px_flu_c) { px_flu_c = n; px_mt_cn = 1; return; }
+        if (++px_mt_cn < 3) return;
+    }
+    px_flu_n = n; px_mt_cn = 0;
+    e->syn_f0 = e->syn_f0t = 440.0f * powf(2.0f, (float)n * (1.0f / 12.0f));
+}
 static __attribute__((noinline)) void mono_est(px_engine *e)   /* once a block (128 samples): the note to play */
 {
     float clear = 1.0f;
     const float f = mono_yin(e, &clear);
-    if (f < 55.0f || f > 1500.0f) return;              /* no note heard: the last one goes on */
-    if (e->syn_snap) {                                 /* after a silence: the first clear estimate, at once */
-        if (clear < 0.2f) { e->syn_f0 = e->syn_f0t = f; e->syn_snap = 0; px_mt_cn = 0; }
+    if (f < 55.0f || f > 1500.0f) {                    /* no note heard: the last one goes on, 93 ms at most */
+        if (++px_mt_un >= 8) e->syn_snap = 1;
         return;
     }
+    px_mt_un = 0;
+    if (e->syn_snap) {                                 /* after a silence: the first clear estimate, at once */
+        if (clear < 0.3f) {
+            if (e->syn_type == PX_SYN_FLUTE) flu_note(e, f, clear, 1); else e->syn_f0 = e->syn_f0t = f;
+            e->syn_snap = 0; px_mt_cn = 0;
+        }
+        return;
+    }
+    if (e->syn_type == PX_SYN_FLUTE) { flu_note(e, f, clear, 0); return; }
     const float r = f / e->syn_f0t;
     if (r > 0.97f && r < 1.03f) { e->syn_f0t = f; px_mt_cn = 0; return; }   /* the same note: followed */
-    if (px_mt_cn && f > px_mt_cf * 0.97f && f < px_mt_cf * 1.03f) {   /* a new note, heard twice: straight to it (the glide
-                                                                         * is for vibrato and bends, not between notes) */
-        e->syn_f0 = e->syn_f0t = f; px_mt_cn = 0; return;
+    if (px_mt_cn && f > px_mt_cf * 0.97f && f < px_mt_cf * 1.03f) {   /* a new note: heard twice in a row, then straight to it */
+        e->syn_f0 = e->syn_f0t = f; px_mt_cn = 0;
+        return;
     }
     px_mt_cf = f; px_mt_cn = 1;
 }
@@ -3595,7 +3724,9 @@ static inline __attribute__((always_inline)) void px_exp_block(px_engine *e, con
     const int pos = px_exp.pos;
     if (pos < 0) return;
     const uint32_t seq = px_exp.seq;
-    const float x = (float)pos * (1.0f / 127.0f);
+    /* test build 45: the ends 4 values wide (a pedal seldom sends 0 and 127 exactly): the heel the note itself, the toe the
+     * interval itself, the volume shut and at unity */
+    const float x = pos <= 3 ? 0.0f : pos >= 124 ? 1.0f : (float)(pos - 3) * (1.0f / 121.0f);
     const int tgt = wham ? 2 : wah ? 1 : 0;
     if (tgt != px_exp.tgt) {
         if (tgt == 0) { px_exp.hold = 1; px_exp.seq0 = seq; }
@@ -3607,7 +3738,8 @@ static inline __attribute__((always_inline)) void px_exp_block(px_engine *e, con
     px_exp.vt = tgt == 0 && !px_exp.hold ? x * x * x : 1.0f;
     if (tgt == 2) {
         px_exp.ps += (x - px_exp.ps) * ((float)n / ((float)n + 661.0f));
-        const float st = (f01(p->p[PX_B_PITCH][0]) - 0.5f) * 48.0f;   /* SHIFT: the toe's interval, in semitones */
+        if (px_exp.ps - x < 0.0005f && px_exp.ps - x > -0.0005f) px_exp.ps = x;   /* (settled: the heel and the toe exactly) */
+        const float st = (float)WHAM_ST[wham_idx(p->p[PX_B_PITCH][0])];   /* SHIFT: the toe's interval, in semitones */
         e->ps_rt = px_exp2(px_exp.ps * st * (1.0f / 12.0f));
     }
 }
@@ -3910,12 +4042,14 @@ PX_INL static inline float syn_run(px_engine *e, int t, float x)
         if (++e->syn_w >= PX_PS_N) e->syn_w = 0;
         e->syn_hp += e->syn_hpk * (o - e->syn_hp);     /* octave strings are thin: high-pass */
         y = x * e->syn_dry + (o - e->syn_hp) * e->syn_lvl[0];
+#if !PX_OWN_FX                                         /* (test build 47: no unison copy in the Bluetooth image) */
         if (e->syn_out > 0.0f) {                       /* the unison pairs, slightly out of tune */
             e->syn_cb[e->syn_cw] = x;
             e->syn_lfo[0] = wrap1(e->syn_lfo[0] + e->syn_linc[0]);
             y += syn_tap(e, e->syn_cbase + e->syn_cdep[0] * lfo_sin(e->syn_lfo[0])) * e->syn_out;
             if (++e->syn_cw >= PX_SYN_CB) e->syn_cw = 0;
         }
+#endif
         return y + e->dn;
     }
     case PX_SYN_ACOUSTIC: {
@@ -4155,12 +4289,28 @@ static __attribute__((noinline)) void pitch_run(px_engine *e, int whammy, float 
             float r = e->ps_r, a0 = e->ps_ph[0], o0 = e->ps_off[0][0], o1 = e->ps_off[0][1], inc = e->ps_inc[0];
             const float rt = e->ps_rt, gl = e->ps_glide, invW = e->ps_invW, W = e->ps_W[0], lvl = e->ps_lvl[0];
             int w = w0;
+#if PX_OWN_FX   /* (test build 45: at the heel the note itself, as the sample by sample path) */
+            float u = px_wh_u;
+            for (int k = 0; k < n; k++) {
+                r += (rt - r) * gl;
+                if (rt == 1.0f && r > 0.9999f && r < 1.0001f) r = 1.0f;
+                inc = (1.0f - r) * invW;
+                u += ((r == 1.0f ? 0.0f : 1.0f) - u) * (1.0f / 441.0f);
+                if (e->ps_nv > 0) {
+                    const float wv = ps_step(e->ps_buf, w, &a0, &o0, &o1, inc, W, xs);
+                    y[k] = y[k] + (xb[k] + (wv - xb[k]) * u) * lvl;
+                }
+                if (++w >= PX_PS_N) w = 0;
+            }
+            px_wh_u = u;
+#else
             for (int k = 0; k < n; k++) {
                 r += (rt - r) * gl;
                 inc = (1.0f - r) * invW;
                 if (e->ps_nv > 0) y[k] = y[k] + ps_step(e->ps_buf, w, &a0, &o0, &o1, inc, W, xs) * lvl;
                 if (++w >= PX_PS_N) w = 0;
             }
+#endif
             e->ps_r = r; e->ps_inc[0] = inc;
             e->ps_ph[0] = a0; e->ps_off[0][0] = o0; e->ps_off[0][1] = o1;
         } else
@@ -4639,9 +4789,9 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
 #endif
 #if PX_OWN_FX   /* test build 25: the expression pedal (px_exp above) */
     const int ex_wham = p->on[PX_B_PITCH] && pit_t == PX_PIT_WHAMMY;
-    const int ex_wah = px_exp.pos >= 0 && !ex_wham && p->on[PX_B_SFX] && sfx_t == PX_SFX_LFOWAH;
+    const int ex_wah = px_exp.pos >= 0 && !ex_wham && p->on[PX_B_SFX] && (sfx_t == PX_SFX_LFOWAH || sfx_t == PX_SFX_WAH);
     if (part == PX_PART_ALL || part == PX_PART_PRE) px_exp_block(e, p, ex_wham, ex_wah, n);
-    const float ex_x = (float)px_exp.pos * (1.0f / 127.0f);
+    const float ex_x = px_exp.pos <= 3 ? 0.0f : px_exp.pos >= 124 ? 1.0f : (float)(px_exp.pos - 3) * (1.0f / 121.0f);   /* (build 45: ends) */
     int ex_vi = ns;                                    /* where the volume goes: the first DELAY or REVERB, else the end */
     for (int i = 0; i < ns; i++) if (st[i] == PX_B_DELAY || st[i] == PX_B_REVERB) { ex_vi = i; break; }
 #endif
@@ -4949,11 +5099,23 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
                 } else {
 #if !PX_RUNS                                           /* (with the runs: pitch_run) */
                     e->ps_buf[e->ps_w] = x;
+                    float y = x * e->ps_dry;
+#if PX_OWN_FX
+                    if (pit_t == PX_PIT_WHAMMY) {          /* test build 45: at the heel the note itself, not the shifter's copy
+                                                            * of it (up to 32 ms late: with MIX under 100 a comb) */
+                        e->ps_r += (e->ps_rt - e->ps_r) * e->ps_glide;
+                        if (e->ps_rt == 1.0f && e->ps_r > 0.9999f && e->ps_r < 1.0001f) e->ps_r = 1.0f;
+                        e->ps_inc[0] = (1.0f - e->ps_r) * e->ps_invW;
+                        px_wh_u += ((e->ps_r == 1.0f ? 0.0f : 1.0f) - px_wh_u) * (1.0f / 441.0f);   /* (10 ms) */
+                        const float wv = ps_voice_al(e->ps_buf, e->ps_w, &e->ps_ph[0], e->ps_off[0], e->ps_inc[0], e->ps_W[0]);
+                        y += (x + (wv - x) * px_wh_u) * e->ps_lvl[0];
+                    } else
+#else
                     if (pit_t == PX_PIT_WHAMMY) {
                         e->ps_r += (e->ps_rt - e->ps_r) * e->ps_glide;
                         e->ps_inc[0] = (1.0f - e->ps_r) * e->ps_invW;
                     }
-                    float y = x * e->ps_dry;
+#endif
                     for (int v = 0; v < e->ps_nv; v++)
                         y += ps_voice_al(e->ps_buf, e->ps_w, &e->ps_ph[v], e->ps_off[v], e->ps_inc[v], e->ps_W[v]) * e->ps_lvl[v];
                     if (++e->ps_w >= PX_PS_N) e->ps_w = 0;
@@ -4991,6 +5153,20 @@ PX_HOT void px_engine_part(px_engine *e, const float *in, float *out, int n, int
                     e->sfx_bp += f * hp; e->sfx_lo += f * e->sfx_bp;
                     x = e->sfx_bp * 1.6f + e->sfx_lo * 0.15f;
                 } break;
+#if PX_OWN_FX
+                case PX_SFX_WAH: {                     /* test build 45: the pedal (else PEDAL), 15 ms smoothed, on a wah's
+                                                        * exponential taper; the resonance over 12 dB of the lows */
+                    e->sfx_ph += ((ex_wah ? ex_x : e->sfx_d) - e->sfx_ph) * (1.0f / 661.0f);
+                    const float w = PI_F * e->sfx_c * px_exp2(e->sfx_ph * e->sfx_inc) / sr;
+                    const float f = 2.0f * w * (1.0f - w * w * (1.0f / 6.0f));   /* (2 sin w) */
+                    const float hp = x - e->sfx_lo - e->sfx_qd * e->sfx_bp;
+                    e->sfx_bp += f * hp; e->sfx_lo += f * e->sfx_bp;
+                    /* (past half way the peak meets the pick's brightness: the toe was 9.3 dB louder than the heel and the
+                     * middle, BS.1770 over the loops; 7.5 dB of it taken back, rising as the square) */
+                    const float u = e->sfx_ph > 0.45f ? (e->sfx_ph - 0.45f) * 1.8181818f : 0.0f;
+                    x = (e->sfx_bp * e->sfx_qd * 2.0f + e->sfx_lo * 0.25f) * e->sfx_mix * px_exp2(-1.2457f * u * u);
+                } break;
+#endif
                 case PX_SFX_RING: {
                     e->sfx_ph2 = wrap1(e->sfx_ph2 + e->sfx_d);
                     e->sfx_ph = wrap1(e->sfx_ph + e->sfx_inc * (1.0f + e->sfx_c * lfo_sin(e->sfx_ph2)));

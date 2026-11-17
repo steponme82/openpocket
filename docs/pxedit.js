@@ -10,7 +10,7 @@ const H = [0x7D, 0x4F, 0x50];
 export const C = { INFO: 1, CAT_BLOCK: 2, CAT_TYPE: 3, TEXTS: 4, STATE: 5, SET: 6, ORDER: 7, NAME: 8, PUT: 9, SELECT: 10,
   FOCUS: 11, LIST: 12, SLOT_GET: 13, SLOT_PUT: 14, COMMIT: 15, SAVE: 16, WATCH: 17, PING: 18,
   NAM_LIST: 19, NAM_WRITE: 20, NAM_COMMIT: 21, NAM_ERASE: 22, DIAG: 23, IR_LIST: 24, IR_WRITE: 25, IR_COMMIT: 26, IR_ERASE: 27,
-  USB_AUDIO: 28, MIDI_IN: 29, MAP: 30, NAM_RENAME: 31 };
+  USB_AUDIO: 28, MIDI_IN: 29, MAP: 30, NAM_RENAME: 31, PL: 32, SCENE: 33 };
 export const NAM_CHUNK = 112;     // bytes per NAM_WRITE (firmware/px_models.h NM_CHUNK)
 export const P_SIZE = 110;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -321,25 +321,65 @@ export class Editor {
   // mode } or null; mode 0 press, 1 each, 2 value (docs/pxmidi.js). usb: { send (0 OUTPUT, 1 DI, 2 DI + OUT), ret (0 OUTPUT,
   // 1 INPUT, 2 + b before block b), cut (the guitar cut from there while the computer plays) }, null from a pedal before
   // test build 43 (and left as it is when null is written).
-  // -> { rc (0 ok, 1 invalid, 2 flash), each, inputDb, tails, btPower, outMode, entries, usb }
+  // -> { rc (0 ok, 1 invalid, 2 flash), each, inputDb, tails, btPower, outMode, entries, usb, more }
+  // Protocol 6 (test builds 46 to 49): more, after the routing: { tone: GUITAR TONE (0 NATURAL, 1 SMOOTH, 2 WARM, 3 WARMER,
+  // 4 PUNCHY, 5 DARK, 6 DARKER, 7 MUDDY, 8 BRIGHT), pickup: PICKUP (0 SINGLE, 1 HUMBUCK, 2 P90), view: PLAY VIEW (0 CHAIN,
+  // 1 SWITCHES, 2 SCENES), sceneWins: SCENE+SWITCH (false SWITCH WINS), feetPresets: SCENE FOOTSW (false SCENES) }, null before
   get hasPedalLearn() { return !!(this.info && this.info.proto >= 5); }
   _map(r) {
     const q = new Reader(r), rc = q.b(), each = !!q.b(), inputDb = q.b() - 10, fl = q.b(), n = q.b(), entries = [];
     for (let i = 0; i < n; i++) { const on = q.b(), src = q.b(), dst = q.b(), mode = q.b(); entries.push(on ? { src, dst, mode } : null); }
     const ur = q.i < q.a.length ? q.b() : -1;   // (test build 43: after the entries)
+    const tb = q.i < q.a.length ? q.b() : -1, vb = q.i < q.a.length ? q.b() : -1;   // (protocol 6: then two more)
     return { rc, each, inputDb, tails: !!(fl & 1), btPower: (fl >> 1) & 3, outMode: (fl >> 3) & 3, entries,
-      usb: ur < 0 ? null : { send: ur & 3, cut: !!(ur & 4), ret: (ur >> 3) & 15 } };
+      usb: ur < 0 ? null : { send: ur & 3, cut: !!(ur & 4), ret: (ur >> 3) & 15 },
+      more: tb < 0 || vb < 0 ? null : { tone: tb & 15, pickup: (tb >> 4) & 3, view: vb & 3, sceneWins: !!(vb & 4), feetPresets: !!(vb & 8) } };
   }
   async pedalMap() { return this._map(await this.request(C.MAP)); }
   // inputDb: SETTINGS' INPUT, -10..+10 dB (the guitar's level into the chain); tails: TAILS; btPower: 0 HIGH, 1 MID, 2 LOW;
   // outMode: OUTPUT, 0 MONO, 1 STEREO (DELAY's and REVERB's wet to the sides), 2 GTR+BASS (the guitar left, LOW OCTAVE's octave right)
-  async setPedalMap(each, entries, inputDb = 0, tails = false, btPower = 0, outMode = 0, usb = null) {
+  // more (protocol 6): as _map gives it; null leaves those settings as they are (the routing must then be sent too: usb)
+  async setPedalMap(each, entries, inputDb = 0, tails = false, btPower = 0, outMode = 0, usb = null, more = null) {
     const a = [1, each ? 1 : 0, Math.max(0, Math.min(20, Math.round(inputDb) + 10)),
       (tails ? 1 : 0) | (Math.max(0, Math.min(2, btPower | 0)) << 1) | (Math.max(0, Math.min(2, outMode | 0)) << 3)];
     for (const e of entries) a.push(...(e ? [1, e.src, e.dst, e.mode] : [0, 0, 0, 0]));
     if (usb) a.push((Math.max(0, Math.min(2, usb.send | 0))) | (usb.cut ? 4 : 0) | (Math.max(0, Math.min(13, usb.ret | 0)) << 3));
+    if (usb && more) a.push(Math.max(0, Math.min(8, more.tone | 0)) | Math.max(0, Math.min(2, more.pickup | 0)) << 4,
+      Math.max(0, Math.min(2, more.view | 0)) | (more.sceneWins ? 4 : 0) | (more.feetPresets ? 8 : 0));
     return this._map(await this.request(C.MAP, a, 4000));
   }
+  // protocol 6 (test builds 46 to 49): a preset's own controls learned on the pedal (firmware/px_midi.h mid_pl), which its rows
+  // answer to before the ones above. presetMap(slot) reads them; presetPut(slot, e) learns one, in place of the preset's entry
+  // for the same control or the same row; presetForget(slot, src) forgets one. Each writes the flash (as a save; an unsaved
+  // sound stays as it is). An entry: { src, dst, mode, lo, hi, clo, chi } (docs/pxmidi.js). One entry a request: a request
+  // over Bluetooth MIDI is 160 bytes at most
+  // -> { rc (0 ok, 1 invalid, 2 flash, 3 no place left), slot, used (every preset's), places, entries }
+  get hasPresetLearn() { return !!(this.info && this.info.proto >= 6); }
+  _pl(r) {
+    const q = new Reader(r), rc = q.b(), slot = q.b(), used = q.b(), places = q.b(), n = q.b(), entries = [];
+    for (let i = 0; i < n; i++) entries.push({ src: q.b(), dst: q.b(), mode: q.b(), lo: q.b(), hi: q.b(), clo: q.b(), chi: q.b() });
+    return { rc, slot, used, places, entries };
+  }
+  async presetMap(slot) { return this._pl(await this.request(C.PL, [slot])); }
+  async presetPut(slot, e) { return this._pl(await this.request(C.PL, [slot, 1, e.src, e.dst, e.mode, e.lo, e.hi, e.clo, e.chi], 4000)); }
+  async presetForget(slot, src) { return this._pl(await this.request(C.PL, [slot, 2, src], 4000)); }
+  // protocol 6 (test build 49): the playing preset's four scenes (firmware/px_midi.h px_sc), each the blocks it turns on (a
+  // bit each, in the catalogue's block order). The scene playing is the blocks as they are now. Nothing here writes the
+  // flash: SAVE keeps them with the sound, as on the pedal.
+  // -> { rc (0 ok, 1 invalid), cur (the scene playing), set (the scenes stored, a bit each), masks [4], saved: { cur, set,
+  //    masks } (as saved with the preset) }
+  get hasScenes() { return !!(this.info && this.info.proto >= 6); }
+  _sc(r) {
+    const q = new Reader(r), rc = q.b();
+    const one = () => { const cur = q.b(), set = q.b(), masks = []; for (let i = 0; i < 4; i++) masks.push(q.b() | q.b() << 7); return { cur, set, masks }; };
+    const now = one(), saved = one();
+    return { rc, ...now, saved };
+  }
+  async scenes() { return this._sc(await this.request(C.SCENE)); }
+  async sceneRecall(n) { return this._sc(await this.request(C.SCENE, [1, n])); }          // (as CC 65 + n)
+  async sceneSet(n, mask) { return this._sc(await this.request(C.SCENE, [2, n, mask & 0x7F, (mask >> 7) & 0x1F])); }   // (stored; the
+  // scene playing switches its blocks to it)
+  async sceneForget(n) { return this._sc(await this.request(C.SCENE, [3, n])); }          // (it takes the blocks as they are when next recalled)
   async irTexts() {
     const b = this.cat.blocks.findIndex((x) => x.label === "CAB");
     const t = b < 0 ? -1 : this.cat.blocks[b].types.findIndex((x) => x && x.name === "USER IR");

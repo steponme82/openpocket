@@ -12,6 +12,9 @@
  * update / editor code, and only channel voice messages and clock reach the ring this file reads.
  */
 #pragma once
+#if PX_OWN_FX
+#include <math.h>                                     /* (test build 46: IN-Z's filter, px_inz_coefs) */
+#endif
 
 /* ---- settings (one byte in the preset store's header, px_store.h): all-zero = the defaults ---- */
 typedef struct {
@@ -66,6 +69,56 @@ static uint8_t px_ua_on;
 static int8_t px_in_db;
 static uint8_t px_bt_pwr, px_tails;
 static int px_in_db_clamp(int v) { return v < PX_IN_DB_MIN ? PX_IN_DB_MIN : v > PX_IN_DB_MAX ? PX_IN_DB_MAX : v; }
+/* test build 46: GUITAR TONE (46's IN-Z) and PICKUP (SETTINGS), the guitar's pickup as the input would load it, for every preset
+ * (px_audio.h a_inz_apply: the pedal's own input stays what it is, a filter does what the load would). GUITAR TONE (px_inz): 0
+ * NATURAL (the input as it is, about 1 MOhm: nothing done), then lower loads, the pickup's resonant peak and then its top going:
+ * 1 SMOOTH (230 kOhm), 2 WARM (136K), 3 WARMER (90K), 4 PUNCHY (70K), 5 DARK (32K), 6 DARKER (22K), 7 MUDDY (10K); test build 47:
+ * 8 BRIGHT (a buffer at the guitar: the cable's capacitance taken off, 0.4 of it left), and the names (46 showed the loads in
+ * ohms). PICKUP, the pickup the filter assumes: 0 SINGLE, 1 HUMBUCK, 2 P90. Kept in the store's "OPP2" record's last two bytes
+ * (px_store.h: px_inz_pack, the same ^ 0x5A; 46's "OPPL" packed 3 bits of IN-Z and PICKUP at bit 3) */
+#define PX_INZ_N 9u
+static uint8_t px_inz, px_pickup;
+static const uint8_t PX_INZ_ORDER[PX_INZ_N] = {8, 0, 1, 2, 3, 4, 5, 6, 7};   /* (the knob's order: BRIGHT, NATURAL, .., MUDDY) */
+static const char *const PX_INZ_NAME[PX_INZ_N] = {"NATURAL", "SMOOTH", "WARM", "WARMER", "PUNCHY", "DARK", "DARKER", "MUDDY", "BRIGHT"};
+static uint8_t px_inz_pack(void) { return (uint8_t)((px_inz & 15u) | (px_pickup & 3u) << 4); }
+static void px_inz_unpack(uint8_t b)
+{
+    px_inz = (uint8_t)(b & 15u);
+    px_pickup = (uint8_t)((b >> 4) & 3u);
+    if (px_inz >= PX_INZ_N || px_pickup > 2u || (b & 0xC0u)) px_inz = px_pickup = 0;   /* (a byte no build writes: as it is) */
+}
+static void px_inz_step(int dd)                        /* GUITAR TONE's knob, along PX_INZ_ORDER, round */
+{
+    uint32_t i = 0;
+    while (i < PX_INZ_N && PX_INZ_ORDER[i] != px_inz) i++;
+    px_inz = PX_INZ_ORDER[(i + (dd > 0 ? 1u : PX_INZ_N - 1u)) % PX_INZ_N];
+}
+/* IN-Z's filter at sample rate sr: c = b0 b1 b2 a1 a2; 0 when it is off (1M). A passive pickup is a coil (L, its resistance R)
+ * with the cable's and its own capacitance (C) across it, into the input's resistance RL: H = 1 / (LC s^2 + (RC + L/RL) s +
+ * 1 + R/RL). The pedal's input is about 1 MOhm; a lower RL takes the pickup's resonant peak down (6 to 14 dB at 230K to 70K)
+ * and, at 32K and below, the top. One biquad gives what RL would have given: H(RL) / H(1 M), bilinear, prewarped at the
+ * pickup's resonance, its lows at the level they had (the load's tone, not its level: a real 10K would also take 5.6 dB off
+ * a humbucker's lows, which a setting for every preset should not). The pickup assumed: SINGLE 2.6 H, 6 kOhm, 650 pF (3.9 kHz); HUMBUCK 4.5 H, 9 kOhm, 750 pF (2.7 kHz); P90
+ * 6.5 H, 8 kOhm, 700 pF (2.4 kHz): one model for all was 11 dB off at another pickup's resonance (px_audio.h runs it) */
+static const float PX_PU_L[3] = {2.6f, 4.5f, 6.5f}, PX_PU_R[3] = {6000.0f, 9000.0f, 8000.0f}, PX_PU_C[3] = {650e-12f, 750e-12f, 700e-12f};
+static const float PX_INZ_RL[PX_INZ_N] = {1e6f, 230e3f, 136e3f, 90e3f, 70e3f, 32e3f, 22e3f, 10e3f, 1e6f};
+static const float PX_INZ_CK[PX_INZ_N] = {1, 1, 1, 1, 1, 1, 1, 1, 0.4f};   /* (the capacitance left: BRIGHT's buffer) */
+static int px_inz_coefs(float sr, float *c)
+{
+    if (!px_inz || px_inz >= PX_INZ_N || px_pickup > 2u) return 0;
+    const float L = PX_PU_L[px_pickup], R = PX_PU_R[px_pickup], C = PX_PU_C[px_pickup], RL = PX_INZ_RL[px_inz];
+    const float Ct = C * PX_INZ_CK[px_inz];
+    const float n2 = L * C, n1 = R * C + L / 1e6f, n0 = 1.0f + R / 1e6f;   /* (the input as it is: 1 MOhm) */
+    const float d2 = L * Ct, d1 = R * Ct + L / RL, d0 = 1.0f + R / RL;
+    /* (prewarped at the pickup's resonance. Test build 47: BRIGHT's own, higher, for the half it moves: the two halves of the
+     * same order, the bilinear's (1 + z^-1)^2 cancels, and the lows stay exact) */
+    const float wn = 1.0f / sqrtf(L * C), wd = 1.0f / sqrtf(L * Ct), hn = wn / (2.0f * sr), hd = wd / (2.0f * sr);
+    const float Kn = wn * cosf(hn) / sinf(hn), Kd = wd * cosf(hd) / sinf(hd), Kn2 = Kn * Kn, Kd2 = Kd * Kd;
+    const float ga = 1.0f / (d2 * Kd2 + d1 * Kd + d0), g = (d0 / n0) * ga;   /* (d0 / n0: the lows as they were) */
+    c[0] = (n2 * Kn2 + n1 * Kn + n0) * g; c[1] = 2.0f * (n0 - n2 * Kn2) * g; c[2] = (n2 * Kn2 - n1 * Kn + n0) * g;
+    c[3] = 2.0f * (d0 - d2 * Kd2) * ga; c[4] = (d2 * Kd2 - d1 * Kd + d0) * ga;
+    return 1;
+}
 static uint8_t px_set_pack(void)
 {
     return (uint8_t)(((unsigned)px_in_db & 0x1Fu) | (unsigned)(px_bt_pwr & 3u) << 5 | (px_tails ? 0x80u : 0u));
@@ -93,6 +146,29 @@ static uint8_t px_usb_foot;
 static uint8_t px_out_mode;
 #define PX_ST_OUT_SH 2u
 #define PX_ST_OUT_MASK 0x0Cu
+/* test build 47: PLAY VIEW (SETTINGS): 0 CHAIN, PLAY as always; 1 SWITCHES, PLAY shows the blocks this preset's controller
+ * switches drive, big, on or off (ui.h draw_live), where it has some. Bit 4 of the USB settings byte (px_store.h st_usb) */
+static uint8_t px_live;
+#define PX_ST_LIVE 0x10u
+/* test build 49: PLAY VIEW has three, held CAB turns them round: 0 CHAIN, 1 SWITCHES (what each controller switch does in this
+ * preset: a block or a scene), 2 SCENES (the preset's four, the footswitches on them): bits 4-5. And SETTINGS' two scene rows:
+ * bit 6 SCENE+SWITCH (0 SWITCH WINS: a block with its own switch is the switch's; 1 SCENE WINS: scenes set it too), bit 7 SCENE
+ * FOOTSW (0 the footswitches step the scenes in SCENES' view; 1 they stay on the presets) */
+#define PX_ST_VIEW 0x30u
+#define PX_ST_SCRULE 0x40u
+#define PX_ST_SCFEET 0x80u
+/* test build 49: scenes, as Helix's snapshots, for the blocks' on and off: PX_SC_N a preset, each which blocks are on (a bit
+ * each). Recalled by the pedal's own numbers 65 to 68 (any value: a controller's switch learned on a scene, in a preset), by
+ * the footswitches in SCENES' view, by PUSH on its tile. The scene playing keeps what is switched while it plays (the next
+ * recall takes it along); SAVE writes them with the sound (px_store.h "OPSC"), and the preset opens in the scene it was saved
+ * in. A scene never stored begins as things are when it is first recalled */
+#define PX_SC_N 4u
+#define PXM_CC_SCENE0 65u
+typedef struct { uint16_t mask[PX_SC_N]; uint8_t cur, set; } px_sc_t;   /* set: the scenes stored, a bit each */
+static px_sc_t px_sc_tab[52];                          /* every preset's, as saved (52: px_store.h ST_NSLOT, PXM_PL_SLOTS) */
+static px_sc_t px_sc;                                  /* the playing preset's, as it plays */
+static uint8_t px_sc_rule, px_sc_feet;                 /* (SETTINGS: 1 SCENE WINS; 1 the footswitches stay on the presets) */
+#define PX_SC_LOAD(i) (px_sc = px_sc_tab[(i) < 52u ? (i) : 0u])
 static pxu_t px_uh;
 /* test build 43: USB audio's routing (px_uaudio.h, docs/USB-AUDIO.md), SETTINGS' three rows after USB AUDIO, one byte (7 bits,
  * as the editor's MAP sends it):
@@ -183,7 +259,7 @@ static int px_midi_known(uint32_t cc)
 {
     px_cc_build();
     return cc < 128u && (px_cc_tab[cc].kind != PXM_NONE || cc == PXM_CC_PAD || cc == 116u || cc == 117u ||
-                         cc == PXM_CC_NEXT || cc == PXM_CC_PREV);
+                         cc == PXM_CC_NEXT || cc == PXM_CC_PREV || (cc >= PXM_CC_SCENE0 && cc < PXM_CC_SCENE0 + PX_SC_N));
 }
 static uint32_t px_midi_map_count(void)                /* the entries in use */
 {
@@ -196,20 +272,157 @@ static int px_midi_map_valid(const px_map_t *e)        /* an entry as stored: em
     if (e->src == 0xFFu) return 1;
     return e->src < 128u && e->mode <= PXM_MAP_VALUE && px_midi_known(e->dst);
 }
+/* ---- test build 46: controls learned live, each a preset's own (docs/MIDI.md, "Learned live, one preset's") ----
+ * On a block page, hold FX on its ON row or on a setting, then press a controller's switch or move its pedal: from then on
+ * that control drives that row in this preset only (the slot's: kept with the presets, px_store.h). A preset's own control
+ * wins over the ones learned in the editor (mid_map), which work in every preset. ON: a switch flips the block (PRESS or EACH,
+ * told apart as the editor does: a release within the learn's 1.2 s is a momentary switch's), a pedal switches it (on at
+ * 64 and up); a setting: the value, 0..127 to 0..100. Up to PXM_PL_N for all the presets together. A preset saved into another
+ * slot takes its own with it (px_midi_pl_copy) */
+#define PXM_PL_N 64u
+#define PXM_PL_SLOTS 52u                               /* (px_store.h ST_NSLOT) */
+typedef struct { uint8_t slot, src, dst, mode, lo, hi, clo, chi; } px_pl_t;   /* slot 0xFF: an empty entry. lo / hi (test
+                                       * build 47): a pedal's setting at the heel and the toe, 0..100; clo / chi (48): the values
+                                       * the pedal sends there, 0..127 (the same twice: 0 and 127) */
+static px_pl_t mid_pl[PXM_PL_N];
+static void px_midi_pl_clear(void) { memset(mid_pl, 0xFF, sizeof mid_pl); }
+static int px_midi_pl_valid(const px_pl_t *e)          /* an entry as stored: empty, or a usable one */
+{
+    if (e->slot == 0xFFu) return 1;
+    return e->slot < PXM_PL_SLOTS && e->src < 128u && e->mode <= PXM_MAP_VALUE && px_midi_known(e->dst) && e->lo <= 100u &&
+           e->hi <= 100u && e->clo < 128u && e->chi < 128u;
+}
+static int px_midi_pl_row(uint32_t slot, uint32_t d1, uint32_t d2)   /* this preset's entry driving a row (either of its two
+                                                                      * numbers: ON's flip and its on/off), or -1 */
+{
+    for (uint32_t i = 0; i < PXM_PL_N; i++)
+        if (mid_pl[i].slot == slot && (mid_pl[i].dst == d1 || mid_pl[i].dst == d2)) return (int)i;
+    return -1;
+}
+static uint32_t px_midi_pl_count(uint32_t slot)        /* this preset's entries (PXM_PL_SLOTS: all of them) */
+{
+    uint32_t i, n = 0;
+    for (i = 0; i < PXM_PL_N; i++) n += mid_pl[i].slot != 0xFFu && (slot >= PXM_PL_SLOTS || mid_pl[i].slot == slot);
+    return n;
+}
+static void px_midi_pl_drop_slot(uint32_t slot)        /* a preset's own controls gone (its slot back to the factory sound) */
+{
+    for (uint32_t i = 0; i < PXM_PL_N; i++) if (mid_pl[i].slot == slot) memset(&mid_pl[i], 0xFF, sizeof mid_pl[i]);
+}
+/* a preset's sound saved into another slot: its own controls go with it, in place of what that slot had (its old sound's).
+ * The ones there is no room for are dropped: their count */
+static uint32_t px_midi_pl_copy(uint32_t from, uint32_t to)
+{
+    uint32_t i, j, lost = 0;
+    if (from == to || from >= PXM_PL_SLOTS || to >= PXM_PL_SLOTS) return 0;
+    px_midi_pl_drop_slot(to);
+    for (i = 0; i < PXM_PL_N; i++) {
+        if (mid_pl[i].slot != from) continue;
+        for (j = 0; j < PXM_PL_N && mid_pl[j].slot != 0xFFu; j++) { }
+        if (j == PXM_PL_N) { lost++; continue; }
+        mid_pl[j] = mid_pl[i]; mid_pl[j].slot = (uint8_t)to;
+    }
+    return lost;
+}
+/* one control a meaning, one row a control, in a preset: this one replaces what the preset had for either. 0, or -1: full */
+static int px_midi_pl_put(uint32_t slot, uint32_t src, uint32_t dst, uint32_t mode, uint32_t d_other, uint32_t lo, uint32_t hi)
+{
+    int free_i = -1;
+    for (uint32_t i = 0; i < PXM_PL_N; i++) {
+        px_pl_t *e = &mid_pl[i];
+        if (e->slot == slot && (e->src == src || e->dst == dst || e->dst == d_other)) memset(e, 0xFF, sizeof *e);
+        if (e->slot == 0xFFu && free_i < 0) free_i = (int)i;
+    }
+    if (free_i < 0) return -1;
+    mid_pl[free_i] = (px_pl_t){ (uint8_t)slot, (uint8_t)src, (uint8_t)dst, (uint8_t)mode, (uint8_t)lo, (uint8_t)hi, 0u, 127u };
+    return 0;
+}
+/* the learn, armed by the screen (ui.h) for one row of one preset: the next controller Control Change is taken, not played,
+ * and so is that control's every message for 1.2 s, which tell what it is: values between 0 and 127, a pedal; a press and
+ * its release, a momentary switch; else a switch that alternates (EACH). Nothing heard in 10 s: given up */
+static struct {
+    uint8_t on, got, seen, slot, knob, mid, press, rel, src, dsw, dval;   /* dsw / dval: the row's number for a switch / a pedal */
+    uint8_t hold, last;                                             /* (test build 47: a control held off while its range is set;
+                                                                     * 48: the value it sent last) */
+    uint8_t pedal, keep, rdst, rmode;                               /* (test build 48, the guided learn: a pedal taken at its first
+                                                                     * message; keep: the entry left to the screen, rdst / rmode) */
+    uint32_t t_arm, t0;                                             /* (the screen's clock) */
+} mid_learn = {.hold = 0xFFu};
+enum { PXL_NONE, PXL_WAIT, PXL_DONE, PXL_FULL, PXL_SILENT };
+static void px_learn_arm(uint32_t slot, uint32_t dsw, uint32_t dval, int knob, uint32_t now)
+{
+    memset(&mid_learn, 0, sizeof mid_learn);
+    mid_learn.hold = 0xFFu;
+    mid_learn.on = 1; mid_learn.slot = (uint8_t)slot; mid_learn.dsw = (uint8_t)dsw; mid_learn.dval = (uint8_t)dval;
+    mid_learn.knob = (uint8_t)(knob != 0); mid_learn.t_arm = now;
+}
+static void px_learn_cancel(void) { mid_learn.on = 0; }
+static int px_learn_feed(uint32_t cc, uint32_t val)   /* a controller's Control Change: 1 = the learn took it (not played) */
+{
+    if (mid_learn.hold == cc) { mid_learn.last = (uint8_t)val; return 1; }   /* (its heel and toe being set: the pedal does not
+                                                       * move the setting; where it is, for the screen) */
+    if (!mid_learn.on) return 0;
+    if (!mid_learn.got) { mid_learn.got = 1; mid_learn.src = (uint8_t)cc; }
+    else if (cc != mid_learn.src) return 1;           /* (another control meanwhile: not played either) */
+    mid_learn.last = (uint8_t)val;
+    if (val > 0u && val < 127u) mid_learn.mid = 1;
+    if (val >= 64u) mid_learn.press = 1; else if (mid_learn.press) mid_learn.rel = 1;
+    return 1;
+}
+/* every pass of the screen while armed: PXL_WAIT, else how it ended (PXL_DONE: the entry is in, *src the control's number) */
+static int px_learn_poll(uint32_t now, uint32_t *src)
+{
+    uint32_t dst, mode;
+    if (!mid_learn.on) return PXL_NONE;
+    if (!mid_learn.got) {
+        if (now - mid_learn.t_arm < 10000u) return PXL_WAIT;
+        mid_learn.on = 0;
+        return PXL_SILENT;
+    }
+    if (!mid_learn.seen) { mid_learn.seen = 1; mid_learn.t0 = now; }   /* (the window opens on the pass that sees the first) */
+    if (!mid_learn.pedal && now - mid_learn.t0 < 1200u) return PXL_WAIT;   /* (48: a pedal said to be one: no window) */
+    mid_learn.on = 0;
+    *src = mid_learn.src;
+    if (mid_learn.knob || mid_learn.mid || mid_learn.pedal) { dst = mid_learn.dval; mode = PXM_MAP_VALUE; }
+    else { dst = mid_learn.dsw; mode = mid_learn.rel ? PXM_MAP_PRESS : PXM_MAP_EACH; }
+    mid_learn.rdst = (uint8_t)dst; mid_learn.rmode = (uint8_t)mode;
+    if (mid_learn.keep) return PXL_DONE;               /* (the screen puts it, once its heel and toe are set) */
+    return px_midi_pl_put(mid_learn.slot, mid_learn.src, dst, mode, dst == mid_learn.dsw ? mid_learn.dval : mid_learn.dsw, 0u, 100u)
+               ? PXL_FULL : PXL_DONE;
+}
 /* a learned control's message, read as the pedal's own: 1 = go on with *cc / *val (rewritten when learned), 0 = nothing to
- * do (a switch's release) */
-static int px_midi_map_in(uint32_t *cc, uint32_t *val)
+ * do (a switch's release). Test build 46: the preset's own controls (slot: the preset playing) before the editor's */
+static int px_midi_map_dst(uint32_t dst, uint32_t mode, uint32_t lo, uint32_t hi, uint32_t clo, uint32_t chi, uint32_t *cc,
+                           uint32_t *val)
+{
+    *cc = dst;
+    if (mode == PXM_MAP_VALUE) {                       /* test build 47: a setting's heel and toe (0..100), the value between */
+        if ((lo != 0u || hi != 100u || (clo != chi && (clo != 0u || chi != 127u))) && px_cc_tab[dst & 127u].kind == PXM_PARAM) {
+            int a = (int)clo, b = (int)chi, t;         /* (48: along the pedal's own travel, heel to toe; the same: 0 to 127) */
+            if (a == b) { a = 0; b = 127; }
+            t = ((int)*val - a) * 1000 / (b - a);
+            t = t < 0 ? 0 : t > 1000 ? 1000 : t;
+            const int k = (int)lo + (((int)hi - (int)lo) * t + ((int)hi >= (int)lo ? 500 : -500)) / 1000;
+            *val = ((uint32_t)k * 127u + 50u) / 100u;  /* (pxm_to_cc: the map reads it back as k) */
+        }
+        return 1;
+    }
+    if (mode == PXM_MAP_PRESS && *val < 64u) return 0;
+    /* a press: what the pedal's own number does for one (a flip happens on 0, everything else on 64 and up) */
+    *val = dst >= PXM_CC_TOGGLE0 && dst < PXM_CC_TOGGLE0 + PX_NBLK ? 0u : 127u;
+    return 1;
+}
+static int px_midi_map_in(uint32_t *cc, uint32_t *val, uint32_t slot)
 {
     uint32_t i;
+    for (i = 0; i < PXM_PL_N; i++) {
+        const px_pl_t *e = &mid_pl[i];
+        if (e->slot == slot && e->src == *cc && px_midi_known(e->dst))
+            return px_midi_map_dst(e->dst, e->mode, e->lo, e->hi, e->clo, e->chi, cc, val);
+    }
     for (i = 0; i < PXM_MAP_N; i++) {
         const px_map_t *e = &mid_map[i];
-        if (e->src != *cc || !px_midi_known(e->dst)) continue;
-        *cc = e->dst;
-        if (e->mode == PXM_MAP_VALUE) return 1;
-        if (e->mode == PXM_MAP_PRESS && *val < 64u) return 0;
-        /* a press: what the pedal's own number does for one (a flip happens on 0, everything else on 64 and up) */
-        *val = e->dst >= PXM_CC_TOGGLE0 && e->dst < PXM_CC_TOGGLE0 + PX_NBLK ? 0u : 127u;
-        return 1;
+        if (e->src == *cc && px_midi_known(e->dst)) return px_midi_map_dst(e->dst, e->mode, 0u, 100u, 0u, 127u, cc, val);
     }
     return 1;
 }

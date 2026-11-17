@@ -19,7 +19,8 @@
 #    on two cores, fades, the volume pedal, its level against the amps' (tests/engine/bassout.c); USB RETURN (test build
 #    43): the computer's sound into the chain before any block, skipping the ones before it, mixed or with the guitar cut,
 #    following the preset's order, bit for bit on two cores (tests/engine/usbret.c); test build 44: SHIMMER's octave in tune,
-#    BARITONE three times sooner, MONO SYNTH's tracker, SITAR and STRINGS rebuilt, TAPE FLUTE (tests/engine/synfix.c)
+#    BARITONE three times sooner, MONO SYNTH's tracker, SITAR and STRINGS rebuilt, TAPE FLUTE (tests/engine/synfix.c; test
+#    build 47: 12-STRING steady)
 #  - changes without clicks (v38): knob changes glide to exactly where a full set goes, blocks on / off fade, fewer clicks
 #  - USER IR (v38): the partitioned FFT convolution against the direct FIR, slots, names
 #  - wet lanes (v39): the delay through its lane as inline bit for bit, the reverb's tail lag frames later, the pipeline
@@ -33,6 +34,14 @@
 #    layout, the packets passed, the screen's state and notes, the host's clock (tests/test_usb_host.c); SETTINGS' USB PORT
 #    row and PLAY's notes (tests/uisim.c); its messages read as a computer's, nothing sent to it, Bluetooth's not read twice
 #    (tests/midiio.c)
+#  - controls learned live, a preset's own (test build 46): the learn's capture and how it tells a momentary switch, one that
+#    alternates and a pedal apart, the preset's own before the editor's (tests/midiio.c); hold FX on a block page, its footer,
+#    clearing, stopping (tests/uisim.c); their record in each store copy (tests/test_store.c). Test build 47: a learned
+#    pedal's heel and toe (tests/midiio.c, tests/uisim.c), 46's record read (tests/test_store.c), PLAY VIEW's tiles, GUITAR
+#    TONE's names and its value redrawn, the footswitches through SETTINGS (tests/uisim.c). Test build 48: the guided learn's
+#    page (tests/uisim.c), the pedal's own travel (tests/midiio.c), 47's record read (tests/test_store.c), PRESET LVL down to
+#    silence (tests/engine/exp.c). Test build 49: scenes, CAB held, PLAY's three views, the scene rows (tests/uisim.c), CC 65 to
+#    68 (tests/midiio.c), the scenes' record (tests/test_store.c)
 #  - preset store: save / reload / power cut at every step of a save (firmware/px_store.h on a simulated flash)
 #  - the audio callbacks' order (v42, firmware/px_aorder.h): the I2S driver calls the output's callback before the
 #    input's when its interrupt enters late; every output block must still be the sound of that interrupt's guitar block
@@ -94,7 +103,7 @@ for D in "$FX" "-DPX_OWN_FX=1"; do                     # as the image builds the
                                                         # tails, treble: test build 40's TAILS and TREBLE BOOST; bassout: test
                                                         # build 42's LOW OCTAVE out of the chain; usbret: test build 43's USB
                                                         # RETURN; synfix: test build 44's SHIMMER, BARITONE, MONO SYNTH, SITAR,
-                                                        # STRINGS, TAPE FLUTE)
+                                                        # STRINGS, TAPE FLUTE, 47's 12-STRING)
     $CC -O2 $D -Iengine tests/engine/$t.c engine/px_dsp.c firmware/px_math.c -lm -o build/$t
     build/$t > build/$t.log || { cat build/$t.log; exit 1; }; tail -1 build/$t.log
   done

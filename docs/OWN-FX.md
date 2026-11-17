@@ -186,6 +186,63 @@ bit: `tests/ownfx_equiv.sh` leaves these out by name):
 Each one's level at noon is TWIN + 1x12's alone, as every other model's (BS.1770 over the five loops; `engine/px_trim.h`). The
 web editor reads the catalogue again (INFO "v42 FX3"). `tests/engine/synfix.c` checks all six.
 
+## Test build 45: MONO SYNTH through hum, TAPE FLUTE on the note, WHAMMY one way, WAH
+
+A player's second round, in this image only (`tests/ownfx_equiv.sh` leaves WHAMMY out by name now, WAH is new):
+
+- **MONO SYNTH** tracked the bundled loops and failed on a guitar. Hum lifted every dip of YIN's normalised difference over the
+  fixed threshold (0.2), so the tracker heard nothing and the last note went on; and with hum or noise above the gate's level
+  (0.0015) the gate never shut, so the synth played the last note on at 60 % through every pause. Now the period is the first
+  dip within 0.15 of the deepest (also safer at a pick whose 2nd harmonic leads: half the period dips less deep); 8 estimates
+  in a row that hear no note (93 ms) let the note go, and the gate waits for the next clear one; the gate opens at a third of
+  the level (a single coil with its volume down, the loops at a quarter: 4 notes in 10 heard, now all). The octave check and
+  the 46 ms before an octave are gone: the riff's high notes are C6s (their C5 50 dB down), and both played them an octave
+  low. On the lead loop with a 50 Hz hum and its 3rd and 5th 15 dB under the playing (`build/shim`, not in the tree): 557
+  notes right of 598 (build 44: 497), 2 blips back and forth within 40 ms (19), the synth sounding in none of the pauses
+  (all 20); clean, 587 (573). A steeper filter against the hum (70 Hz, 24 dB) was tried and dropped: it thinned the low E's
+  fundamental into octave errors.
+- **TAPE FLUTE** plays the nearest semitone (A 440) straight: it followed the guitar, gliding, and a note picked a little sharp
+  slid into place. It holds while the guitar stays within 60 cents of it (vibrato, a guitar a little out of tune) and moves when
+  a new note is heard clearly (YIN under 0.15) three times in a row on the same semitone, 13 ms: a string still ringing under
+  the new note blurs the period, and two estimates flipped the flute a semitone and back (on the loops: 3 such blips on the lead
+  instead of 15, 3 on the chugs instead of 73). A guitar half a semitone off is between two semitones: no window can tell.
+- **WHAMMY**: SHIFT is four intervals (`-2 OCT`, `-1 OCT`, `+1 OCT`, `+2 OCT`); the expression pedal (CC 117) goes from the note
+  at the heel to the interval at the toe. SHIFT was -24 to +24 semitones in steps of 0.48 with the screen rounding (49, 50 and
+  51 all read 0: two of them 48 cents off), and a pedal learned onto it swept all of it. Its zones keep a saved SHIFT's meaning
+  (+12 was 75: `+1 OCT`; +24 was 100: `+2 OCT`). At the heel the note itself: the shifter's copy at ratio 1, up to 32 ms late,
+  made a comb with MIX under 100; it crossfades in over 10 ms as the pedal leaves the heel. **PEDAL**, a fourth knob: the
+  position without an expression pedal, and the knob to learn one onto. The expression pedal's ends are 4 values wide
+  (0 to 3, 124 to 127; the volume and the wah's too): a pedal that never sends 0 or 127 still reaches the note and the
+  interval exactly.
+- **WAH**, new (the 8th SFX type): a wah pedal. A resonant band (Chamberlin's state variable filter) swept on a wah's
+  exponential taper from the heel (RANGE: 280 to 490 Hz, 369 at noon) to 2.65 octaves up (2.3 kHz at noon: a Cry Baby's), by
+  the expression pedal, else PEDAL; its peak 20 dB over the lows; Q 2 to 10; LEVEL +-12 dB. At noon as loud as TWIN + 1x12
+  alone (+10.3 dB: the band takes most of a guitar away). The AUTO WAH's pedal (CENTER's place) stays as it was.
+
+The web editor reads the catalogue again (INFO "v42 FX4"). `tests/engine/synfix.c` (7, 8) and `tests/engine/exp.c` check them.
+
+## Test build 47: 12-STRING steady
+
+12-STRING moved a lot heard alone. Its octave is in tune (within half a cent from 82 Hz to 659 Hz, on held notes); the motion
+was DETUNE's: up to 15 cents on the octave (7.5 at noon), which beats against the note's own 2nd harmonic (three times a second
+at E4), and a unison copy of the guitar on a delay swept by a slow LFO. In this image DETUNE is 0 to 3 cents (its value reads
+`1.5` at noon), and the unison copy is gone (`tests/ownfx_equiv.sh` leaves 12-STRING out now). DETUNE 0 holds the octave dead in
+tune: nothing moves but the guitar. On held notes (12, 82 Hz to 659 Hz, OCTAVE 70; the level against the guitar's in 50 ms
+windows, `build/shim`, not in the tree), at noon the level moves 2.8 dB a second on average (build 46: 10.4; the worst note
+6.7, was 25.8), at DETUNE 0 1.4 dB a second, the same as before. Chords move as they did (about 6.5 dB a second: the octave's
+splices against the chord's own notes). The arpeggio loop is 0.9 dB quieter without the unison copy, the chords as loud.
+`tests/engine/synfix.c` (9) checks it. The web editor reads the catalogue again (INFO "v42 FX5": DETUNE's text).
+
+## Test build 48: PRESET LVL down to silence
+
+The GT page's PRESET LVL (the preset's level, at the chain's end) went from -15 dB to +15 dB, 0.3 dB a step; a pedal learned on
+it could not be a volume pedal. In this image 0 is `-INF` (silence), 1 to 19 fall 2 dB a step from -9 dB (`-47 DB` at 1), so a
+pedal learned on it fades the sound out smoothly, and 20 and up are as before (50 = 0 dB, 64 = +4.2 dB, 100 = +15 dB). Its
+change glides over 23 ms like any knob (no click, `tests/engine/exp.c`). Being at the chain's end, it takes the delay's and
+the reverb's tails down with it: for a volume pedal that lets them ring, CC 117's own volume (before the first DELAY or
+REVERB) is the one. `tests/ownfx_equiv.sh` compares PRESET LVL from 20 up. The web editor reads the catalogue again (INFO
+"v42 FX6": PRESET LVL's texts).
+
 ## SYN PAD
 
 A smooth chord held under your playing, for as long as you want. Strum a chord and press the **left footswitch** (or press

@@ -5,9 +5,9 @@
 
 import { app, $, h, icon, on, emit, blk, typeOf, slotName, say, confirmDialog } from "./edcore.js";
 import { sendParam, setOn, setType } from "./edsound.js";
-import { selectPreset, stepPreset } from "./edpresets.js";
+import { selectPreset, stepPreset, refreshState } from "./edpresets.js";
 import { decode, ccParam, ccOn, ccToggle, ccType, ccTarget, resolve, action, learn, cleanMappings, sameTgt, NPAR,
-  pedalDst, pedalTarget, pedalLearn, switchMode, PEDAL_MAP_N, MAP_PRESS, MAP_EACH, MAP_VALUE } from "./pxmidi.js";
+  pedalDst, pedalTarget, pedalLearn, switchMode, PEDAL_MAP_N, MAP_PRESS, MAP_EACH, MAP_VALUE, SCENES, presetEntry } from "./pxmidi.js";
 
 const KEY = "openpocket-midi-v1";
 let cfg = { mappings: [], pc: true };
@@ -20,7 +20,10 @@ const heard = new Map();              // controller input id -> its name
 // for a footswitch linked to the pedal over Bluetooth (or a controller on its USB port), which this page never hears itself:
 // the pedal tells it what such a controller sends (MIDI_IN), and learning then writes the pedal's own table
 let pmap = null;                      // { each, entries } as the pedal has it; null: this pedal has none
-let catching = null;                  // a control being learned through the pedal: { tgt, src, values, timer }
+let catching = null;                  // a control being learned through the pedal: { tgt, src, values, timer, slot }
+// editor protocol 6 (test builds 46 to 49): the current preset's OWN controls learned on the pedal (px_midi.h mid_pl), which
+// its rows answer to before the ones above: { slot, used, places, entries }; null: this pedal has none
+let plist = null;
 
 function loadCfg() {
   try { const j = JSON.parse(localStorage.getItem(KEY) || "{}"); cfg = { mappings: cleanMappings(j.mappings), pc: j.pc !== false }; } catch (_) { }
@@ -30,6 +33,7 @@ function saveCfg() { try { localStorage.setItem(KEY, JSON.stringify(cfg)); } cat
 // ---- names ----
 function tgtName(t) {
   if (t.kind === "preset") return t.step > 0 ? "Next preset" : "Previous preset";
+  if (t.kind === "scene") return `Scene ${t.n + 1}`;
   const B = blk(t.b);
   if (t.kind === "on") return `${B.label} on / off`;
   if (t.kind === "type") return `${B.label} type`;
@@ -45,6 +49,7 @@ function pedalName(e) {                 // what a learned entry does, from the p
   if (t.kind === "pad") return "SYN PAD: catch the chord";
   if (t.kind === "tap") return "Tap tempo";
   if (t.kind === "exp") return "Expression pedal";
+  if (t.kind === "scene") return `Scene ${t.n + 1}`;
   if (t.kind === "master") return "MASTER volume";
   if (t.kind === "toggle") return `${blk(t.b).label} on / off`;
   return tgtName(t);
@@ -101,6 +106,7 @@ function fromController(input, data) {
     else if (a.do === "on") setOn(a.b, a.v);
     else if (a.do === "type") { if (a.t !== app.st.preset.type[a.b]) setType(a.b, a.t); }
     else if (a.do === "preset") stepPreset(a.step, { ask: false });
+    else if (a.do === "scene" && app.ed && app.ed.hasScenes) app.ed.sceneRecall(a.n).then(() => refreshState()).catch(() => { });
   }
 }
 // ---- what a controller sent the pedal (protocol 5: MIDI_IN, pushed while watched) ----
@@ -109,13 +115,16 @@ function fromPedalIn(x) {
   const m = x.type === "pc" ? { type: "pc", program: x.n1 } : { type: "cc", cc: x.n1, value: x.n2 };
   if (catching) { if (m.type === "cc" && m.cc === catching.src) catching.values.push(m.value); return; }
   if (m.type === "cc" && learning && pmap) { startCatch(m); return; }
-  const e = m.type === "cc" && pmap && pmap.entries.find((y) => y && y.src === m.cc);
-  note("Controller on the pedal", m, e ? `→ ${pedalName(e)} (learned on the pedal)` : pedalMeaning(m), e ? "hit" : "pedal");
+  const own = m.type === "cc" && plist && plist.entries.find((y) => y.src === m.cc);
+  const e = own || (m.type === "cc" && pmap && pmap.entries.find((y) => y && y.src === m.cc));
+  note("Controller on the pedal", m, e ? `→ ${pedalName(e)} (learned on the pedal${own ? `, in ${slotName(plist.slot)}` : ""})` : pedalMeaning(m), e ? "hit" : "pedal");
 }
 function startCatch(m) {
   const tgt = learning, d = pedalDst(tgt);
   learning = null;
-  catching = { tgt, src: m.cc, values: [m.value], timer: 0 };
+  // (protocol 6: "only in this preset" is the preset's own table on the pedal; a step to another preset works in every one)
+  const slot = scope === "preset" && tgt.kind !== "preset" && plist && app.ed.hasPresetLearn ? app.st.slot : null;
+  catching = { tgt, src: m.cc, values: [m.value], timer: 0, slot };
   if (!d || d.value) { finishCatch(); return; }   // a knob or a pedal: its value counts, nothing to wait for
   learnt = `Heard CC ${m.cc} from the controller on the pedal: let go of the switch…`;
   renderMap();
@@ -125,6 +134,7 @@ async function finishCatch() {
   const c = catching;
   if (!c) return;
   clearTimeout(c.timer);
+  if (c.slot !== null) { await finishCatchHere(c); return; }
   const next = pmap && pedalLearn(pmap.entries, c.src, c.tgt, switchMode(c.values));
   if (!next) {
     catching = null;
@@ -144,19 +154,50 @@ async function finishCatch() {
   catching = null;
   renderMap();
 }
-async function savePmap(entries, each = pmap.each, inputDb = pmap.inputDb, tails = pmap.tails, btPower = pmap.btPower, outMode = pmap.outMode,
-  usb = pmap.usb) {
+// (protocol 6) a control learned for the current preset only: into its own table on the pedal
+async function finishCatchHere(c) {
+  const next = presetEntry(c.src, c.tgt, switchMode(c.values));
+  if (!next) { catching = null; learnt = "This cannot be learned for one preset."; renderMap(); return; }
   try {
-    const r = await app.ed.setPedalMap(each, entries, inputDb, tails, btPower, outMode, usb);
+    const r = await app.ed.presetPut(c.slot, next);
+    if (r.rc === 0) {
+      plist = r;
+      const e = r.entries.find((y) => y.src === c.src);
+      learnt = `${tgtName(c.tgt)} now follows CC ${c.src} of the controller on the pedal, only in preset ${slotName(c.slot)}: it ${MODE_TEXT[e ? e.mode : 0]}. The pedal keeps it with that preset.`;
+      note("Controller on the pedal", { type: "cc", cc: c.src, value: c.values[0] }, `learned on the pedal for ${slotName(c.slot)}: ${tgtName(c.tgt)}`, "hit");
+    } else learnt = r.rc === 2 ? "The pedal could not save it (flash): try again." : r.rc === 3 ? `The pedal keeps ${r.places} controls learned for single presets, all presets together: forget one first.` : "The pedal refused it.";
+  } catch (e) { learnt = `Not learned: ${e.message}`; }
+  catching = null;
+  renderMap();
+}
+async function savePmap(entries, each = pmap.each, inputDb = pmap.inputDb, tails = pmap.tails, btPower = pmap.btPower, outMode = pmap.outMode,
+  usb = pmap.usb, more = pmap.more) {
+  try {
+    const r = await app.ed.setPedalMap(each, entries, inputDb, tails, btPower, outMode, usb, more);
     if (r.rc === 0) pmap = r; else say(r.rc === 2 ? "The pedal could not save it (flash)." : "The pedal refused it.", "err");
   } catch (e) { say(`Not changed: ${e.message}`, "err"); }
   renderMap();
 }
+const setMore = (k, v) => savePmap(pmap.entries, pmap.each, pmap.inputDb, pmap.tails, pmap.btPower, pmap.outMode, pmap.usb, { ...pmap.more, [k]: v });
 async function loadPmap() {
   pmap = null;
   if (app.conn !== "ready" || !app.ed || !app.ed.hasPedalLearn) return;
   try { pmap = await app.ed.pedalMap(); } catch (_) { pmap = null; }
+  await loadPlist();
   if (app.view === "midi") { renderConn(); renderMap(); }
+}
+// (protocol 6) the current preset's own controls, read again when the preset changes
+async function loadPlist() {
+  if (app.conn !== "ready" || !app.ed || !app.ed.hasPresetLearn || !app.st) { plist = null; return; }
+  try { plist = await app.ed.presetMap(app.st.slot); } catch (_) { plist = null; }
+}
+async function savePlist(run) {
+  if (!plist) return;
+  try {
+    const r = await run(plist.slot);
+    if (r.rc === 0) plist = r; else say(r.rc === 2 ? "The pedal could not save it (flash)." : r.rc === 3 ? "The pedal has no place left." : "The pedal refused it.", "err");
+  } catch (e) { say(`Not changed: ${e.message}`, "err"); }
+  renderMap();
 }
 
 // a knob turned on the controller sends a stream: the sections redraw once per frame
@@ -238,7 +279,7 @@ function renderConn() {
         h("button", { type: "button", class: "btn small", id: "uabtn", text: ua.on ? "Turn off" : "Turn on", onclick: uaToggle }))),
     ua && h("p", { class: "dim", id: "uanote", text: "With USB audio on, the pedal is also a USB sound card, with no driver to install (stereo, 16 bit, 44.1 kHz). The computer records the pedal's sound, and what the computer plays comes out of the pedal's output." }),
     h("p", { class: "dim" }, "The pedal's own MIDI settings are on the pedal: ", h("b", { text: "hold FX for 0.8 s" }),
-      pmap ? " (SETTINGS) for CHANNEL (OMNI or 1 to 16), SEND and CLOCK > DELAY. SWITCH, INPUT, TAILS and BT POWER are also under Controls below; the editor cannot read or change the first three. "
+      pmap ? ` (SETTINGS) for CHANNEL (OMNI or 1 to 16), SEND and CLOCK > DELAY. SWITCH, INPUT, TAILS, BT POWER, OUTPUT${pmap.more ? ", GUITAR TONE, PICKUP, PLAY VIEW and the two scene rows" : ""} are also under Controls below; the editor cannot read or change the first three. `
         : " for CHANNEL (OMNI or 1 to 16), SEND and CLOCK > DELAY. The editor cannot read or change them. ",
       h("a", { href: "https://github.com/isod89/openpocket/blob/main/docs/MIDI.md", target: "_blank", rel: "noopener" }, "The MIDI reference ", icon("ext"))));
 }
@@ -267,6 +308,12 @@ function renderMap() {
     return h("button", { type: "button", class: `btn small${on_ ? " learning" : ""}`, "data-t": `preset:${step}`, "aria-pressed": on_ ? "true" : "false", onclick: () => startLearn(tgt) },
       on_ ? "Press a switch…" : `${step > 0 ? "Next" : "Previous"} preset${got.length ? `: ${got.map((m) => srcName(m.src)).join(", ")}` : ""}`);
   };
+  // (protocol 6, test build 49) a switch to recall one of the preset's scenes
+  const sceneBtn = (n) => {
+    const tgt = { kind: "scene", n }, on_ = learning && sameTgt(learning, tgt), got = learnedFor(tgt);
+    return h("button", { type: "button", class: `btn small${on_ ? " learning" : ""}`, "data-t": `scene:${n}`, "aria-pressed": on_ ? "true" : "false", onclick: () => startLearn(tgt) },
+      on_ ? "Press a switch…" : `Scene ${n + 1}${got.length ? `: ${got.map((m) => srcName(m.src)).join(", ")}` : ""}`);
+  };
   const rows = app.cat.blocks.map((B, b) => {
     const T = typeOf(p, b);
     return h("tr", { style: `--c:${B.color}` },
@@ -281,12 +328,14 @@ function renderMap() {
     h("div", { class: "card-head" }, h("h2", { id: "midimap-h", text: "Controls" })),
     h("div", { class: "ways" },
       h("p", {}, h("b", { text: "Straight to the pedal. " }), "A DAW or a controller that reaches the pedal's USB port uses the CC numbers below: they are fixed in the firmware. The names are this preset's: a setting's meaning follows the block's type."),
-      pmap && h("p", {}, h("b", { text: "Learned by the pedal. " }), "For the footswitch linked to the pedal over Bluetooth, or a controller on the pedal's USB port: click a control below, then press the switch. The pedal keeps it with the presets and it works with no page open, in every preset."),
+      pmap && h("p", {}, h("b", { text: "Learned by the pedal. " }), "For the footswitch linked to the pedal over Bluetooth, or a controller on the pedal's USB port: click a control below, then press the switch. The pedal keeps it with the presets and it works with no page open, in every preset",
+        plist ? `, or only in ${cur} when "A control I teach works" says so (a pedal on a setting goes from 0 at the heel to 100 at the toe; change both below).` : "."),
       h("p", {}, h("b", { text: "Through this page. " }), "For a controller plugged into this computer: click a control below, then move a knob or press a switch on the controller. The page passes it on while it is open.")),
     h("div", { class: "learnbar" },
       h("label", {}, "A control I teach works ", sc),
       h("span", { class: "grow" }),
       stepBtn(-1), stepBtn(1),
+      app.ed.hasScenes && Array.from({ length: SCENES }, (_, n) => sceneBtn(n)),
       h("label", { class: "check" }, pc, " Program Change loads presets")),
     h("p", { class: `learnstate${learning || catching ? " on" : ""}`, id: "learnstate", role: "status", text: learning
       ? `Waiting for a control for ${tgtName(learning)}: ${pmap ? "press a switch of the footswitch linked to the pedal, or " : ""}move a knob or press a switch on your controller${heard.size || pmap ? "" : " (none is connected yet)"}. Esc stops.` : learnt }),
@@ -296,6 +345,8 @@ function renderMap() {
     h("p", { class: "dim small", text: "CC 7 is the MASTER volume. Values: a setting is 0 to 127 for 0 to 100; a switch is on from 64; a flip number acts on value 0, so a footswitch that sends 127 then 0 flips once." }),
     pmap && h("h3", { text: "Learned by the pedal" }),
     pmap && renderPmap(),
+    plist && h("h3", { text: `Learned by the pedal, only in ${cur}` }),
+    plist && renderPlist(),
     h("h3", { text: pmap ? "Learned by this page" : "Learned controls" }),
     learned.length ? h("div", { class: "learned", id: "learned" }, learned.map((m) => {
       const where = h("select", { "aria-label": `Where ${srcName(m.src)} works`, onchange: () => { m.slot = where.value === "all" ? null : +where.value; saveCfg(); renderMap(); } },
@@ -340,6 +391,28 @@ function renderPmap() {
   const ug = u && h("select", { id: "pmapugtr", "aria-label": "The guitar where the computer's sound comes in", onchange: () => setUsb("cut", ug.value === "1") },
     h("option", { value: "0", text: "Mixed with the computer's sound" }), h("option", { value: "1", text: "Cut while the computer plays" }));
   if (ug) ug.value = u.cut ? "1" : "0";
+  // protocol 6 (test builds 46 to 49): GUITAR TONE and PICKUP, PLAY VIEW and the two scene rows
+  const mo = pmap.more, sel = (id, label, k, opts) => {
+    const e = h("select", { id, "aria-label": label, onchange: () => setMore(k, k === "sceneWins" || k === "feetPresets" ? e.value === "1" : +e.value) },
+      opts.map(([v, t]) => h("option", { value: String(v), text: t })));
+    e.value = String(typeof mo[k] === "boolean" ? (mo[k] ? 1 : 0) : mo[k]);
+    return e;
+  };
+  const moreRows = mo && [
+    h("div", { class: "lrow" }, h("span", { text: "Guitar tone" }),
+      sel("pmaptone", "The guitar's tone, as a lower input load would make it", "tone", [[8, "Bright (a buffer at the guitar)"], [0, "Natural (as it is)"], [1, "Smooth"], [2, "Warm"], [3, "Warmer"], [4, "Punchy"], [5, "Dark"], [6, "Darker"], [7, "Muddy"]]),
+      sel("pmappickup", "The pickup it assumes", "pickup", [[0, "Single coil"], [1, "Humbucker"], [2, "P90"]]),
+      h("span", { class: "grow" }), h("span", { class: "dim small", text: "(SETTINGS, GUITAR TONE and PICKUP: heard at once, in every preset)" })),
+    h("div", { class: "lrow" }, h("span", { text: "Play view" }),
+      sel("pmapview", "What the pedal's PLAY page shows", "view", [[0, "The chain"], [1, "The switches: the blocks they turn on and off"], [2, "The scenes"]]),
+      h("span", { class: "grow" }), h("span", { class: "dim small", text: "(SETTINGS, PLAY VIEW; on the pedal, hold CAB turns it round)" })),
+    h("div", { class: "lrow" }, h("span", { text: "A block with its own switch, in a scene" }),
+      sel("pmapscrule", "Scenes and a block's own switch", "sceneWins", [[0, "Stays with its switch"], [1, "Follows the scene too"]]),
+      h("span", { class: "grow" }), h("span", { class: "dim small", text: "(SETTINGS, SCENE+SWITCH)" })),
+    h("div", { class: "lrow" }, h("span", { text: "The footswitches in the scenes view" }),
+      sel("pmapscfeet", "What the footswitches do in the scenes view", "feetPresets", [[0, "Step through the scenes"], [1, "Stay on the presets"]]),
+      h("span", { class: "grow" }), h("span", { class: "dim small", text: "(SETTINGS, SCENE FOOTSW)" })),
+  ];
   const used = pmap.entries.map((e, i) => [e, i]).filter(([e]) => e);
   return h("div", { class: "learned", id: "pmap" },
     h("div", { class: "lrow" }, h("span", { text: "The flip numbers, CC 8 to 19, act" }), sw, h("span", { class: "grow" }),
@@ -358,6 +431,7 @@ function renderPmap() {
       h("span", { class: "dim small", text: "(SETTINGS, USB RETURN: before a block, wherever this preset puts it, so the blocks after it play on the computer's sound)" })),
     u && h("div", { class: "lrow" }, h("span", { text: "USB audio: the guitar there" }), ug, h("span", { class: "grow" }),
       h("span", { class: "dim small", text: "(SETTINGS, GUITAR: cut, only the computer's sound goes on from there; the guitar comes back when the computer stops playing)" })),
+    moreRows,
     used.length ? used.map(([e, i]) => {
       const t = pedalTarget(e.dst), isValue = e.mode === MAP_VALUE || (t && (t.kind === "param" || t.kind === "type" || t.kind === "exp" || t.kind === "master"));
       const mode = !isValue && h("select", { "aria-label": `How CC ${e.src} acts`, onchange: () => {
@@ -369,6 +443,39 @@ function renderPmap() {
         h("button", { type: "button", class: "btn icon small", "aria-label": `Forget CC ${e.src} on the pedal`,
           onclick: () => savePmap(pmap.entries.map((x, j) => (j === i ? null : x))) }, icon("x")));
     }) : h("p", { class: "dim empty-note", text: `None yet. The pedal keeps up to ${PEDAL_MAP_N}.` }));
+}
+
+// (protocol 6) the current preset's own controls on the pedal: what each drives, how a switch acts, a pedal's heel and toe
+const valText = (param, v) => (param && param.texts && param.texts[v]) || String(v);
+function renderPlist() {
+  const p = app.st.preset;
+  const rows = plist.entries.map((e, i) => {
+    const t = pedalTarget(e.dst), param = t && t.kind === "param" ? typeOf(p, t.b).params[t.k] : null;
+    const put = (patch) => savePlist((slot) => app.ed.presetPut(slot, { ...e, ...patch }));
+    let how = null;
+    if (param && e.mode === MAP_VALUE) {
+      const end = (k, label) => {
+        const s = h("select", { "aria-label": `${tgtName(t)} ${label}`, onchange: () => put({ [k]: +s.value }) },
+          Array.from({ length: 101 }, (_, v) => h("option", { value: String(v), text: valText(param, v) })));
+        s.value = String(e[k]);
+        return s;
+      };
+      how = [h("span", { class: "dim small", text: "heel" }), end("lo", "at the heel"), h("span", { class: "dim small", text: "toe" }), end("hi", "at the toe"),
+        (e.clo !== e.chi && (e.clo !== 0 || e.chi !== 127)) && h("span", { class: "dim small", title: "Where the pedal was at the heel and at the toe while it was learned", text: `(CC ${e.clo} to ${e.chi})` })];
+    } else if (e.mode !== MAP_VALUE) {
+      const m = h("select", { "aria-label": `How CC ${e.src} acts`, onchange: () => put({ mode: +m.value }) },
+        h("option", { value: String(MAP_PRESS), text: "Press: 127, then 0 when let go" }), h("option", { value: String(MAP_EACH), text: "Each message is a press" }));
+      m.value = String(e.mode === MAP_EACH ? MAP_EACH : MAP_PRESS);
+      how = m;
+    }
+    return h("div", { class: "lrow" }, h("span", { class: "chip", text: `CC ${e.src}` }), h("span", { class: "arrow", "aria-hidden": "true", text: "→" }),
+      h("b", { text: pedalName(e) }), h("span", { class: "grow" }), how,
+      h("button", { type: "button", class: "btn icon small", "aria-label": `Forget CC ${e.src} in this preset`,
+        onclick: () => savePlist((slot) => app.ed.presetForget(slot, e.src)) }, icon("x")));
+  });
+  return h("div", { class: "learned", id: "plist" },
+    rows.length ? rows : h("p", { class: "dim empty-note", text: "None in this preset. Choose \"only in\" this preset above and learn one, or on the pedal: a block's row, hold FX." }),
+    h("p", { class: "dim small", text: `${plist.used} of the pedal's ${plist.places} places for single presets in use, all presets together. A preset saved into another slot takes its own along.` }));
 }
 
 function renderMonitor() {
@@ -389,11 +496,16 @@ export function initMidi() {
   loadCfg();
   on("conn", () => {
     learning = null; catching = null;
-    if (app.conn === "ready") { listen(); app.ed.onMidi = fromPedal; app.ed.onMidiIn = fromPedalIn; loadUa(); loadPmap(); } else { ua = null; pmap = null; }
+    if (app.conn === "ready") { listen(); app.ed.onMidi = fromPedal; app.ed.onMidiIn = fromPedalIn; loadUa(); loadPmap(); } else { ua = null; pmap = null; plist = null; }
     renderAll();
   });
   on("ports", () => { listen(); if (app.view === "midi") { renderConn(); renderMap(); } });
-  on("state", () => { if (app.view === "midi" && app.st) renderMap(); });
+  // (protocol 6: another preset, or a change made on the pedal, which may have learned there: its own controls read again)
+  on("state", (o) => {
+    if (!app.st) return;
+    if (plist && (plist.slot !== app.st.slot || (o && o.push && app.view === "midi"))) loadPlist().then(() => { if (app.view === "midi") renderMap(); });
+    else if (app.view === "midi") renderMap();
+  });
   on("view", () => { if (app.view === "midi") renderAll(); else { learning = null; learnt = ""; } });
   addEventListener("keydown", (e) => { if (e.key === "Escape" && (learning || catching)) { learning = null; if (catching) { clearTimeout(catching.timer); catching = null; learnt = ""; } renderMap(); } });
 }

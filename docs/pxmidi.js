@@ -54,9 +54,10 @@ export function decode(d) {
 //   { kind: "on", b, mode }          mode "follow": 64 and above is on; "toggle": each press (a value of 64 or more) flips it
 //   { kind: "type", b }              the control's range is cut in as many slices as the block has models
 //   { kind: "preset", step }         a press goes step presets on (1 or -1)
+//   { kind: "scene", n }             a press recalls scene n (0..3) of the preset playing (editor protocol 6)
 // slot: null = in every preset, n = only while preset slot n (0-based) is the current one.
 export const sameSrc = (a, b) => a.ch === b.ch && a.cc === b.cc;
-export const sameTgt = (a, b) => a.kind === b.kind && a.b === b.b && a.k === b.k && a.step === b.step;
+export const sameTgt = (a, b) => a.kind === b.kind && a.b === b.b && a.k === b.k && a.step === b.step && a.n === b.n;
 
 // the mappings a Control Change triggers in preset `slot`: one of this preset wins over one for every preset
 export function resolve(mappings, msg, slot) {
@@ -65,7 +66,7 @@ export function resolve(mappings, msg, slot) {
 }
 
 // what a mapping does with a value: { do: "param", b, k, v } | { do: "on", b, v } | { do: "type", b, t } |
-// { do: "preset", step } | null (nothing: a pedal released, a toggle's 0). ctx: { on(b), ntypes(b) }
+// { do: "preset", step } | { do: "scene", n } | null (nothing: a pedal released, a toggle's 0). ctx: { on(b), ntypes(b) }
 export function action(m, value, ctx) {
   const t = m.tgt, press = value >= 64;
   if (t.kind === "param") return { do: "param", b: t.b, k: t.k, v: fromCc(value) };
@@ -75,6 +76,7 @@ export function action(m, value, ctx) {
   }
   if (t.kind === "type") return { do: "type", b: t.b, t: typeFromCc(value, ctx.ntypes(t.b)) };
   if (t.kind === "preset") return press ? { do: "preset", step: t.step } : null;
+  if (t.kind === "scene") return press ? { do: "scene", n: t.n } : null;
   return null;
 }
 
@@ -93,7 +95,8 @@ export function cleanMappings(list) {
     ((m.tgt.kind === "param" && int(m.tgt.b, 0, NBLK - 1) && int(m.tgt.k, 0, NPAR - 1)) ||
      (m.tgt.kind === "on" && int(m.tgt.b, 0, NBLK - 1) && (m.tgt.mode === "follow" || m.tgt.mode === "toggle")) ||
      (m.tgt.kind === "type" && int(m.tgt.b, 0, NBLK - 1)) ||
-     (m.tgt.kind === "preset" && (m.tgt.step === 1 || m.tgt.step === -1))));
+     (m.tgt.kind === "preset" && (m.tgt.step === 1 || m.tgt.step === -1)) ||
+     (m.tgt.kind === "scene" && int(m.tgt.n, 0, SCENES - 1))));
 }
 
 // ---- test build 39 (editor protocol 5, the Bluetooth audio image): controls learned ON THE PEDAL ----
@@ -103,6 +106,7 @@ export function cleanMappings(list) {
 // mode 0 "press" (64 and up is a press, below it the switch's release), 1 "each" (every message is a press: a switch that
 // alternates 127 and 0) or 2 "value" (the value passes: a knob, a pedal).
 export const PEDAL_MAP_N = 8, CC_PAD = 64, CC_TAP = 116, CC_EXP = 117, CC_NEXT = 118, CC_PREV = 119;
+export const CC_SCENE0 = 65, SCENES = 4;   // (test build 49: CC 65 to 68, any value, recall SCENE 1 to 4 of the preset playing)
 export const MAP_PRESS = 0, MAP_EACH = 1, MAP_VALUE = 2;
 // the pedal's own number for one of this page's targets: { dst, value } (value: the number reads a value), or null
 export function pedalDst(tgt) {
@@ -110,15 +114,18 @@ export function pedalDst(tgt) {
   if (tgt.kind === "preset") return { dst: tgt.step > 0 ? CC_NEXT : CC_PREV, value: false };
   if (tgt.kind === "param") return { dst: ccParam(tgt.b, tgt.k), value: true };
   if (tgt.kind === "type") return { dst: ccType(tgt.b), value: true };
+  if (tgt.kind === "scene") return { dst: CC_SCENE0 + tgt.n, value: false };
   return null;
 }
-// what one of the pedal's own numbers does: ccTarget's, or { kind: "next" | "prev" | "pad" | "tap" | "exp" }, or null
+// what one of the pedal's own numbers does: ccTarget's, or { kind: "next" | "prev" | "pad" | "tap" | "exp" }, or
+// { kind: "scene", n }, or null
 export function pedalTarget(cc) {
   if (cc === CC_NEXT) return { kind: "next" };
   if (cc === CC_PREV) return { kind: "prev" };
   if (cc === CC_PAD) return { kind: "pad" };
   if (cc === CC_TAP) return { kind: "tap" };
   if (cc === CC_EXP) return { kind: "exp" };
+  if (cc >= CC_SCENE0 && cc < CC_SCENE0 + SCENES) return { kind: "scene", n: cc - CC_SCENE0 };
   return ccTarget(cc);
 }
 // the table with controller number `src` learned for `tgt` (mode: how the switch behaved while it was learned): a new array
@@ -131,6 +138,20 @@ export function pedalLearn(entries, src, tgt, mode) {
   if (i < 0) return null;
   out[i] = { src, dst: d.dst, mode: d.value ? MAP_VALUE : mode === MAP_EACH ? MAP_EACH : MAP_PRESS };
   return out;
+}
+// ---- editor protocol 6 (test builds 46 to 49): a preset's OWN controls learned on the pedal (firmware/px_midi.h mid_pl) ----
+// The same idea in one preset only: a preset's own control comes before the ones above. PRESET_MAP_N places for all the
+// presets together. An entry: { src, dst, mode, lo, hi, clo, chi }: as above, and for a setting driven by a pedal (mode
+// "value") the setting at the heel and at the toe (lo, hi: 0..100; the other way round works too) and where the pedal was
+// at each (clo, chi: 0..127; the same twice: its whole travel)
+export const PRESET_MAP_N = 64;
+// the entry for controller number `src` learned for `tgt` in one preset (mode: as pedalLearn's), a pedal on a setting from
+// its 0 at the heel to its 100 at the toe; or null. The pedal puts it in place of the preset's entry for the same control or
+// the same row (one control a row, one row a control: a block's ON answers to its flip and its on/off numbers)
+export function presetEntry(src, tgt, mode) {
+  const d = pedalDst(tgt);
+  if (!d || !Number.isInteger(src) || src < 0 || src > 127) return null;
+  return { src, dst: d.dst, mode: d.value ? MAP_VALUE : mode === MAP_EACH ? MAP_EACH : MAP_PRESS, lo: 0, hi: 100, clo: 0, chi: 127 };
 }
 // how a switch behaves, from the messages one press gave (values, in order): "press" when a value of 64 or more is
 // followed by one below (it sends 127, then 0 when let go), else "each" (one message a press)

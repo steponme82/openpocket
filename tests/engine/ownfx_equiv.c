@@ -42,17 +42,24 @@ static int ntypes_old(int b)                           /* the models both builds
 {
     int n = px_ntypes(b);
     while (n > 0 && (!strcmp(px_type_name(b, n - 1), "LOW OCTAVE") || !strcmp(px_type_name(b, n - 1), "PAD") ||
-                     !strcmp(px_type_name(b, n - 1), "TREBLE BOOST") || !strcmp(px_type_name(b, n - 1), "TAPE FLUTE"))) n--;
+                     !strcmp(px_type_name(b, n - 1), "TREBLE BOOST") || !strcmp(px_type_name(b, n - 1), "TAPE FLUTE") ||
+                     !strcmp(px_type_name(b, n - 1), "WAH"))) n--;
     return n;
 }
 /* test build 44: the Bluetooth image changes these on purpose (engine/px_dsp.c; tests/engine/synfix.c): SHIMMER's octave voice
  * (here its amount, SHIMMER, is 0: the reverb type itself, its tank and its other knobs, is still compared bit for bit), and
- * SYN's STRINGS and SITAR (rebuilt), MONO SYNTH (its tracker) and BARITONE (its shifter): here an ORGAN in their place */
-static int syn_changed(int t) { return t == PX_SYN_STRINGS || t == PX_SYN_MONO || t == PX_SYN_SITAR || t == PX_SYN_BARI; }
+ * SYN's STRINGS and SITAR (rebuilt), MONO SYNTH (its tracker) and BARITONE (its shifter): here an ORGAN in their place.
+ * Test build 45: PITCH's WHAMMY (SHIFT's intervals, PEDAL, the note itself at unison: tests/engine/exp.c): a POLY OCTAVE.
+ * Test build 47: SYN's 12-STRING (DETUNE 0 to 3 cents, no unison copy: tests/engine/synfix.c 9), an ORGAN too.
+ * Test build 48: PRESET LVL under 20 (down to silence: tests/engine/exp.c), 20 here */
+static int syn_changed(int t) { return t == PX_SYN_STRINGS || t == PX_SYN_MONO || t == PX_SYN_SITAR || t == PX_SYN_BARI || t == PX_SYN_12STR; }
+static int pit_changed(int t) { return t == PX_PIT_WHAMMY; }
 static void no_shim(px_preset_t *p)
 {
+    if (p->p[PX_B_GATE][PX_PATCH_LEVEL] < 20) p->p[PX_B_GATE][PX_PATCH_LEVEL] = 20;   /* (test build 48: PRESET LVL's own below) */
     if (p->type[PX_B_REVERB] % PX_REV_COUNT == PX_REV_SHIMMER) p->p[PX_B_REVERB][3] = 0;
     if (syn_changed(p->type[PX_B_SYN] % PX_SYN_COUNT)) p->type[PX_B_SYN] = PX_SYN_ORGAN;
+    if (pit_changed(p->type[PX_B_PITCH] % PX_PIT_COUNT)) p->type[PX_B_PITCH] = PX_PIT_POLYOCT;
 }
 static uint64_t H(uint64_t h, const float *o, int n)
 {
@@ -147,6 +154,7 @@ int main(int argc, char **argv)
     for (int blk = 0; blk < PX_NBLK; blk++) for (int t = 0; t < ntypes_old(blk); t++) {
         if (blk == PX_B_AMP && t == PX_AMP_NAM) continue;
         if (blk == PX_B_SYN && syn_changed(t)) continue;
+        if (blk == PX_B_PITCH && pit_changed(t)) continue;
         for (int a = 0; a < 8; a++) {
             px_preset_t p; alone(&p, blk);
             p.type[blk] = (uint8_t)t; memcpy(p.p[blk], V[a], 5); no_shim(&p);
@@ -159,6 +167,7 @@ int main(int argc, char **argv)
         for (int z = 0; z < PX_NBLK; z++) p.on[z] = (z == PX_B_AMP || z == PX_B_CAB || z == PX_B_DRIVE || z == blk);
         if (blk == PX_B_AMP && t == PX_AMP_NAM) continue;
         if (blk == PX_B_SYN && syn_changed(t)) continue;
+        if (blk == PX_B_PITCH && pit_changed(t)) continue;
         p.type[blk] = (uint8_t)t; memcpy(p.p[blk], V[5 + a], 5); no_shim(&p);
         printf("B blk %d type %d set %d %016llx\n", blk, t, a, (unsigned long long)run(&p, a, 44100, 64)); n++;
     }

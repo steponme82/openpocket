@@ -8,6 +8,7 @@ import { initPresets, loadBank, refreshSlots, refreshBank, stepPreset, save, com
 import { initSound } from "./edsound.js";
 import { initModels, loadAssets } from "./edmodels.js";
 import { initMidi } from "./edmidi.js";
+import { initScenes } from "./edscenes.js";
 
 let pingTimer = null, connecting = false, progress = 0;
 
@@ -216,7 +217,7 @@ function renderConnPop() {
 }
 
 // ---- start ----
-initPresets(); initSound(); initMidi();
+initPresets(); initSound(); initMidi(); initScenes();
 await initModels();
 on("view-go", (v) => setView(v));
 $("reconnect").onclick = connect;

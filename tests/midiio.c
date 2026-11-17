@@ -68,6 +68,8 @@ static int exp_last = -1, exp_n;
 #define PX_EXP_SET(v) (exp_last = (int)(v), exp_n++)
 static int steps, step_n;                                /* test build 39: CC 118 / 119, the footswitches' preset step */
 #define PXM_STEP(dd) (steps += (dd), step_n++)
+static int scene_last = -1, scene_n;                     /* test build 49: CC 65 to 68, a scene */
+#define PXM_SCENE(n) (scene_last = (int)(n), scene_n++)
 #endif
 #if ED_BT                                                /* the Bluetooth audio image (-DED_BT=1): the web editor's SysEx, kept
                                                         * across writes as px_editor.h keeps it (its ed_bt_write, one line) */
@@ -207,12 +209,17 @@ int main(void)
         midi_persist();
         ok(commits == (int)c0 + 1 && st_midi == px_midi_cfg_pack(&mid_cfg), "leaving the MIDI page writes the settings byte to the store, once");
         ok(st_usb == 0, "USB AUDIO off: the USB settings byte stays 0");
-        px_ua_on = 1; st_usb = 0x80;
+#if PX_OWN_FX
+        const uint8_t OB = 0x02;                       /* (test build 49: bits 2 to 7 are the Bluetooth image's settings: bit 1) */
+#else
+        const uint8_t OB = 0x80;
+#endif
+        px_ua_on = 1; st_usb = OB;
         midi_persist();
-        ok(commits == (int)c0 + 2 && st_usb == 0x81, "USB AUDIO on: bit 0 of the USB settings byte, the other bits kept");
+        ok(commits == (int)c0 + 2 && st_usb == (OB | 1u), "USB AUDIO on: bit 0 of the USB settings byte, the other bits kept");
         px_ua_on = 0;
         midi_persist();
-        ok(st_usb == 0x80, "USB AUDIO off again: bit 0 cleared");
+        ok(st_usb == OB, "USB AUDIO off again: bit 0 cleared");
         st_usb = 0;
     }
     reset();
@@ -376,6 +383,188 @@ int main(void)
         ok(!px_midi_map_valid(&bad) && px_midi_map_valid(&empty) && !px_midi_map_valid(&mode),
            "an entry must name a number the pedal reads and a known mode (empty entries are valid)");
         px_midi_map_clear();
+    }
+    {   /* test build 46: controls learned live, a preset's own (px_midi.h mid_learn, mid_pl). The screen (ui.h) arms a learn for
+         * one row of the preset playing; the next controller Control Change, and that control's messages for 1.2 s, are taken
+         * (not played) and tell what it is: a momentary switch (a press and its release), one that alternates (EACH), a pedal
+         * (values between 0 and 127) */
+        reset();
+        px_midi_map_clear(); px_midi_pl_clear();
+        cur_preset = 3; load_preset(3);
+        const uint32_t TEQ = PXM_CC_TOGGLE0 + PX_B_EQ, OEQ = PXM_CC_ON0 + PX_B_EQ, KDL = px_cc_param(PX_B_DELAY, 1);
+        uint32_t src = 0;
+        int eq = PRESET.on[PX_B_EQ];
+        px_learn_arm(3, TEQ, OEQ, 0, 1000u);
+        midi_enqueue(cc(0, 3, 127), 1); midi_enqueue(cc(0, 3, 0), 2); px_midi_service();
+        int taken = PRESET.on[PX_B_EQ] == eq;
+        int w1 = px_learn_poll(1100u, &src) == PXL_WAIT, w2 = px_learn_poll(2200u, &src) == PXL_WAIT;
+        int done = px_learn_poll(2400u, &src) == PXL_DONE && src == 3 && !mid_learn.on;
+        int e = px_midi_pl_row(3, TEQ, OEQ);
+        int press = e >= 0 && mid_pl[e].src == 3 && mid_pl[e].dst == TEQ && mid_pl[e].mode == PXM_MAP_PRESS;
+        ok(taken && w1 && w2 && done && press, "LEARN: a momentary switch on CC 3 (press, release) taken, not played; 1.2 s on: PRESS on the EQ's flip");
+        midi_enqueue(cc(0, 3, 127), 3); px_midi_service();
+        int flip = PRESET.on[PX_B_EQ] == !eq;
+        midi_enqueue(cc(0, 3, 0), 4); px_midi_service();
+        int rel = PRESET.on[PX_B_EQ] == !eq;
+        cur_preset = 4; load_preset(4);
+        int eq4 = PRESET.on[PX_B_EQ];
+        midi_enqueue(cc(0, 3, 127), 5); midi_enqueue(cc(0, 3, 0), 6); px_midi_service();
+        ok(flip && rel && PRESET.on[PX_B_EQ] == eq4, "learned in preset 4 (slot 3): CC 3 flips its EQ on the press; in preset 5 (slot 4) it does nothing");
+        /* a switch that alternates (one message a press): EACH; a pedal on a setting: its value; a pedal on ON: on / off */
+        cur_preset = 3; load_preset(3);
+        px_learn_arm(3, KDL, KDL, 1, 3000u);
+        midi_enqueue(cc(0, 4, 10), 7); midi_enqueue(cc(0, 4, 40), 8); midi_enqueue(cc(0, 4, 90), 9); px_midi_service();
+        (void)px_learn_poll(3010u, &src);
+        int knob = px_learn_poll(4300u, &src) == PXL_DONE && (e = px_midi_pl_row(3, KDL, KDL)) >= 0 && mid_pl[e].src == 4 && mid_pl[e].mode == PXM_MAP_VALUE;
+        midi_enqueue(cc(0, 4, 64), 10); px_midi_service();
+        int value = PRESET.p[PX_B_DELAY][1] == pxm_from_cc(64);
+        ok(knob && value, "LEARN on a setting: a pedal on CC 4 moves the delay's 2nd setting (64: 50)");
+        px_learn_arm(3, TEQ, OEQ, 0, 5000u);
+        midi_enqueue(cc(0, 5, 20), 11); midi_enqueue(cc(0, 5, 100), 12); px_midi_service();
+        (void)px_learn_poll(5010u, &src);
+        int pon = px_learn_poll(6300u, &src) == PXL_DONE && (e = px_midi_pl_row(3, TEQ, OEQ)) >= 0 && mid_pl[e].src == 5 && mid_pl[e].dst == OEQ;
+        int one = px_midi_pl_count(3) == 2;              /* (CC 3's switch on the same row went: one control a row) */
+        midi_enqueue(cc(0, 5, 100), 13); px_midi_service();
+        int on1 = PRESET.on[PX_B_EQ] == 1;
+        midi_enqueue(cc(0, 5, 10), 14); px_midi_service();
+        int off1 = PRESET.on[PX_B_EQ] == 0;
+        midi_enqueue(cc(0, 3, 127), 15); px_midi_service();
+        ok(pon && one && on1 && off1 && PRESET.on[PX_B_EQ] == 0, "LEARN on ON with a pedal (CC 5): on at 64 and up, off below; it replaced CC 3 on that row");
+        px_learn_arm(3, PXM_CC_TOGGLE0 + PX_B_MOD, PXM_CC_ON0 + PX_B_MOD, 0, 7000u);
+        midi_enqueue(cc(0, 6, 127), 16); px_midi_service();
+        (void)px_learn_poll(7010u, &src);
+        int each = px_learn_poll(8300u, &src) == PXL_DONE && (e = px_midi_pl_row(3, PXM_CC_TOGGLE0 + PX_B_MOD, 0xFFu)) >= 0 &&
+                   mid_pl[e].mode == PXM_MAP_EACH;
+        int mod = PRESET.on[PX_B_MOD];
+        midi_enqueue(cc(0, 6, 0), 17); midi_enqueue(cc(0, 6, 127), 18); px_midi_service();
+        ok(each && PRESET.on[PX_B_MOD] == mod, "LEARN: a switch that sends one message a press (CC 6): EACH, every message flips the MOD");
+        /* a preset's own wins over the editor's (which work in every preset); nothing heard: given up; the table full */
+        mid_map[0] = (px_map_t){ 5, PXM_CC_NEXT, PXM_MAP_PRESS };   /* the editor's: CC 5 steps the preset, in every preset */
+        steps = step_n = 0;
+        PRESET.on[PX_B_EQ] = 0;
+        midi_enqueue(cc(0, 5, 100), 19); px_midi_service();
+        int own = step_n == 0 && PRESET.on[PX_B_EQ] == 1;
+        cur_preset = 6; load_preset(6);
+        midi_enqueue(cc(0, 5, 127), 20); midi_enqueue(cc(0, 5, 0), 21); px_midi_service();
+        ok(own && step_n == 1, "a preset's own control wins over the editor's: CC 5 switches slot 3's EQ, steps the preset in slot 6");
+        cur_preset = 3; load_preset(3);
+        px_learn_arm(3, KDL, KDL, 1, 9000u);
+        int silent = px_learn_poll(18000u, &src) == PXL_WAIT && px_learn_poll(19001u, &src) == PXL_SILENT && !mid_learn.on;
+        for (uint32_t i = 0; i < PXM_PL_N; i++) if (mid_pl[i].slot == 0xFFu) mid_pl[i] = (px_pl_t){ 20, (uint8_t)(i & 127u), (uint8_t)KDL, PXM_MAP_VALUE, 0, 100 };
+        const uint32_t KRV = px_cc_param(PX_B_REVERB, 0);   /* (a row slot 3 has nothing on: no entry of its own to replace) */
+        px_learn_arm(3, KRV, KRV, 1, 20000u);
+        midi_enqueue(cc(0, 9, 64), 23); px_midi_service();
+        (void)px_learn_poll(20010u, &src);
+        int full = px_learn_poll(21300u, &src) == PXL_FULL;
+        ok(silent && full, "LEARN: nothing in 10 s: given up; with all 48 in use: FULL");
+        px_pl_t bad1 = { 52, 3, (uint8_t)OEQ, 0 }, bad2 = { 3, 3, 3, 0 }, bad3 = { 3, 3, (uint8_t)OEQ, 3 }, empty = { 0xFF, 0xFF, 0xFF, 0xFF };
+        ok(!px_midi_pl_valid(&bad1) && !px_midi_pl_valid(&bad2) && !px_midi_pl_valid(&bad3) && px_midi_pl_valid(&empty),
+           "a preset's entry must name a slot, a number the pedal reads and a known mode (empty entries are valid)");
+        {   /* a sound saved into another slot takes its own controls along (px_midi_pl_copy), in place of that slot's */
+            px_midi_pl_clear();
+            px_midi_pl_put(3, 30, PXM_CC_TOGGLE0 + PX_B_EQ, PXM_MAP_PRESS, PXM_CC_ON0 + PX_B_EQ, 0u, 100u);
+            px_midi_pl_put(3, 31, KDL, PXM_MAP_VALUE, KDL, 0u, 100u);
+            px_midi_pl_put(7, 40, PXM_CC_TOGGLE0 + PX_B_MOD, PXM_MAP_EACH, PXM_CC_ON0 + PX_B_MOD, 0u, 100u);
+            const uint32_t lost = px_midi_pl_copy(3, 7);
+            int e1 = px_midi_pl_row(7, PXM_CC_TOGGLE0 + PX_B_EQ, 0xFFu), e2 = px_midi_pl_row(7, KDL, 0xFFu);
+            ok(lost == 0 && px_midi_pl_count(7) == 2 && px_midi_pl_count(3) == 2 && e1 >= 0 && e2 >= 0 && mid_pl[e1].src == 30 &&
+               mid_pl[e2].mode == PXM_MAP_VALUE && px_midi_pl_row(7, PXM_CC_TOGGLE0 + PX_B_MOD, 0xFFu) < 0,
+               "saved into another slot: its two controls copied there, the slot's own one gone, the original kept");
+            for (uint32_t i = 0; i < PXM_PL_N; i++) if (mid_pl[i].slot == 0xFFu) mid_pl[i] = (px_pl_t){ 20, (uint8_t)(i & 127u), (uint8_t)KDL, PXM_MAP_VALUE, 0, 100 };
+            px_midi_pl_drop_slot(20);
+            for (uint32_t i = 0, k = 0; i < PXM_PL_N && k < PXM_PL_N - 5u; i++) if (mid_pl[i].slot == 0xFFu) { mid_pl[i] = (px_pl_t){ 21, (uint8_t)k, (uint8_t)KDL, PXM_MAP_VALUE, 0, 100 }; k++; }
+            const uint32_t lost2 = px_midi_pl_copy(3, 9);   /* (one place left after slot 3's, 7's and 21's: one of two copied) */
+            ok(lost2 == 1 && px_midi_pl_count(9) == 1 && px_midi_pl_count(PXM_PL_SLOTS) == PXM_PL_N, "no room for all: as many as fit copied, the others counted");
+            ok(px_midi_pl_copy(3, 3) == 0 && px_midi_pl_count(3) == 2, "saved onto its own slot: nothing to copy");
+        }
+        px_midi_pl_drop_slot(3);
+        ok(px_midi_pl_count(3) == 0 && px_midi_pl_count(21) > 0, "a slot back to its factory sound drops its own controls, the others stay");
+        {   /* test build 47: a pedal's heel and toe on a setting (the screen asks them, ui.h ui_range_end): 0 at the heel, 127 at
+             * the toe, in proportion between, either way round; the control set aside while they are being set (mid_learn.hold) */
+            px_midi_pl_clear(); cur_preset = 3; load_preset(3);
+            px_midi_pl_put(3, 31, KDL, PXM_MAP_VALUE, KDL, 30u, 70u);
+            midi_enqueue(cc(0, 31, 0), 30); px_midi_service();
+            const int h0 = PRESET.p[PX_B_DELAY][1];
+            midi_enqueue(cc(0, 31, 127), 31); px_midi_service();
+            const int t0 = PRESET.p[PX_B_DELAY][1];
+            midi_enqueue(cc(0, 31, 64), 32); px_midi_service();
+            const int m0 = PRESET.p[PX_B_DELAY][1];
+            ok(h0 == 30 && t0 == 70 && m0 >= 49 && m0 <= 51, "a pedal's range: 30 at the heel, 70 at the toe, 50 halfway");
+            px_midi_pl_put(3, 31, KDL, PXM_MAP_VALUE, KDL, 90u, 10u);
+            midi_enqueue(cc(0, 31, 0), 33); px_midi_service();
+            const int h1 = PRESET.p[PX_B_DELAY][1];
+            midi_enqueue(cc(0, 31, 127), 34); px_midi_service();
+            ok(h1 == 90 && PRESET.p[PX_B_DELAY][1] == 10, "a pedal's range the other way round: 90 at the heel, 10 at the toe");
+            px_midi_pl_put(3, 31, KDL, PXM_MAP_VALUE, KDL, 0u, 100u);
+            for (int v = 0; v <= 127; v++) {   /* (the whole range: every value as 46 had it) */
+                midi_enqueue(cc(0, 31, (uint32_t)v), 35); px_midi_service();
+                if (PRESET.p[PX_B_DELAY][1] != (v * 100 + 63) / 127 && PRESET.p[PX_B_DELAY][1] != (v * 100) / 127) { ok(0, "the whole range as before"); break; }
+            }
+            const int before = PRESET.p[PX_B_DELAY][1];
+            mid_learn.hold = 31;
+            midi_enqueue(cc(0, 31, 3), 36); px_midi_service();
+            const int held = PRESET.p[PX_B_DELAY][1] == before;
+            mid_learn.hold = 0xFFu;
+            midi_enqueue(cc(0, 31, 3), 37); px_midi_service();
+            ok(held && PRESET.p[PX_B_DELAY][1] != before, "a control whose range is being set moves nothing; after, it does again");
+            px_midi_pl_clear();
+        }
+        {   /* test build 48: the pedal's own travel, taken at the heel and the toe (a pedal that sends 3 to 120): its heel gives
+             * the heel's value, its toe the toe's, past either the same; reversed (120 at the heel) too */
+            px_midi_pl_clear(); cur_preset = 3; load_preset(3);
+            px_midi_pl_put(3, 31, KDL, PXM_MAP_VALUE, KDL, 30u, 70u);
+            const int e = px_midi_pl_row(3, KDL, 0xFFu);
+            mid_pl[e].clo = 3; mid_pl[e].chi = 120;
+            static const uint8_t IN[5] = {3, 0, 120, 127, 62};
+            int got[5];
+            for (int i = 0; i < 5; i++) { midi_enqueue(cc(0, 31, IN[i]), 40 + i); px_midi_service(); got[i] = PRESET.p[PX_B_DELAY][1]; }
+            ok(got[0] == 30 && got[1] == 30 && got[2] == 70 && got[3] == 70 && got[4] >= 49 && got[4] <= 51,
+               "a pedal's own travel: 3 at its heel gives 30, 120 at its toe 70, past them the same, 62 halfway");
+            mid_pl[e].clo = 120; mid_pl[e].chi = 3;
+            midi_enqueue(cc(0, 31, 120), 46); px_midi_service();
+            const int r0 = PRESET.p[PX_B_DELAY][1];
+            midi_enqueue(cc(0, 31, 3), 47); px_midi_service();
+            ok(r0 == 30 && PRESET.p[PX_B_DELAY][1] == 70, "a pedal's own travel the other way round: 120 at the heel, 3 at the toe");
+            mid_pl[e].clo = 64; mid_pl[e].chi = 64;
+            midi_enqueue(cc(0, 31, 127), 48); px_midi_service();
+            ok(PRESET.p[PX_B_DELAY][1] == 70, "a pedal not moved between the heel and the toe: its whole 0..127");
+            px_midi_pl_clear();
+        }
+        {   /* test build 48: the guided learn: a pedal is taken at its first message, the entry left to the screen; while held,
+             * where it is (mid_learn.last) */
+            uint32_t s2 = 0;
+            px_learn_arm(3, KDL, KDL, 1, 50000u); mid_learn.pedal = 1; mid_learn.keep = 1;
+            midi_enqueue(cc(0, 33, 90), 49); px_midi_service();
+            const int r = px_learn_poll(50010u, &s2);
+            ok(r == PXL_DONE && s2 == 33 && mid_learn.rdst == KDL && mid_learn.rmode == PXM_MAP_VALUE && mid_learn.last == 90 &&
+               px_midi_pl_count(3) == 0, "guided: a pedal at its first message, VALUE on the setting, nothing put yet");
+            mid_learn.hold = 33;
+            const int dl = PRESET.p[PX_B_DELAY][1];
+            midi_enqueue(cc(0, 33, 7), 50); px_midi_service();
+            ok(mid_learn.last == 7 && PRESET.p[PX_B_DELAY][1] == dl, "guided: held, the pedal's place kept, nothing moved");
+            mid_learn.hold = 0xFFu; mid_learn.pedal = 0; mid_learn.keep = 0;
+        }
+        px_midi_map_clear(); px_midi_pl_clear();
+    }
+    {   /* test build 49: CC 65 to 68 recall SCENE 1 to 4, at any value (a switch that alternates 127 and 0: each press); a
+         * controller's switch learned on a scene in a preset recalls it there; not on SETTINGS' page */
+        reset();
+        px_midi_map_clear(); px_midi_pl_clear();
+        scene_n = 0; scene_last = -1;
+        midi_enqueue(cc(0, 66, 127), 1); px_midi_service();
+        const int a = scene_n == 1 && scene_last == 1;
+        midi_enqueue(cc(0, 68, 0), 2); px_midi_service();
+        const int b = scene_n == 2 && scene_last == 3;
+        px_midi_pl_put(cur_preset, 20, 65, PXM_MAP_EACH, 65, 0u, 100u);   /* (a Chocolate switch on CC 20 learned on SCENE 1) */
+        const uint8_t eq = PRESET.on[PX_B_EQ];
+        midi_enqueue(cc(0, 20, 127), 3); midi_enqueue(cc(0, 20, 0), 4); px_midi_service();
+        const int c = scene_n == 4 && scene_last == 0 && PRESET.on[PX_B_EQ] == eq;
+        ui_mode = M_MIDI;
+        midi_enqueue(cc(0, 67, 127), 5); px_midi_service();
+        ui_mode = M_BLOCK;
+        ok(a && b && c && scene_n == 4 && px_midi_known(65) && px_midi_known(68) && !px_midi_known(69),
+           "CC 65 to 68: SCENE 1 to 4 at any value, through a switch learned on one, not on SETTINGS' page");
+        px_midi_pl_clear();
     }
     {   /* CC 117 is the expression pedal (test build 25): every value goes to the engine, on any page, and the preset stays */
         reset();

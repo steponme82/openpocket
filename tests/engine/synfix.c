@@ -12,6 +12,17 @@
  *     octave down, in tune;
  *  6. TAPE FLUTE: plays the note's pitch within 20 cents (the tape's wow and flutter on it), says nothing to silence, swells in
  *     over ATTACK.
+ * Test build 45:
+ *  7. TAPE FLUTE on the semitone: a note picked 40 cents sharp that settles 25 sharp plays its semitone exactly from the first
+ *     sound, without a glide; a new note two semitones up is taken within 40 ms; a guitar 30 cents flat with a vibrato of 20
+ *     cents stays on its semitone, and its next semitone, as flat, is taken (a guitar half a semitone off is between two:
+ *     no window can tell);
+ *  8. MONO SYNTH through hum (50 Hz and its 3rd and 5th, 30 dB under the notes): the twenty notes as in 3, and once the
+ *     string is muted, the hum alone, the synth lets go within 0.2 s (it played the last note on).
+ * Test build 47:
+ *  9. 12-STRING steady: on held notes, its level against the guitar's (50 ms windows) swings under 1 dB at DETUNE 0, and
+ *     at DETUNE 50 it moves under 4 dB a second on average (it was 10, the octave beating against the note's 2nd harmonic at
+ *     7.5 cents with the unison copy's sweep); the octave in tune (2 cents) at DETUNE 0, 3 cents sharp at 100; DETUNE's text.
  *   cc -O2 -DPX_OWN_FX=1 -Iengine tests/engine/synfix.c engine/px_dsp.c firmware/px_math.c -lm -o build/synfix && build/synfix */
 #include <math.h>
 #include <stdio.h>
@@ -59,6 +70,25 @@ static double amp_at(const float *y, double f, int a, int b)
 }
 static double rms(const float *y, int a, int b) { double s = 0; for (int k = a; k < b; k++) s += (double)y[k] * y[k]; return sqrt(s / (b - a)); }
 static double cents(double f, double want) { return 1200.0 * log2(f / want); }
+/* y's level against x's in 50 ms windows over [a, b), less its straight trend: the swing (peak to trough, dB) and how fast it
+ * moves (dB a second, on average) */
+static void wobble(const float *y, const float *x, int a, int b, double *pp, double *speed)
+{
+    enum { W = SR / 20 };
+    static double d[NS / (W / 2) + 2];
+    int n = 0;
+    for (int s = a; s + W <= b; s += W / 2) {
+        double ey = 1e-20, ex = 1e-20;
+        for (int k = s; k < s + W; k++) { ey += (double)y[k] * y[k]; ex += (double)x[k] * x[k]; }
+        d[n++] = 10 * log10(ey / ex);
+    }
+    double sx = 0, sy = 0, sxx = 0, sxy = 0;
+    for (int i = 0; i < n; i++) { sx += i; sy += d[i]; sxx += (double)i * i; sxy += i * d[i]; }
+    const double sl = (n * sxy - sx * sy) / (n * sxx - sx * sx), ic = (sy - sl * sx) / n;
+    double lo = 1e9, hi = -1e9, mv = 0;
+    for (int i = 0; i < n; i++) { const double v = d[i] - (ic + sl * i); if (v < lo) lo = v; if (v > hi) hi = v; if (i) mv += fabs(d[i] - d[i - 1] - sl); }
+    *pp = hi - lo; *speed = mv / ((n - 1) * (W / 2.0) / SR);
+}
 static void saw_note(float *x, int n, double f, double amp, double decay, int harmonics)
 {
     for (int k = 0; k < n; k++) {
@@ -227,6 +257,97 @@ int main(void)
         snprintf(what, sizeof what, "TAPE FLUTE: plays the note (%+.1f cents, the tape's wow on it), silent to silence (%.1f dB), swells in (%.1f dB from 10 ms to 300 ms)",
                  cents(f, 329.63), 20 * log10(quiet + 1e-12), 20 * log10(r2 / (r1 + 1e-9)));
         ok(fabs(cents(f, 329.63)) < 20.0 && quiet < 1e-5 && r2 > 4.0 * r1, what);
+    }
+    /* 7. TAPE FLUTE on the semitone */
+    {
+        const uint8_t k[5] = {10, 50, 0, 50, 0};        /* (WOW 0: the semitone exactly) */
+        px_preset_t p; base(&p, PX_B_SYN, PX_SYN_FLUTE, k);
+        px_engine_init(&e, (float)SR); px_engine_set(&e, &p);
+        /* A3 picked 40 cents sharp, settling 25 sharp in 80 ms; then B3 legato; 0.3 s of silence; E3 30 cents flat with a
+         * 5 Hz vibrato of 20 cents, 1.5 s; then F3, as flat, legato */
+        const double A3 = 220.0, B3 = 440.0 * pow(2.0, -10.0 / 12.0), E3 = 440.0 * pow(2.0, -17.0 / 12.0), F3 = 440.0 * pow(2.0, -16.0 / 12.0);
+        double ph = 0; int bad = 0, sounding = 0, changes = 0, moved = -1, moved2 = -1; float last = 0;
+        for (int s = 0; s < 5 * SR; s += 64) {
+            for (int j = 0; j < 64; j++) {
+                const double t = (double)(s + j) / SR;
+                double f = 0, a = 0;
+                if (t < 1.2) { f = A3 * pow(2.0, (25.0 + 15.0 * exp(-t / 0.08)) / 1200.0); a = 0.15 * exp(-t * 1.5); }
+                else if (t < 2.0) { f = B3 * pow(2.0, 25.0 / 1200.0); a = 0.15 * exp(-(t - 1.2) * 1.5); }
+                else if (t < 2.3) { f = 0; a = 0; }
+                else if (t < 3.8) { f = E3 * pow(2.0, (-30.0 + 20.0 * sin(2 * M_PI * 5.0 * t)) / 1200.0); a = 0.15 * exp(-(t - 2.3) * 1.0); }
+                else { f = F3 * pow(2.0, -30.0 / 1200.0); a = 0.1 * exp(-(t - 3.8) * 1.0); }
+                if (a > 0) { ph += f / SR; ph -= floor(ph); }
+                in[j] = (float)(a * (sin(2 * M_PI * ph) + 0.5 * sin(4 * M_PI * ph) + 0.3 * sin(6 * M_PI * ph)));
+            }
+            px_engine_process(&e, in, out, 64);
+            const double t = (double)s / SR;
+            if (e.syn_kg < 0.1f) continue;
+            sounding++;
+            if (t < 1.2 && fabs(cents(e.syn_f0, A3)) > 0.01) bad++;
+            if (t >= 1.2 && t < 2.0 && moved < 0 && fabs(cents(e.syn_f0, B3)) < 0.01) moved = (int)((t - 1.2) * 1000.0);
+            if (t >= 2.4 && t < 3.8 && fabs(cents(e.syn_f0, E3)) > 0.01) bad++;
+            if (t >= 2.4 && t < 3.8 && last > 0 && e.syn_f0 != last) changes++;
+            if (t >= 2.4 && t < 3.8) last = e.syn_f0;
+            if (t >= 3.8 && moved2 < 0 && fabs(cents(e.syn_f0, F3)) < 0.01) moved2 = (int)((t - 3.8) * 1000.0);
+        }
+        snprintf(what, sizeof what, "TAPE FLUTE: a sharp note on its semitone from the first sound, B3 taken in %d ms; 30 cents flat: vibrato %d changes, F3 in %d ms (%d blocks off)",
+                 moved, changes, moved2, bad);
+        ok(bad == 0 && sounding > 500 && moved >= 0 && moved < 40 && changes == 0 && moved2 >= 0 && moved2 < 40, what);
+    }
+    /* 8. MONO SYNTH through hum */
+    {
+        const uint8_t k[5] = {0, 50, 60, 20, 30};
+        px_preset_t p; base(&p, PX_B_SYN, PX_SYN_MONO, k);
+        px_engine_init(&e, (float)SR); px_engine_set(&e, &p);
+        static const float F[6] = {110.0f, 196.0f, 329.63f, 440.0f, 659.26f, 146.83f};
+        double ph = 0; int intune = 0, lock_n = 0, late = -1;
+        for (int s = 0; s < 6 * SR; s += 64) {
+            const int n = s / (SR * 3 / 4);            /* six notes of 0.75 s, then the hum alone from 4.5 s */
+            for (int j = 0; j < 64; j++) {
+                const double t = (double)(s + j) / SR, tn = t - n * 0.75;
+                const double hum = 0.004 * (sin(2 * M_PI * 50 * t) + 0.5 * sin(2 * M_PI * 150 * t) + 0.3 * sin(2 * M_PI * 250 * t));
+                double v = 0;
+                if (n < 6 && tn > 0.05) { ph += F[n] / SR; ph -= floor(ph); v = 0.15 * exp(-(tn - 0.05) * 2.0) * (sin(2 * M_PI * ph) + 0.5 * sin(4 * M_PI * ph) + 0.3 * sin(6 * M_PI * ph)); }
+                in[j] = (float)(v + hum);
+            }
+            px_engine_process(&e, in, out, 64);
+            const double t = (double)s / SR, tn = t - n * 0.75;
+            if (n < 6 && tn > 0.15 && tn < 0.7) { lock_n++; if (e.syn_kg > 0.5f && fabs(cents(e.syn_f0, F[n])) < 15.0) intune++; }
+            if (n >= 6 && late < 0 && e.syn_kg < 0.01f) late = (int)((t - 4.5) * 1000.0);
+        }
+        snprintf(what, sizeof what, "MONO SYNTH through hum 30 dB down: in tune %d of %d blocks of six notes; the hum alone: silent after %d ms (it played on)",
+                 intune, lock_n, late);
+        ok(intune > lock_n * 95 / 100 && late >= 0 && late < 200, what);
+    }
+    /* 9. 12-STRING steady */
+    {
+        static const double F[4] = {146.83, 196.0, 329.63, 493.88};
+        static float oc[NS];
+        double pp0 = 0, sp50 = 0, sp0 = 0, c0 = 0, c100 = 0;
+        for (int det = 0; det <= 100; det += 50) for (int i = 0; i < 4; i++) {
+            const uint8_t k[5] = {70, (uint8_t)det, 50, 0, 0};
+            px_preset_t p; base(&p, PX_B_SYN, PX_SYN_12STR, k);
+            for (int j = 0; j < 4 * SR; j++) {
+                double v = 0;
+                for (int h = 1; h <= 10; h++) if (F[i] * h < 8000) v += sin(2 * M_PI * F[i] * h * j / SR + h * 0.7) / h;
+                in[j] = (float)(0.15 * v * exp(-0.25 * j / SR));
+            }
+            run(&p, 4 * SR);
+            double pp, sp;
+            wobble(out, in, SR, (int)(3.5 * SR), &pp, &sp);
+            if (det == 0) { if (pp > pp0) pp0 = pp; sp0 += sp / 4; }
+            if (det == 50) sp50 += sp / 4;
+            if (det != 50 && i == 2) {                 /* (E4: the octave alone, near 2 f) */
+                for (int j = 0; j < 4 * SR; j++) oc[j] = out[j] - in[j];
+                const double c = cents(peak_f(oc, SR, 3 * SR, 2 * F[i] * 0.99, 2 * F[i] * 1.01), 2 * F[i]);
+                if (det == 0) c0 = c; else c100 = c;
+            }
+        }
+        char t[12];
+        px_param_text(PX_B_SYN, PX_SYN_12STR, 1, 50, t);
+        snprintf(what, sizeof what, "12-STRING: DETUNE 0 swings %.2f dB at most (%.1f dB/s), DETUNE 50 moves %.1f dB/s; octave %+.1f / %+.1f cents; '%s'",
+                 pp0, sp0, sp50, c0, c100, t);
+        ok(pp0 < 1.0 && sp50 < 4.0 && fabs(c0) < 2.0 && fabs(c100 - 3.0) < 1.0 && !strcmp(t, "1.5"), what);
     }
     printf(failed ? "syn fixes test FAILED\n" : "syn fixes test passed\n");
     return failed ? 1 : 0;
