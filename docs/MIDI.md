@@ -208,6 +208,11 @@ switches the blocks to it at once (each block fades, as when switched by hand).
   through the scenes, round (SETTINGS' **SCENE FOOTSW**: **SCENES**, the default, or **PRESETS** to keep them on the presets;
   both together still open the tuner, the scene stepped back). To reach SETTINGS from SCENES' view: hold CAB to CHAIN first.
   The view is kept with the settings at the next save.
+- **Names** (test build 50): up to 3 letters a scene (`VRS`, `CHS`, `SOL`), in every preset, typed in the web editor; the
+  pedal shows them on the tiles and on PLAY in place of `SCENE 2`. A name typed makes the preset `EDITED`: SAVE writes it with
+  the sound (a sound saved into another slot takes them along, a FACTORY slot loses its own). Kept after the scenes in each
+  copy of the store ("OPN1" for presets 1 to 26, "OPN2" for 27 to 52); only the playing preset's are in RAM. Three letters is
+  what the store's room allows for all 52 presets (8 letters would have fitted 22 of them).
 - **Where it is kept**: in each copy of the preset store, after the learned controls ("OPSC": for each preset the four scenes,
   the one playing, the ones stored; a CRC: `firmware/px_store.h`). Saving a sound into another slot takes its scenes along; a
   slot saved back to its FACTORY sound loses them. Other firmware never reads it. The web editor (editor protocol 6) shows the

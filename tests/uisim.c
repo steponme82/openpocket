@@ -34,7 +34,13 @@ static uint32_t master_vol = 80;
 static px_preset_t saved[52];
 static int saved_ok[52];
 static void st_get(uint32_t k, px_preset_t *p) { if (saved_ok[k]) *p = saved[k]; else px_preset_factory(p, (int)k); }
+#if PX_OWN_FX
+static char uis_scn[52][PX_SC_N][PX_SCN_LEN];             /* (test build 50: the slots' scene names, as px_store.h keeps them) */
+static void px_scn_load(uint32_t slot) { memcpy(px_scn, uis_scn[slot < 52u ? slot : 0u], sizeof px_scn); memcpy(px_scn_saved, px_scn, sizeof px_scn); }
+static int st_save(uint32_t k, const px_preset_t *p) { saved[k] = *p; saved_ok[k] = 1; memcpy(uis_scn[k], px_scn, sizeof px_scn); return 0; }
+#else
 static int st_save(uint32_t k, const px_preset_t *p) { saved[k] = *p; saved_ok[k] = 1; return 0; }
+#endif
 static int st_reset(uint32_t k) { saved_ok[k] = 0; return 0; }
 static int st_saved(uint32_t k) { return saved_ok[k]; }
 #if PX_OWN_FX
@@ -691,6 +697,27 @@ static int scenes(const char *d)
               "scenes: SWITCHES' view: SCENE 2 (lit, playing) and REVERB, in the switches' order");
         px_live = 0; hold(0, 10); full(); shot(d, "scenes_play_top");
         CHECK(count_col(182, P_NUM_Y + 29u, 54, 15, UI_ACC) > 0 && !ui_dirty(), "scenes: on PLAY, SCENE 2 where EDITED goes");
+    }
+    {   /* test build 50: the scenes' names (typed in the web editor): on the tiles and PLAY's top, EDITED until SAVE */
+        memcpy(px_scn[1], "CHS", 3); memcpy(px_scn[0], "V", 1);
+        CHECK(ui_dirty(), "names: a name typed: EDITED");
+        char t[10];
+        px_scene_label(t, 1, 0);
+        const int l1 = !strcmp(t, "CHS");
+        px_scene_label(t, 0, 1);
+        const int l0 = !strcmp(t, "V");
+        px_scene_label(t, 2, 0);
+        const int l2 = !strcmp(t, "SCENE 3");
+        px_scene_label(t, 3, 1);
+        CHECK(l1 && l0 && l2 && !strcmp(t, "SC 4"), "names: a name, else SCENE n (SC n narrow)");
+        px_live = 2; hold(0, 10); full(); shot(d, "scenes_named");
+        ui_action(UA_SAVE); save_confirm(); hold(0, 10);
+        CHECK(!ui_dirty() && !memcmp(uis_scn[9][1], "CHS", 3), "names: SAVE writes them, EDITED gone");
+        px_live = 0; ui_scene_recall(1); hold(0, 10); full(); shot(d, "scenes_named_play_top");
+        CHECK(count_col(182, P_NUM_Y + 29u, 54, 15, UI_ACC) > 0 && !ui_dirty(), "names: CHS on PLAY's top where EDITED goes");
+        load_preset(10); load_preset(9);
+        CHECK(!memcmp(px_scn[1], "CHS", 3) && px_scn[2][0] == 0, "names: the preset loaded again has them");
+        memset(uis_scn, 0, sizeof uis_scn); memset(px_scn, 0, sizeof px_scn); memset(px_scn_saved, 0, sizeof px_scn_saved);
     }
     px_midi_pl_clear(); px_live = 0; memset(&px_sc, 0, sizeof px_sc); memset(px_sc_tab, 0, sizeof px_sc_tab); ui_home(); full();
     return 0;

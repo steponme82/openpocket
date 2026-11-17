@@ -12,6 +12,8 @@ export const C = { INFO: 1, CAT_BLOCK: 2, CAT_TYPE: 3, TEXTS: 4, STATE: 5, SET: 
   NAM_LIST: 19, NAM_WRITE: 20, NAM_COMMIT: 21, NAM_ERASE: 22, DIAG: 23, IR_LIST: 24, IR_WRITE: 25, IR_COMMIT: 26, IR_ERASE: 27,
   USB_AUDIO: 28, MIDI_IN: 29, MAP: 30, NAM_RENAME: 31, PL: 32, SCENE: 33 };
 export const NAM_CHUNK = 112;     // bytes per NAM_WRITE (firmware/px_models.h NM_CHUNK)
+// test build 50: a scene's name as the pedal keeps it: 3 characters of ASCII 32..126 at most, in capitals as the pedal draws them
+export const cleanSceneName = (s) => String(s ?? "").toUpperCase().replace(/[^\x20-\x7E]/g, "").trim().slice(0, 3).trim();
 export const P_SIZE = 110;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function fail(code, msg) { const e = new Error(msg); e.code = code; return e; }
@@ -366,20 +368,31 @@ export class Editor {
   // protocol 6 (test build 49): the playing preset's four scenes (firmware/px_midi.h px_sc), each the blocks it turns on (a
   // bit each, in the catalogue's block order). The scene playing is the blocks as they are now. Nothing here writes the
   // flash: SAVE keeps them with the sound, as on the pedal.
-  // -> { rc (0 ok, 1 invalid), cur (the scene playing), set (the scenes stored, a bit each), masks [4], saved: { cur, set,
-  //    masks } (as saved with the preset) }
+  // -> { rc (0 ok, 1 invalid), cur (the scene playing), set (the scenes stored, a bit each), masks [4], names [4] (test build
+  //    50: each scene's name, up to 3 characters, "" none; null from a pedal before it), saved: { cur, set, masks, names } (as
+  //    saved with the preset) }
   get hasScenes() { return !!(this.info && this.info.proto >= 6); }
   _sc(r) {
     const q = new Reader(r), rc = q.b();
     const one = () => { const cur = q.b(), set = q.b(), masks = []; for (let i = 0; i < 4; i++) masks.push(q.b() | q.b() << 7); return { cur, set, masks }; };
     const now = one(), saved = one();
-    return { rc, ...now, saved };
+    const names = () => {                       // (test build 50: after what 49 sent; 3 bytes a scene, a name ends at its first 0)
+      if (q.i + 12 > q.a.length) return null;
+      return Array.from({ length: 4 }, () => { const b = [q.b(), q.b(), q.b()], z = b.indexOf(0); return String.fromCharCode(...(z < 0 ? b : b.slice(0, z))); });
+    };
+    const nn = names(), sn = nn && names();
+    return { rc, ...now, names: nn, saved: { ...saved, names: sn } };
   }
   async scenes() { return this._sc(await this.request(C.SCENE)); }
   async sceneRecall(n) { return this._sc(await this.request(C.SCENE, [1, n])); }          // (as CC 65 + n)
   async sceneSet(n, mask) { return this._sc(await this.request(C.SCENE, [2, n, mask & 0x7F, (mask >> 7) & 0x1F])); }   // (stored; the
   // scene playing switches its blocks to it)
   async sceneForget(n) { return this._sc(await this.request(C.SCENE, [3, n])); }          // (it takes the blocks as they are when next recalled)
+  // test build 50: scene n's name, as cleanSceneName leaves it ("" none: the pedal shows SCENE n); a change until SAVE
+  async sceneName(n, text) {
+    const t = cleanSceneName(text);
+    return this._sc(await this.request(C.SCENE, [4, n, ...[0, 1, 2].map((i) => (i < t.length ? t.charCodeAt(i) : 0))]));
+  }
   async irTexts() {
     const b = this.cat.blocks.findIndex((x) => x.label === "CAB");
     const t = b < 0 ? -1 : this.cat.blocks[b].types.findIndex((x) => x && x.name === "USER IR");

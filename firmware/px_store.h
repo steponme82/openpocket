@@ -107,6 +107,49 @@ static void st_sc_pack(uint8_t *b)
     memcpy(b + 4, px_sc_tab, ST_NSLOT * 10u);
     b[T] = (uint8_t)c; b[T + 1u] = (uint8_t)(c >> 8); b[T + 2u] = b[T + 3u] = 0xFFu;
 }
+/* test build 50: the scenes' names (px_midi.h px_scn), after the scenes: two records of 26 presets each, "OPN1" (presets 1 to
+ * 26) and "OPN2" (27 to 52): the magic, 26 x 4 names of 3 bytes (0: none), the CRC, 2 spare; each fits the shared buffer. A
+ * save (st_save: the playing preset's) puts its names, a slot's FACTORY reset drops its own; the rest goes over from the copy in
+ * use. Only the playing preset's are read (px_scn_load). A copy without them: none */
+#define ST_SN_OFF (ST_SC_OFF + ST_SC_LEN)              /* 0x1C18 */
+#define ST_SN_HALF 26u
+#define ST_SN_LEN (4u + ST_SN_HALF * 12u + 4u)         /* 320 */
+typedef char st_sn_check[(ST_SN_OFF + 2u * ST_SN_LEN <= 0x1F00u && ST_SN_LEN <= ST_PL_LEN && 2u * ST_SN_HALF == ST_NSLOT &&
+                          sizeof px_scn == 12u) ? 1 : -1];
+static uint8_t st_sn_ok;                               /* (the copy in use: its two records read right, bits 0 and 1) */
+static uint8_t st_sn_put = 0xFFu, st_sn_drop = 0xFFu;  /* (the next commit: a save's slot, a reset's) */
+static int st_sn_valid(uint32_t base, uint32_t h)      /* record h of a copy reads right (read into the shared buffer) */
+{
+    uint8_t *const b = st_pl_buf;
+    const uint32_t T = 4u + ST_SN_HALF * 12u;
+    if (!base || ota_fread(base + ST_SN_OFF + h * ST_SN_LEN, b, ST_SN_LEN)) return 0;
+    if (b[0] != 'O' || b[1] != 'P' || b[2] != 'N' || b[3] != (uint8_t)('1' + h)) return 0;
+    return (b[T] | b[T + 1u] << 8) == (ota_crc16(b + 4, ST_SN_HALF * 12u, 0) & 0xFFFFu);
+}
+static void st_sn_pack(uint8_t *b, uint32_t h)         /* record h for the copy being written */
+{
+    const uint32_t T = 4u + ST_SN_HALF * 12u;
+    if (!st_sn_valid(st_cur, h)) memset(b, 0, ST_SN_LEN);   /* (none in the copy in use: none) */
+    b[0] = 'O'; b[1] = 'P'; b[2] = 'N'; b[3] = (uint8_t)('1' + h);
+    if (st_sn_put / ST_SN_HALF == h) memcpy(b + 4u + (st_sn_put % ST_SN_HALF) * 12u, px_scn, 12u);
+    if (st_sn_drop / ST_SN_HALF == h) memset(b + 4u + (st_sn_drop % ST_SN_HALF) * 12u, 0, 12u);
+    const uint32_t c = ota_crc16(b + 4, ST_SN_HALF * 12u, 0);
+    b[T] = (uint8_t)c; b[T + 1u] = (uint8_t)(c >> 8); b[T + 2u] = b[T + 3u] = 0xFFu;
+}
+static void st_sn_pack0(uint8_t *b) { st_sn_pack(b, 0u); }
+static void st_sn_pack1(uint8_t *b) { st_sn_pack(b, 1u); }
+static void px_scn_load(uint32_t slot)                 /* the playing preset's names (load_preset, PX_SC_LOAD) */
+{
+    const uint32_t h = slot / ST_SN_HALF;
+    memset(px_scn, 0, sizeof px_scn);
+    if (slot < ST_NSLOT && (st_sn_ok >> h & 1u))
+        (void)ota_fread(st_cur + ST_SN_OFF + h * ST_SN_LEN + 4u + (slot % ST_SN_HALF) * 12u, px_scn, sizeof px_scn);
+    for (uint32_t i = 0; i < sizeof px_scn; i++) {     /* (what is not a letter the screen draws: none) */
+        char *const c = &px_scn[0][0] + i;
+        if ((uint8_t)*c < 0x20u || (uint8_t)*c > 0x7Eu) *c = 0;
+    }
+    memcpy(px_scn_saved, px_scn, sizeof px_scn);
+}
 static void st_sc_load(uint32_t base)                  /* the copy's scenes, or none */
 {
     uint8_t *const b = st_pl_buf;
@@ -266,6 +309,7 @@ static void st_load(void)
     st_map_load(best);                              /* test build 39: the controls learned on the pedal */
     st_pl_load(best);                               /* test build 46: and each preset's own */
     st_sc_load(best);                               /* test build 49: and their scenes */
+    st_sn_ok = (uint8_t)(st_sn_valid(best, 0u) | st_sn_valid(best, 1u) << 1);   /* test build 50: their names' records */
 #endif
     if (best && bh.ver < 3u) st_types_v34();        /* saved before v34: the old amp / drive / cab numbers */
     if (best && bh.ver < 4u) st_time_v35();         /* saved before v35: delay TIME on the 1 s scale */
@@ -337,6 +381,9 @@ static int st_commit(void)
     if (!rc && fl_write(base + ST_MAP_OFF, mb, ST_MAP_LEN)) rc = -3;
     if (!rc) rc = st_rec_write(base + ST_PL_OFF, st_pl_pack, ST_PL_LEN);   /* test build 46: each preset's own */
     if (!rc) rc = st_rec_write(base + ST_SC_OFF, st_sc_pack, ST_SC_LEN);   /* test build 49: their scenes */
+    if (!rc) rc = st_rec_write(base + ST_SN_OFF, st_sn_pack0, ST_SN_LEN);   /* test build 50: the scenes' names */
+    if (!rc) rc = st_rec_write(base + ST_SN_OFF + ST_SN_LEN, st_sn_pack1, ST_SN_LEN);
+    st_sn_put = st_sn_drop = 0xFFu;
 #endif
     if (!rc && fl_write(base + 16u, st_slot[0], ST_S0N * ST_SLOT)) rc = -3;   /* sector 0's slots: st_slot's rows are contiguous */
     if (!rc && fl_write(base, (const uint8_t *)&h, sizeof h)) rc = -4;      /* header last */
@@ -352,6 +399,9 @@ static int st_commit(void)
     }
     st_audio_hold(0);
     if (!rc) { st_cur = base; st_seq = h.seq; }
+#if PX_OWN_FX
+    if (!rc) st_sn_ok = 3u;                       /* (test build 50: both name records just written and read back) */
+#endif
     return rc;
 }
 
@@ -363,6 +413,9 @@ static int st_save(uint32_t k, const px_preset_t *p)
     memcpy(st_slot[k], p, sizeof *p);
     st_slot[k][sizeof *p] = ST_MARK;
     st_last = (uint8_t)k;
+#if PX_OWN_FX
+    st_sn_put = (uint8_t)k;                       /* (test build 50: the playing preset's scene names go with it) */
+#endif
     return st_commit();
 }
 
@@ -374,6 +427,7 @@ static int st_reset(uint32_t k)
 #if PX_OWN_FX
     px_midi_pl_drop_slot(k);                      /* test build 46: its own learned controls go with its sound */
     memset(&px_sc_tab[k], 0, sizeof px_sc_tab[k]);   /* test build 49: and its scenes */
+    st_sn_drop = (uint8_t)k;                      /* test build 50: and their names */
 #endif
     return st_commit();
 }

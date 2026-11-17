@@ -169,6 +169,20 @@ static void ed_sc(const px_sc_t *c)
     ed_b(c->cur); ed_b(c->set);
     for (uint32_t i = 0; i < PX_SC_N; i++) { ed_b(c->mask[i]); ed_b((uint32_t)c->mask[i] >> 7); }
 }
+/* test build 50: the scenes' names (px_midi.h px_scn), PX_SCN_LEN characters each, 0 after the end; one as SCENE takes it: ASCII
+ * 32..126 up to its first 0, nothing after it */
+static void ed_scn(const char (*s)[PX_SCN_LEN])
+{
+    for (uint32_t i = 0; i < PX_SC_N; i++) for (uint32_t j = 0; j < PX_SCN_LEN; j++) ed_b((uint8_t)s[i][j]);
+}
+static int ed_scn_ok(const uint8_t *c)
+{
+    for (uint32_t j = 0, end = 0; j < PX_SCN_LEN; j++) {
+        if (!c[j]) end = 1;
+        else if (end || c[j] < 32u || c[j] > 126u) return 0;
+    }
+    return 1;
+}
 #endif
 static void ed_state_frame(void)
 {
@@ -504,7 +518,8 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
     }
     case ED_SCENE:                                     /* protocol 6: the playing preset's scenes (px_midi.h px_sc): nothing
                                                         * (read); 1, n (recall, as CC 65 + n); 2, n, mask (2 bytes: scene n's
-                                                        * blocks; the scene playing switches them); 3, n (forget). SAVE keeps them */
+                                                        * blocks; the scene playing switches them); 3, n (forget); test build 50:
+                                                        * 4, n, c0, c1, c2 (scene n's name, 0-padded). SAVE keeps them */
         rc = 0;
         if (n) {
             const uint32_t sn = n >= 2u ? a[1] : PX_SC_N;
@@ -514,9 +529,13 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
                 px_sc.mask[sn] = (uint16_t)(a[2] | (uint32_t)a[3] << 7); px_sc.set |= (uint8_t)(1u << sn);
                 if (sn == px_sc.cur) for (k = 0; k < PX_NBLK; k++) PRESET.on[k] = (uint8_t)(px_sc.mask[sn] >> k & 1u);
             } else if (a[0] == 3u) px_sc.set &= (uint8_t)~(1u << sn);
+            else if (a[0] == 4u && n >= 2u + PX_SCN_LEN && ed_scn_ok(a + 2)) memcpy(px_scn[sn], a + 2, PX_SCN_LEN);   /* (a change
+                                                                                                     * until SAVE: ui_dirty) */
             else rc = 1;
         }
         ed_b((uint32_t)rc); ed_sc(&px_sc); ed_sc(&px_sc_tab[cur_preset < 52u ? cur_preset : 0u]);
+        ed_scn(px_scn); ed_scn(px_scn_saved);          /* (test build 50: the names as they play and as saved, after what 49 sent,
+                                                        * so its editor reads on) */
         break;
 #endif
 #ifdef ED_DIAG_LINES

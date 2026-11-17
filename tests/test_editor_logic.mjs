@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { webcrypto } from "node:crypto";
 import { ccParam, ccOn, ccToggle, ccType, ccTarget, toCc, fromCc, typeToCc, typeFromCc, decode, learn, resolve, action, cleanMappings, NBLK, NPAR,
   pedalDst, pedalTarget, pedalLearn, switchMode, PEDAL_MAP_N, MAP_PRESS, MAP_EACH, MAP_VALUE, CC_NEXT, CC_PREV, CC_SCENE0, SCENES, presetEntry, sameTgt } from "../docs/pxmidi.js";
+import { cleanSceneName } from "../docs/pxedit.js";
 import { knobIndex, indexKnob, slotRef, presetSlot, retarget, usage, packedName, renamePacked, cleanSlotName, Library, pedalKey, planMove, smartName } from "../docs/pxlib.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -239,6 +240,13 @@ await check("scenes: CC 65 to 68 recall SCENE 1 to 4, learnable on the pedal and
   assert.deepEqual(kept.map((m) => m.id), ["a"]);                      // (a fifth scene is dropped)
   const t = pedalLearn(new Array(PEDAL_MAP_N).fill(null), 20, { kind: "scene", n: 0 }, MAP_PRESS);
   assert.deepEqual(t[0], { src: 20, dst: 65, mode: MAP_PRESS });
+});
+await check("a scene's name: 3 characters of ASCII 32..126, in capitals (docs/pxedit.js cleanSceneName)", () => {
+  assert.equal(cleanSceneName("chorus"), "CHO");
+  assert.equal(cleanSceneName(" v1 "), "V1");
+  assert.equal(cleanSceneName("\u00e92b"), "2B");                       // (what the pedal cannot draw is left out)
+  assert.equal(cleanSceneName("a b c"), "A B");
+  assert.equal(cleanSceneName(""), ""); assert.equal(cleanSceneName(null), "");
 });
 await check("a preset's own control: a switch by how it pressed, a pedal on a setting from 0 at the heel to 100 at the toe", () => {
   assert.deepEqual(presetEntry(30, { kind: "param", b: 7, k: 1 }, MAP_PRESS), { src: 30, dst: ccParam(7, 1), mode: MAP_VALUE, lo: 0, hi: 100, clo: 0, chi: 127 });

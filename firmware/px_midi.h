@@ -168,7 +168,21 @@ typedef struct { uint16_t mask[PX_SC_N]; uint8_t cur, set; } px_sc_t;   /* set: 
 static px_sc_t px_sc_tab[52];                          /* every preset's, as saved (52: px_store.h ST_NSLOT, PXM_PL_SLOTS) */
 static px_sc_t px_sc;                                  /* the playing preset's, as it plays */
 static uint8_t px_sc_rule, px_sc_feet;                 /* (SETTINGS: 1 SCENE WINS; 1 the footswitches stay on the presets) */
-#define PX_SC_LOAD(i) (px_sc = px_sc_tab[(i) < 52u ? (i) : 0u])
+/* test build 50: the scenes' names, typed in the web editor: 3 letters each, every preset (px_store.h "OPN1" and "OPN2"), shown
+ * on the pedal in place of SCENE 2. Only the playing preset's are in RAM: px_scn as it plays (the editor changes them, SAVE
+ * writes them), px_scn_saved as its slot has them (EDITED). A name ends at its first 0 */
+#define PX_SCN_LEN 3u
+static char px_scn[PX_SC_N][PX_SCN_LEN], px_scn_saved[PX_SC_N][PX_SCN_LEN];
+static void px_scn_load(uint32_t slot);                /* (px_store.h: the slot's, from the copy in use) */
+#define PX_SC_LOAD(i) (px_sc = px_sc_tab[(i) < 52u ? (i) : 0u], px_scn_load(i))
+static void px_scene_label(char *t, uint32_t n, int narrow)   /* scene n's name, else "SCENE 2" ("SC 2" where narrow) */
+{
+    uint32_t i = 0;
+    for (; i < PX_SCN_LEN && px_scn[n][i]; i++) t[i] = px_scn[n][i];
+    if (i) { t[i] = 0; return; }
+    if (narrow) { t[0] = 'S'; t[1] = 'C'; t[2] = ' '; t[3] = (char)('1' + n); t[4] = 0; return; }
+    t[0] = 'S'; t[1] = 'C'; t[2] = 'E'; t[3] = 'N'; t[4] = 'E'; t[5] = ' '; t[6] = (char)('1' + n); t[7] = 0;
+}
 static pxu_t px_uh;
 /* test build 43: USB audio's routing (px_uaudio.h, docs/USB-AUDIO.md), SETTINGS' three rows after USB AUDIO, one byte (7 bits,
  * as the editor's MAP sends it):

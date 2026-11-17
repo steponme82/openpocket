@@ -2,11 +2,13 @@
 // OpenPocket web editor: the preset's scenes (editor protocol 6, the Bluetooth audio image's test build 49; docs/MIDI.md,
 // "Scenes"). Four sets of blocks on and off a preset; recalling one switches the blocks to it, as CC 65 to 68 and the
 // footswitches do on the pedal. The scene playing is the blocks as they are now: switching a block changes it, as on the
-// pedal. Another scene's blocks are set here directly. SAVE keeps them with the sound; recalling one is no change.
+// pedal. Another scene's blocks are set here directly. SAVE keeps them with the sound; recalling one is no change. Since test
+// build 50 a scene has a name of up to 3 characters, typed here only: the pedal shows it in place of SCENE n.
 
 import { app, $, h, on, blk, say } from "./edcore.js";
 import { setOn } from "./edsound.js";
 import { refreshState } from "./edpresets.js";
+import { cleanSceneName } from "./pxedit.js";
 
 const N = 4;
 let sc = null;          // the pedal's scenes (pxedit.js scenes()), or null: none in this pedal (or not read yet)
@@ -33,6 +35,7 @@ async function change(fn) {
   finally { busy = false; render(); }
 }
 const stored = (n) => !!((sc.set >> n) & 1);
+const title = (n) => (sc.names && sc.names[n]) || `Scene ${n + 1}`;   // (as the pedal shows it: its name, else SCENE n)
 const nowMask = () => app.st.preset.on.reduce((m, v, b) => m | (v ? 1 << b : 0), 0);
 const maskOf = (n) => (n === sc.cur ? nowMask() : sc.masks[n]);   // (the scene playing: the blocks as they are)
 function toggle(n, b) {
@@ -53,7 +56,7 @@ function render() {
     return h("button", { type: "button", class: `sc-b${playing ? " on" : ""}${known ? "" : " empty"}`, "data-scene": n, "aria-pressed": playing ? "true" : "false",
       title: !known ? "Not stored yet: recalled, it takes the blocks as they are" : names.length ? `On: ${names.join(", ")}` : "Every block off",
       onclick: () => { if (!playing) change(() => app.ed.sceneRecall(n)); } },
-      h("span", { class: "sc-n", text: `Scene ${n + 1}` }),
+      h("span", { class: "sc-n", text: title(n) }),
       h("span", { class: "sc-dots", "aria-hidden": "true" }, order.map((b) => h("i", { class: (m >> b) & 1 && known ? "on" : "", style: `--c:${blk(b).color}` }))));
   };
   el.append(
@@ -64,16 +67,26 @@ function render() {
         text: open ? "Close" : "Edit scenes", onclick: () => { open = !open; render(); } })),
     open && grid(order));
 }
+// (test build 50) a scene's name: up to 3 characters, in capitals as the pedal draws them; empty, the pedal shows SCENE n
+function nameField(n) {
+  const f = h("input", { class: "sc-name", value: sc.names[n], maxLength: 3, spellcheck: false, autocomplete: "off", autocapitalize: "characters",
+    "aria-label": `Name of scene ${n + 1}, 3 characters at most`, placeholder: "–",
+    oninput: () => { const t = cleanSceneName(f.value); if (t !== f.value.trim()) f.value = t; },
+    onchange: () => { const t = cleanSceneName(f.value); f.value = t; if (t !== sc.names[n]) change(() => app.ed.sceneName(n, t)); },
+    onkeydown: (e) => { if (e.key === "Enter") f.blur(); } });
+  return f;
+}
 function grid(order) {
   return h("div", { class: "sc-grid", id: "scgrid" },
     h("div", { class: "sc-wrap" }, h("table", {},
       h("thead", {}, h("tr", {}, h("th", { scope: "col", text: "Block" }),
-        Array.from({ length: N }, (_, n) => h("th", { scope: "col" }, `Scene ${n + 1}`, n === sc.cur ? h("small", { text: "playing" }) : !stored(n) ? h("small", { text: "not stored" }) : null)))),
+        Array.from({ length: N }, (_, n) => h("th", { scope: "col" }, `Scene ${n + 1}`, sc.names && nameField(n),
+          n === sc.cur ? h("small", { text: "playing" }) : !stored(n) ? h("small", { text: "not stored" }) : null)))),
       h("tbody", {}, order.map((b) => h("tr", { style: `--c:${blk(b).color}` },
         h("th", { scope: "row", text: blk(b).label }),
         Array.from({ length: N }, (_, n) => h("td", {}, h("input", { type: "checkbox", checked: !!((maskOf(n) >> b) & 1),
           "aria-label": `${blk(b).label} in scene ${n + 1}`, onchange: () => toggle(n, b) })))))))),
-    h("p", { class: "dim small", text: "The scene playing is the blocks as they are: switch one and the scene keeps it. Another scene's blocks are set here, and setting one stores it. Save the preset to keep its scenes; recalling a scene is not a change." }),
+    h("p", { class: "dim small", text: `The scene playing is the blocks as they are: switch one and the scene keeps it. Another scene's blocks are set here, and setting one stores it.${sc.names ? " A name of up to 3 characters shows on the pedal in place of SCENE n." : ""} Save the preset to keep its scenes; recalling a scene is not a change.` }),
     h("div", { class: "sc-forget" }, Array.from({ length: N }, (_, n) => n).filter((n) => stored(n) && n !== sc.cur).map((n) =>
       h("button", { type: "button", class: "btn small", text: `Forget scene ${n + 1}`, title: "Not stored any more: recalled, it takes the blocks as they are",
         onclick: () => change(() => app.ed.sceneForget(n)) }))));

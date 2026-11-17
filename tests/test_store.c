@@ -503,6 +503,44 @@ int main(void)
             memset(px_sc_tab, 0, sizeof px_sc_tab); px_live = 0; px_sc_rule = 0; px_sc_feet = 0;
             CHECK(st_commit() == 0, "scenes: cleared again");
         }
+        {   /* test build 50: the scenes' names ("OPN1" presets 1-26, "OPN2" 27-52): a save writes the playing preset's, the
+             * others go over untouched, a commit that is no save changes none, a FACTORY reset drops its own; a record whose
+             * CRC fails: none in its half, the other kept; a copy without them (builds before 50): none; what is no letter: 0 */
+            memset(px_scn, 0, sizeof px_scn);
+            memcpy(px_scn[0], "VRS", 3); memcpy(px_scn[1], "CH", 2); memcpy(px_scn[3], "SOL", 3);
+            px_preset_t q; px_preset_factory(&q, 9);
+            CHECK(st_save(9, &q) == 0, "names: preset 10 saved with its names");
+            memset(px_scn, 0, sizeof px_scn); memcpy(px_scn[2], "OUT", 3);
+            px_preset_factory(&q, 40);
+            CHECK(st_save(40, &q) == 0, "names: preset 41 saved with its (the other record)");
+            memset(px_scn, 0, sizeof px_scn);
+            CHECK(st_commit() == 0, "names: a commit that is no save");
+            reboot();
+            px_scn_load(9);
+            const int a = !memcmp(px_scn[0], "VRS", 3) && !memcmp(px_scn[1], "CH\0", 3) && px_scn[2][0] == 0 && !memcmp(px_scn[3], "SOL", 3) &&
+                          !memcmp(px_scn_saved, px_scn, sizeof px_scn);
+            px_scn_load(40);
+            CHECK(a && !memcmp(px_scn[2], "OUT", 3) && px_scn[0][0] == 0, "names: both kept through a power cycle, each its preset's");
+            CHECK(st_reset(9) == 0, "names: preset 10 back to its factory sound");
+            reboot(); px_scn_load(9);
+            const int b = px_scn[0][0] == 0 && px_scn[3][0] == 0;
+            px_scn_load(40);
+            CHECK(b && !memcmp(px_scn[2], "OUT", 3), "names: its reset drops its own, preset 41's stay");
+            nor[st_cur + ST_SN_OFF + ST_SN_LEN + 4u + 14u * 12u + 6u] ^= 0x01;   /* (a bit flipped in OPN2: its CRC fails) */
+            reboot(); px_scn_load(40);
+            CHECK(px_scn[2][0] == 0 && st_sn_ok == 1u, "names: a record whose CRC fails: none in its half, the other read");
+            nor[st_cur + ST_SN_OFF + ST_SN_LEN + 4u + 14u * 12u + 6u] ^= 0x01;
+            memset(px_scn, 0, sizeof px_scn); px_scn[1][0] = 'A'; px_scn[1][1] = 0x07; px_scn[1][2] = 'B';
+            px_preset_factory(&q, 5);
+            CHECK(st_save(5, &q) == 0, "names: a name with a byte that is no letter");
+            reboot(); px_scn_load(5);
+            CHECK(px_scn[1][0] == 'A' && px_scn[1][1] == 0 && px_scn[1][2] == 'B', "names: what is no letter reads as 0 (the name ends there)");
+            memset(nor + st_cur + ST_SN_OFF, 0xFF, 2u * ST_SN_LEN);
+            reboot(); px_scn_load(40);
+            CHECK(px_scn[2][0] == 0 && st_sn_ok == 0u, "names: a copy without them (builds before 50): none");
+            memset(px_scn, 0, sizeof px_scn);
+            CHECK(st_commit() == 0, "names: cleared again");
+        }
         px_midi_map_clear(); mid_cfg.each = 0; st_midi = px_midi_cfg_pack(&mid_cfg);
         CHECK(st_commit() == 0, "learned: cleared again");
         /* INPUT (test build 39): the header's third spare byte, signed dB; applied at boot */

@@ -171,7 +171,7 @@ static int ui_dirty(void)              /* the preset differs from what its slot 
         int d;
         memcpy(on, ui_ref.on, sizeof on);
         if (t->set >> px_sc.cur & 1u) for (int b = 0; b < PX_NBLK; b++) ui_ref.on[b] = (uint8_t)(t->mask[px_sc.cur] >> b & 1u);
-        d = memcmp(&ui_ref, &PRESET, sizeof ui_ref) != 0 || t->set != px_sc.set;
+        d = memcmp(&ui_ref, &PRESET, sizeof ui_ref) != 0 || t->set != px_sc.set || memcmp(px_scn, px_scn_saved, sizeof px_scn) != 0;
         memcpy(ui_ref.on, on, sizeof on);
         for (uint32_t i = 0; !d && i < PX_SC_N; i++) d = i != px_sc.cur && (px_sc.set >> i & 1u) && px_sc.mask[i] != t->mask[i];
         return d;
@@ -563,10 +563,11 @@ static void draw_play_top(int force)
     }
     int d = ui_dirty();                                /* EDITED: the sound differs from its saved slot */
 #if PX_OWN_FX
-    {   /* test build 49: else the scene playing, in a preset that has some */
-        char t[10] = "SCENE ";
-        t[6] = (char)('1' + px_sc.cur); t[7] = 0;
-        d = d ? 1 : px_sc.set ? 2 + px_sc.cur : 0;
+    {   /* test build 49: else the scene playing, in a preset that has some (50: its name) */
+        const char *const nm = px_scn[px_sc.cur];
+        char t[10];
+        px_scene_label(t, px_sc.cur, 0);
+        d = d ? 1 : px_sc.set ? 2 + (int)px_sc.cur + 4 * (nm[0] + 128 * nm[1] + 16384 * nm[2]) : 0;
         if (force || d != uc.dirty) { ft_box(182, P_NUM_Y + 29u, 54, d == 1 ? "EDITED" : d ? t : "", &FT_SM, UI_ACC, UI_BG, 2); uc.dirty = d; }
     }
 #else
@@ -649,10 +650,11 @@ static void draw_live(int force)
         if (sv || b[i] >= PX_NBLK) {                   /* test build 49: a scene, lit while it plays; its switch's number */
             const uint32_t sn = sv ? i : b[i] - PX_NBLK, on = px_sc.cur == sn, sel = sv && sn == sc_sel;
             const int e = px_midi_pl_row(cur_preset, PXM_CC_SCENE0 + sn, 0xFFu);
-            if (cols == 2u) { l[6] = (char)('1' + sn); l[7] = 0; }          /* ("SCENE 2", "SC 2" three across) */
-            else { l[0] = 'S'; l[1] = 'C'; l[2] = ' '; l[3] = (char)('1' + sn); l[4] = 0; }
+            const char *const nm = px_scn[sn];
+            px_scene_label(l, sn, cols != 2u);          /* (its name; else "SCENE 2", "SC 2" three across) */
             if (!sv || e >= 0) { b_str(u, "CC "); b_num(u, sv ? mid_pl[e].src : c[i]); }
-            lv_tile(i, x, y, w, 0x80000000u | sn << 20 | on << 19 | sel << 18 | (uint32_t)(e >= 0 ? mid_pl[e].src : 255),
+            lv_tile(i, x, y, w, 0x80000000u | sn << 24 | on << 23 | sel << 22 | (uint32_t)((nm[0] + 3 * nm[1] + 7 * nm[2]) & 0xFF) << 8 |
+                    (uint32_t)(e >= 0 ? mid_pl[e].src : 255),
                     on ? UI_ACC : C_OFF, on ? BLK : UI_TXT, l, r, u);
             if (sv) {                                  /* (the knob's: a ring) */
                 const uint16_t rc = sel ? WHT : UI_BG;

@@ -18,7 +18,7 @@
 #endif
 #define FELUCCA_ID "FM-1_900"
 /* the Bluetooth audio test build (docs/BT-AUDIO-TEST.md): its boot text and its id for the second core's bar (app_main) */
-#define BT_TEST_BUILD 49
+#define BT_TEST_BUILD 50
 #define BT_STR_(x) #x
 #define BT_STR(x) BT_STR_(x)
 #define BT_TEST_BUILD_TEXT BT_STR(BT_TEST_BUILD)

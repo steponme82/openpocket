@@ -551,10 +551,20 @@ if (FX) {
   ok(sc.rc === 0 && !(sc.set & 2) && !(await ed.state()).dirty, "SCENE: scene 2 forgotten: as saved again");
   const badSc = await ed.request(33, [2, 4, 0, 0]);
   ok(badSc[0] === 1, "SCENE: a fifth scene is refused");
+  // test build 50: the scenes' names, typed in the editor, 3 characters, every preset its own
+  ok(sc.names && sc.names.every((t) => t === "") && sc.saved.names && sc.saved.names.every((t) => t === ""), "SCENE: no scene named yet (test build 50)");
+  sc = await ed.sceneName(2, "cho");
+  ok(sc.rc === 0 && sc.names[2] === "CHO" && sc.names[0] === "" && sc.saved.names[2] === "" && (await ed.state()).dirty,
+     "SCENE: scene 3 named CHO (typed cho): a change until SAVE");
+  sc = await ed.sceneName(0, "A");
+  ok(sc.rc === 0 && sc.names[0] === "A" && sc.names[2] === "CHO", "SCENE: a name of one character");
+  const bn1 = await ed.request(33, [4, 1, 65, 0, 66]), bn2 = await ed.request(33, [4, 1, 127, 0, 0]), bn3 = await ed.request(33, [4, 4, 65, 0, 0]);
+  ok(bn1[0] === 1 && bn2[0] === 1 && bn3[0] === 1, "SCENE: a character after a name's end, one past ASCII 126, a fifth scene: refused");
   ok(await ed.save(other) === 0 && (await ed.state()).slot === other, "SAVE into another slot");
   const pl2 = await ed.presetMap(other), sc2 = await ed.scenes();
   ok(pl2.entries.length === 1 && pl2.entries[0].src === 32 && pl2.used === 2 && sc2.saved.set === sc.set && sc2.saved.masks[2] === 1 << dly,
      "SAVE into another slot takes the preset's own controls and its scenes along");
+  ok(sc2.saved.names[2] === "CHO" && sc2.saved.names[0] === "A" && !(await ed.state()).dirty, "SAVE keeps the scenes' names (test build 50)");
   await bleCheck(s);
   await s.end();
   // a power cycle: all of it read back from the flash
@@ -570,6 +580,12 @@ if (FX) {
   sc = await ed.scenes();
   ok(pl.entries.length === 1 && pl.entries[0].dst === CC_SCENE0 + 2 && pl.used === 2, "power cycle: the preset's own controls are still there");
   ok(sc.set === sc2.saved.set && sc.masks[2] === 1 << dly && sc.cur === sc2.saved.cur, "power cycle: the preset opens with its scenes, in the scene it was saved in");
+  ok(sc.names && sc.names[2] === "CHO" && sc.names[0] === "A" && sc.names[1] === "", "power cycle: the scenes' names are still there (test build 50)");
+  await ed.select(slot);
+  const scOther = await ed.scenes();
+  await ed.select(other);
+  const scBack = await ed.scenes();
+  ok(scOther.names.every((t) => t === "") && scBack.names[2] === "CHO" && !(await ed.state()).dirty, "every preset has its own names: none in the first slot, CHO again in the other");
   await bleCheck(s);
   await s.end();
 }

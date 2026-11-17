@@ -41,7 +41,8 @@
 #    TONE's names and its value redrawn, the footswitches through SETTINGS (tests/uisim.c). Test build 48: the guided learn's
 #    page (tests/uisim.c), the pedal's own travel (tests/midiio.c), 47's record read (tests/test_store.c), PRESET LVL down to
 #    silence (tests/engine/exp.c). Test build 49: scenes, CAB held, PLAY's three views, the scene rows (tests/uisim.c), CC 65 to
-#    68 (tests/midiio.c), the scenes' record (tests/test_store.c)
+#    68 (tests/midiio.c), the scenes' record (tests/test_store.c). Test build 50: the scenes' names (tests/uisim.c, their
+#    records: tests/test_store.c)
 #  - preset store: save / reload / power cut at every step of a save (firmware/px_store.h on a simulated flash)
 #  - the audio callbacks' order (v42, firmware/px_aorder.h): the I2S driver calls the output's callback before the
 #    input's when its interrupt enters late; every output block must still be the sound of that interrupt's guitar block
