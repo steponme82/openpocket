@@ -18,7 +18,7 @@
 #endif
 #define FELUCCA_ID "FM-1_900"
 /* the Bluetooth audio test build (docs/BT-AUDIO-TEST.md): its boot text and its id for the second core's bar (app_main) */
-#define BT_TEST_BUILD 50
+#define BT_TEST_BUILD 51
 #define BT_STR_(x) #x
 #define BT_STR(x) BT_STR_(x)
 #define BT_TEST_BUILD_TEXT BT_STR(BT_TEST_BUILD)
@@ -189,9 +189,16 @@ static uint8_t lbuf[2][LBUF_PX * 2u] __attribute__((aligned(4)));
 static uint32_t lb_i;
 #endif
 static uint32_t lb_n;
+#if PX_OWN_FX
+static uint32_t lcd_gen;   /* test build 51: bumped by every drawing (ui.h's line at the right edge is drawn again after it) */
+#define LCD_GEN() (lcd_gen++)
+#else
+#define LCD_GEN() ((void)0)
+#endif
 /* filled rectangle (16-bit coords + 40-line offset) */
 static void lcd_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint16_t rgb)
 {
+    LCD_GEN();
     if (w == 0u || h == 0u || x >= 240u || y >= 240u) return;   /* v23: a negative size (huge unsigned) used to */
     if (x + w > 240u) w = 240u - x;                            /* stream 4 billion pixels = black screen forever */
     if (y + h > 240u) h = 240u - y;
@@ -232,6 +239,7 @@ enum { UI_BG=0x0841, UI_PANEL=0x18E3, UI_SEL=0xFB00, UI_ACC=0xFD20,
 /* write window + pixel stream (CS stays low between pixels) */
 static void lcd_win(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
 {
+    LCD_GEN();
     uint8_t a[4]; uint32_t yo=y+PX_ROW_OFFSET, x1=x+w-1u, y1=yo+h-1u;
     a[0]=(uint8_t)(x>>8);a[1]=(uint8_t)x;a[2]=(uint8_t)(x1>>8);a[3]=(uint8_t)x1; lcd_cmd(0x2A,a,4);
     a[0]=(uint8_t)(yo>>8);a[1]=(uint8_t)yo;a[2]=(uint8_t)(y1>>8);a[3]=(uint8_t)y1; lcd_cmd(0x2B,a,4);
@@ -281,6 +289,10 @@ static void lcd_text(uint32_t x, uint32_t y, const char *str, uint16_t fg, uint1
 /* ---- preset: the v2 engine's struct (engine/px_dsp.h), edited directly by the UI ---- */
 #include "px_dsp.h"
 #include "px_nam.h"           /* v37: NAM A2-Lite (the engine includes px_nam.c) */
+#if PX_OWN_FX   /* test build 51: px_midi.h tells the engine the two-job pedal's block and SETTINGS' VOL PEDAL */
+#define PX_EXP_DUAL(b) px_exp_dual((int)(b))
+#define PX_EXP_PLACE(at) px_exp_place((int)(at))
+#endif
 #include "px_midi.h"                    /* MIDI map and settings (docs/MIDI.md) */
 static px_preset_t PRESET;
 static uint32_t cur_preset = 0;

@@ -23,8 +23,10 @@
 #define ED_H1 0x4Fu
 #define ED_H2 0x50u
 #if PX_OWN_FX
-#define ED_PROTO 6u                             /* 6: PL, SCENE and MAP's two settings bytes (test builds 46 to 49); 5: the
-                                                 * Bluetooth audio image's test build 39, WATCH's MIDI bit, MIDI_IN, MAP */
+#define ED_PROTO 7u                             /* 7: test build 51, a two-job pedal (PL's mode bit 6) and VOL PEDAL (MAP's
+                                                 * last byte, bit 4); 6: PL, SCENE and MAP's two settings bytes (test builds
+                                                 * 46 to 49); 5: the Bluetooth audio image's test build 39, WATCH's MIDI bit,
+                                                 * MIDI_IN, MAP */
 #else
 #define ED_PROTO 4u                             /* 4: v42, USB_AUDIO; 3: v38, cabinet IRs (IR_LIST .. IR_ERASE); 2: v37, NAM models */
 #endif
@@ -163,7 +165,7 @@ static uint32_t ed_state_hash(void)
 #if PX_OWN_FX
 /* protocol 6: MAP's settings bytes as no build writes them (GUITAR TONE past BRIGHT, PICKUP past P90, PLAY VIEW past SCENES, a
  * bit no build sets), and a preset's scenes as SCENE sends them (the scene playing, the ones stored, the four masks in 2 bytes) */
-static int ed_more_bad(uint32_t t, uint32_t v) { return (t & 15u) >= PX_INZ_N || ((t >> 4) & 3u) > 2u || t > 0x3Fu || (v & 3u) > 2u || v > 15u; }
+static int ed_more_bad(uint32_t t, uint32_t v) { return (t & 15u) >= PX_INZ_N || ((t >> 4) & 3u) > 2u || t > 0x3Fu || (v & 3u) > 2u || v > 31u; }
 static void ed_sc(const px_sc_t *c)
 {
     ed_b(c->cur); ed_b(c->set);
@@ -211,8 +213,9 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
                  * otherwise show a v42 pedal's, without them. "v42 FX2" since test build 40 (TREBLE BOOST): an editor that
                  * kept build 38's "v42 FX" catalogue reads it again. "v42 FX3" since test build 44 (TAPE FLUTE); "v42 FX4" since
                  * test build 45 (SFX's WAH, WHAMMY's PEDAL); "v42 FX5" since test build 47 (12-STRING's DETUNE in cents to 3.0);
-                 * "v42 FX6" since test build 48 (PRESET LVL down to -INF) */
-        ed_b(ED_PROTO); ed_str(OP_VERSION " FX6", 15); ed_str(FELUCCA_ID_PTR, 27);
+                 * "v42 FX6" since test build 48 (PRESET LVL down to -INF); "v42 FX7" since test build 51 (a two-job pedal: PL's
+                 * mode bit 6, px_midi.h PXM_PL_DUAL; MAP's last byte bit 4, VOL PEDAL) */
+        ed_b(ED_PROTO); ed_str(OP_VERSION " FX7", 15); ed_str(FELUCCA_ID_PTR, 27);
 #else
         ed_b(ED_PROTO); ed_str(OP_VERSION, 15); ed_str(FELUCCA_ID_PTR, 27);
 #endif
@@ -472,6 +475,8 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
                     if (px_inz_pack() != was) a_inz_apply();
                     px_live = (uint8_t)(a[want + 2u] & 3u);
                     px_sc_rule = (uint8_t)((a[want + 2u] >> 2) & 1u); px_sc_feet = (uint8_t)((a[want + 2u] >> 3) & 1u);
+                    px_vol_at = (uint8_t)((a[want + 2u] >> 4) & 1u);   /* (protocol 7, test build 51: VOL PEDAL, heard at once) */
+                    PX_EXP_PLACE(px_vol_at);
                 }
                 st_midi = px_midi_cfg_pack(&mid_cfg);
                 if (st_commit()) rc = 2;               /* (it stays in RAM and works: the next save writes it) */
@@ -491,7 +496,8 @@ static void ed_handle(const uint8_t *a, uint32_t n)   /* a: the args, after the 
 #else
         ed_b(0u);                                      /* (no routing: its place kept for the two bytes after it) */
 #endif
-        ed_b(px_inz_pack()); ed_b(px_live | (uint32_t)px_sc_rule << 2 | (uint32_t)px_sc_feet << 3);   /* (protocol 6) */
+        ed_b(px_inz_pack()); ed_b(px_live | (uint32_t)px_sc_rule << 2 | (uint32_t)px_sc_feet << 3 |
+                                  (uint32_t)px_vol_at << 4);   /* (protocol 6; 7, test build 51: bit 4 VOL PEDAL) */
         break;
     }
     case ED_PL: {                                      /* protocol 6: a preset's own controls (px_midi.h mid_pl): slot (read);

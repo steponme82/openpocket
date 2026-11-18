@@ -299,7 +299,8 @@ int main(void)
         }
         st_usb = 0;
 #if PX_OWN_FX
-        px_live = 0; px_sc_rule = 0; px_sc_feet = 0;   /* (test build 49: 0xFE's bits 4 to 7 were the image's own settings) */
+        px_live = 0; px_sc_rule = 0; px_sc_feet = 0;   /* (test build 49: 0xFE's bits 4 to 7 were the image's own settings; */
+        px_vol_at = 0;                                 /* 51: bit 1 too) */
 #endif
         CHECK(st_commit() == 0, "USB audio: a commit of off");
         reboot();
@@ -470,6 +471,29 @@ int main(void)
             reboot();
             CHECK(px_midi_pl_count(52) == 0, "46's record (OPPL) is no longer read: none");
             px_midi_pl_clear(); px_inz_unpack(0);
+        }
+        {   /* test build 51: a two-job pedal (its mode's bit 6, px_midi.h PXM_PL_DUAL) kept in "OPP3" as it is; one on the GATE's
+             * PRESET LVL is not one (dropped alone); SETTINGS' VOL PEDAL in the USB settings byte's bit 1 */
+            px_midi_pl_clear();
+            CHECK(px_midi_pl_put(4, 7, px_cc_param(PX_B_SFX, 0), PXM_MAP_VALUE | PXM_PL_DUAL, 0xFFu, 10u, 90u) == 0 &&
+                  px_midi_pl_put(4, 8, px_cc_param(PX_B_DELAY, 1), PXM_MAP_VALUE, 0xFFu, 0u, 100u) == 0, "two jobs: two pedals in a preset");
+            mid_pl[px_midi_pl_row(4, px_cc_param(PX_B_SFX, 0), 0xFFu)].clo = 3;
+            mid_pl[2] = (px_pl_t){ 6, 9, (uint8_t)px_cc_param(PX_B_GATE, 2), PXM_MAP_VALUE | PXM_PL_DUAL, 0, 100, 0, 127 };   /* (not one) */
+            px_vol_at = 1;
+            CHECK(st_commit() == 0, "two jobs: a commit");
+            px_midi_pl_clear(); px_vol_at = 0;
+            reboot();
+            const int i = px_midi_pl_row(4, px_cc_param(PX_B_SFX, 0), 0xFFu);
+            CHECK(i >= 0 && mid_pl[i].mode == (PXM_MAP_VALUE | PXM_PL_DUAL) && mid_pl[i].lo == 10 && mid_pl[i].hi == 90 && mid_pl[i].clo == 3 &&
+                  px_midi_pl_dual(4) == PX_B_SFX && px_midi_pl_count(4) == 2 && px_midi_pl_count(6) == 0,
+                  "two jobs: kept through a power cycle, the GATE's dropped alone");
+            CHECK(px_vol_at == 1u && (st_usb & PX_ST_VOLAT), "two jobs: VOL PEDAL BEFORE DLY kept (bit 1)");
+            px_vol_at = 0;
+            CHECK(st_commit() == 0, "two jobs: VOL PEDAL back to AT INPUT");
+            reboot();
+            CHECK(px_vol_at == 0u && !(st_usb & PX_ST_VOLAT), "two jobs: AT INPUT kept");
+            px_midi_pl_clear();
+            CHECK(st_commit() == 0, "two jobs: cleared");
         }
         {   /* test build 49: the presets' scenes ("OPSC", after the learned controls): kept through a power cycle, a slot reset
              * to its factory sound loses its own, a record whose CRC fails is none, an entry that does not read right is

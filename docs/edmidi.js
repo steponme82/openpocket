@@ -7,7 +7,8 @@ import { app, $, h, icon, on, emit, blk, typeOf, slotName, say, confirmDialog } 
 import { sendParam, setOn, setType } from "./edsound.js";
 import { selectPreset, stepPreset, refreshState } from "./edpresets.js";
 import { decode, ccParam, ccOn, ccToggle, ccType, ccTarget, resolve, action, learn, cleanMappings, sameTgt, NPAR,
-  pedalDst, pedalTarget, pedalLearn, switchMode, PEDAL_MAP_N, MAP_PRESS, MAP_EACH, MAP_VALUE, SCENES, presetEntry } from "./pxmidi.js";
+  pedalDst, pedalTarget, pedalLearn, switchMode, PEDAL_MAP_N, MAP_PRESS, MAP_EACH, MAP_VALUE, SCENES, presetEntry,
+  PL_DUAL, plKind, dualOk, dualDefault } from "./pxmidi.js";
 
 const KEY = "openpocket-midi-v1";
 let cfg = { mappings: [], pc: true };
@@ -117,7 +118,7 @@ function fromPedalIn(x) {
   if (m.type === "cc" && learning && pmap) { startCatch(m); return; }
   const own = m.type === "cc" && plist && plist.entries.find((y) => y.src === m.cc);
   const e = own || (m.type === "cc" && pmap && pmap.entries.find((y) => y && y.src === m.cc));
-  note("Controller on the pedal", m, e ? `→ ${pedalName(e)} (learned on the pedal${own ? `, in ${slotName(plist.slot)}` : ""})` : pedalMeaning(m), e ? "hit" : "pedal");
+  note("Controller on the pedal", m, e ? `→ ${pedalName(e)}${own && own.mode & PL_DUAL ? " +VOL" : ""} (learned on the pedal${own ? `, in ${slotName(plist.slot)}` : ""})` : pedalMeaning(m), e ? "hit" : "pedal");
 }
 function startCatch(m) {
   const tgt = learning, d = pedalDst(tgt);
@@ -158,12 +159,16 @@ async function finishCatch() {
 async function finishCatchHere(c) {
   const next = presetEntry(c.src, c.tgt, switchMode(c.values));
   if (!next) { catching = null; learnt = "This cannot be learned for one preset."; renderMap(); return; }
+  // (protocol 7) a pedal on a WAH's PEDAL, an AUTO WAH's CENTER or a WHAMMY's PEDAL begins with two jobs, as the pedal's own learn
+  const two = app.ed.hasTwoJobs && c.tgt.kind === "param" && dualOk(next) && dualDefault(c.tgt.b, typeOf(app.st.preset, c.tgt.b).name, c.tgt.k);
+  if (two) next.mode |= PL_DUAL;
   try {
     const r = await app.ed.presetPut(c.slot, next);
     if (r.rc === 0) {
       plist = r;
       const e = r.entries.find((y) => y.src === c.src);
-      learnt = `${tgtName(c.tgt)} now follows CC ${c.src} of the controller on the pedal, only in preset ${slotName(c.slot)}: it ${MODE_TEXT[e ? e.mode : 0]}. The pedal keeps it with that preset.`;
+      learnt = `${tgtName(c.tgt)} now follows CC ${c.src} of the controller on the pedal, only in preset ${slotName(c.slot)}: it ${MODE_TEXT[e ? plKind(e.mode) : 0]}.` +
+        `${e && e.mode & PL_DUAL ? ` While ${blk(c.tgt.b).label} is off, it is the volume instead (untick "or VOLUME" below to keep it on the setting only).` : ""} The pedal keeps it with that preset.`;
       note("Controller on the pedal", { type: "cc", cc: c.src, value: c.values[0] }, `learned on the pedal for ${slotName(c.slot)}: ${tgtName(c.tgt)}`, "hit");
     } else learnt = r.rc === 2 ? "The pedal could not save it (flash): try again." : r.rc === 3 ? `The pedal keeps ${r.places} controls learned for single presets, all presets together: forget one first.` : "The pedal refused it.";
   } catch (e) { learnt = `Not learned: ${e.message}`; }
@@ -279,7 +284,7 @@ function renderConn() {
         h("button", { type: "button", class: "btn small", id: "uabtn", text: ua.on ? "Turn off" : "Turn on", onclick: uaToggle }))),
     ua && h("p", { class: "dim", id: "uanote", text: "With USB audio on, the pedal is also a USB sound card, with no driver to install (stereo, 16 bit, 44.1 kHz). The computer records the pedal's sound, and what the computer plays comes out of the pedal's output." }),
     h("p", { class: "dim" }, "The pedal's own MIDI settings are on the pedal: ", h("b", { text: "hold FX for 0.8 s" }),
-      pmap ? ` (SETTINGS) for CHANNEL (OMNI or 1 to 16), SEND and CLOCK > DELAY. SWITCH, INPUT, TAILS, BT POWER, OUTPUT${pmap.more ? ", GUITAR TONE, PICKUP, PLAY VIEW and the two scene rows" : ""} are also under Controls below; the editor cannot read or change the first three. `
+      pmap ? ` (SETTINGS) for CHANNEL (OMNI or 1 to 16), SEND and CLOCK > DELAY. SWITCH, INPUT, TAILS, BT POWER, OUTPUT${pmap.more ? `, GUITAR TONE, PICKUP, PLAY VIEW${app.ed.hasTwoJobs ? ", the two scene rows and VOL PEDAL" : " and the two scene rows"}` : ""} are also under Controls below; the editor cannot read or change the first three. `
         : " for CHANNEL (OMNI or 1 to 16), SEND and CLOCK > DELAY. The editor cannot read or change them. ",
       h("a", { href: "https://github.com/isod89/openpocket/blob/main/docs/MIDI.md", target: "_blank", rel: "noopener" }, "The MIDI reference ", icon("ext"))));
 }
@@ -412,6 +417,10 @@ function renderPmap() {
     h("div", { class: "lrow" }, h("span", { text: "The footswitches in the scenes view" }),
       sel("pmapscfeet", "What the footswitches do in the scenes view", "feetPresets", [[0, "Step through the scenes"], [1, "Stay on the presets"]]),
       h("span", { class: "grow" }), h("span", { class: "dim small", text: "(SETTINGS, SCENE FOOTSW)" })),
+    // (protocol 7, test build 51) where the expression pedal's volume acts: CC 117's, and a two-job pedal's while its block is off
+    app.ed.hasTwoJobs && h("div", { class: "lrow" }, h("span", { text: "Volume pedal" }),
+      sel("pmapvolat", "Where the expression pedal's volume acts", "volAt", [[0, "At the input, as the guitar's volume knob (AT INPUT)"], [1, "Before the delay and the reverb, the tone kept (BEFORE DLY)"]]),
+      h("span", { class: "grow" }), h("span", { class: "dim small", text: "(SETTINGS, VOL PEDAL: CC 117's volume, and a two-job pedal's while its effect is off; the tails ring on)" })),
   ];
   const used = pmap.entries.map((e, i) => [e, i]).filter(([e]) => e);
   return h("div", { class: "learned", id: "pmap" },
@@ -452,24 +461,30 @@ function renderPlist() {
   const rows = plist.entries.map((e, i) => {
     const t = pedalTarget(e.dst), param = t && t.kind === "param" ? typeOf(p, t.b).params[t.k] : null;
     const put = (patch) => savePlist((slot) => app.ed.presetPut(slot, { ...e, ...patch }));
+    const kind = plKind(e.mode), two = !!(e.mode & PL_DUAL);
     let how = null;
-    if (param && e.mode === MAP_VALUE) {
+    if (param && kind === MAP_VALUE) {
       const end = (k, label) => {
         const s = h("select", { "aria-label": `${tgtName(t)} ${label}`, onchange: () => put({ [k]: +s.value }) },
           Array.from({ length: 101 }, (_, v) => h("option", { value: String(v), text: valText(param, v) })));
         s.value = String(e[k]);
         return s;
       };
+      // (protocol 7) a pedal on a block's setting, not the GATE's: the volume too, while that block is off (one a preset)
+      const vol = app.ed.hasTwoJobs && dualOk(e) && h("input", { type: "checkbox", checked: two,
+        "aria-label": `CC ${e.src}: the volume while ${blk(t.b).label} is off`, onchange: (ev) => put({ mode: MAP_VALUE | (ev.target.checked ? PL_DUAL : 0) }) });
       how = [h("span", { class: "dim small", text: "heel" }), end("lo", "at the heel"), h("span", { class: "dim small", text: "toe" }), end("hi", "at the toe"),
-        (e.clo !== e.chi && (e.clo !== 0 || e.chi !== 127)) && h("span", { class: "dim small", title: "Where the pedal was at the heel and at the toe while it was learned", text: `(CC ${e.clo} to ${e.chi})` })];
-    } else if (e.mode !== MAP_VALUE) {
+        (e.clo !== e.chi && (e.clo !== 0 || e.chi !== 127)) && h("span", { class: "dim small", title: "Where the pedal was at the heel and at the toe while it was learned", text: `(CC ${e.clo} to ${e.chi})` }),
+        vol && h("label", { class: "tick", title: "As a multi-effect's expression pedal with a toe switch: whatever turns the block on and off changes the pedal's job. Where the volume acts: Volume pedal, above." },
+          vol, ` or VOLUME when ${blk(t.b).label} is off`)];
+    } else if (kind !== MAP_VALUE) {
       const m = h("select", { "aria-label": `How CC ${e.src} acts`, onchange: () => put({ mode: +m.value }) },
         h("option", { value: String(MAP_PRESS), text: "Press: 127, then 0 when let go" }), h("option", { value: String(MAP_EACH), text: "Each message is a press" }));
-      m.value = String(e.mode === MAP_EACH ? MAP_EACH : MAP_PRESS);
+      m.value = String(kind === MAP_EACH ? MAP_EACH : MAP_PRESS);
       how = m;
     }
     return h("div", { class: "lrow" }, h("span", { class: "chip", text: `CC ${e.src}` }), h("span", { class: "arrow", "aria-hidden": "true", text: "→" }),
-      h("b", { text: pedalName(e) }), h("span", { class: "grow" }), how,
+      h("b", { text: `${pedalName(e)}${two ? " +VOL" : ""}` }), h("span", { class: "grow" }), how,
       h("button", { type: "button", class: "btn icon small", "aria-label": `Forget CC ${e.src} in this preset`,
         onclick: () => savePlist((slot) => app.ed.presetForget(slot, e.src)) }, icon("x")));
   });

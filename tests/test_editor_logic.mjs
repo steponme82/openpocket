@@ -8,8 +8,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { webcrypto } from "node:crypto";
 import { ccParam, ccOn, ccToggle, ccType, ccTarget, toCc, fromCc, typeToCc, typeFromCc, decode, learn, resolve, action, cleanMappings, NBLK, NPAR,
-  pedalDst, pedalTarget, pedalLearn, switchMode, PEDAL_MAP_N, MAP_PRESS, MAP_EACH, MAP_VALUE, CC_NEXT, CC_PREV, CC_SCENE0, SCENES, presetEntry, sameTgt } from "../docs/pxmidi.js";
-import { cleanSceneName } from "../docs/pxedit.js";
+  pedalDst, pedalTarget, pedalLearn, switchMode, PEDAL_MAP_N, MAP_PRESS, MAP_EACH, MAP_VALUE, CC_NEXT, CC_PREV, CC_SCENE0, SCENES, presetEntry, sameTgt,
+  PL_DUAL, plKind, dualOk, dualDefault, B_GATE, B_PITCH, B_SFX } from "../docs/pxmidi.js";
+import { cleanSceneName, Editor } from "../docs/pxedit.js";
 import { knobIndex, indexKnob, slotRef, presetSlot, retarget, usage, packedName, renamePacked, cleanSlotName, Library, pedalKey, planMove, smartName } from "../docs/pxlib.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -247,6 +248,30 @@ await check("a scene's name: 3 characters of ASCII 32..126, in capitals (docs/px
   assert.equal(cleanSceneName("\u00e92b"), "2B");                       // (what the pedal cannot draw is left out)
   assert.equal(cleanSceneName("a b c"), "A B");
   assert.equal(cleanSceneName(""), ""); assert.equal(cleanSceneName(null), "");
+});
+await check("a two-job pedal (protocol 7): a pedal on a block's setting, not the GATE's, never a switch; its kind is the mode's low bits", () => {
+  assert.equal(PL_DUAL, 0x40); assert.equal(plKind(MAP_VALUE | PL_DUAL), MAP_VALUE); assert.equal(plKind(MAP_EACH), MAP_EACH);
+  assert.ok(dualOk({ dst: ccParam(B_SFX, 0), mode: MAP_VALUE | PL_DUAL }));
+  assert.ok(dualOk({ dst: ccParam(9, 2), mode: MAP_VALUE }));               // (the delay's: may have it)
+  assert.ok(!dualOk({ dst: ccParam(B_GATE, 2), mode: MAP_VALUE }));          // (PRESET LVL: the preset's own level)
+  assert.ok(!dualOk({ dst: ccToggle(B_SFX), mode: MAP_PRESS }));             // (a switch)
+  assert.ok(!dualOk({ dst: CC_SCENE0, mode: MAP_VALUE }));                   // (not a setting)
+  assert.ok(dualDefault(B_SFX, "WAH", 0) && dualDefault(B_SFX, "AUTO WAH", 3) && dualDefault(B_PITCH, "WHAMMY", 3));
+  assert.ok(!dualDefault(B_SFX, "WAH", 3) && !dualDefault(B_SFX, "ENVELOPE WAH", 3) && !dualDefault(B_PITCH, "OCTAVER", 3) && !dualDefault(9, "WAH", 0));
+});
+await check("VOL PEDAL (MAP's last byte, bit 4) is sent to a protocol 7 pedal only: a test build 50 one refuses it", async () => {
+  const sent = [];
+  const reply = [0, 0, 10, 0, PEDAL_MAP_N, ...new Array(PEDAL_MAP_N * 4).fill(0), 0, 0, 0x10];
+  const ed = new Editor({ inputs: new Map(), outputs: new Map() });
+  ed.request = async (cmd, a) => { sent.push(a); return reply; };
+  const more = { tone: 0, pickup: 0, view: 0, sceneWins: false, feetPresets: false, volAt: 1 }, usb = { send: 0, ret: 0, cut: false };
+  ed.info = { proto: 6 };
+  await ed.setPedalMap(false, new Array(PEDAL_MAP_N).fill(null), 0, false, 0, 0, usb, more);
+  ed.info = { proto: 7 };
+  const r = await ed.setPedalMap(false, new Array(PEDAL_MAP_N).fill(null), 0, false, 0, 0, usb, more);
+  assert.equal(sent[0][sent[0].length - 1] & 0x10, 0);
+  assert.equal(sent[1][sent[1].length - 1] & 0x10, 0x10);
+  assert.equal(r.more.volAt, 1);
 });
 await check("a preset's own control: a switch by how it pressed, a pedal on a setting from 0 at the heel to 100 at the toe", () => {
   assert.deepEqual(presetEntry(30, { kind: "param", b: 7, k: 1 }, MAP_PRESS), { src: 30, dst: ccParam(7, 1), mode: MAP_VALUE, lo: 0, hi: 100, clo: 0, chi: 127 });

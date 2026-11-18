@@ -187,13 +187,23 @@ int main(int argc, char **argv)
     const float before = peak(o_r, sw - 4096, sw);
     snprintf(what, sizeof what, "PIT off while the octave plays: it fades (largest step %.4f against its peak %.3f), then silence (%.1f dB)", step, before, db(peak(o_r, sw + 4096, N)));
     ok(before > 0.01f && step < 0.1f * before && peak(o_r, sw + 4096, N) < 1e-5f, what);
-    px_engine_init(&e, SR); px_engine_set(&e, &p);
-    px_exp_set(0);                                     /* the volume pedal at the heel (no WHAMMY, no AUTO WAH: the volume) */
-    for (int k = 0; k < N; k += 64) { px_engine_out(&e, PX_OUT_BASS, o_r + k); px_engine_process(&e, in + k, o_l + k, 64); }
-    px_engine_out(&e, PX_OUT_MONO, 0);
-    px_exp_set(-1);
-    snprintf(what, sizeof what, "the volume pedal at the heel: the octave silent too (%.1f dB)", db(peak(o_r, (int)(0.2f * SR), N)));
-    ok(peak(o_r, (int)(0.2f * SR), N) < 1e-4f, what);
+    for (int at = 1; at >= 0; at--) {                  /* test build 51: the volume's place, VOL PEDAL: BEFORE DLY (1), AT INPUT (0) */
+        px_exp_place(at);
+        px_engine_init(&e, SR); px_engine_set(&e, &p);
+        px_exp_set(0);                                 /* the volume pedal at the heel (no WHAMMY, no AUTO WAH: the volume) */
+        for (int k = 0; k < N; k += 64) { px_engine_out(&e, PX_OUT_BASS, o_r + k); px_engine_process(&e, in + k, o_l + k, 64); }
+        px_engine_out(&e, PX_OUT_MONO, 0);
+        px_exp_set(-1);
+        if (at) {
+            snprintf(what, sizeof what, "the volume pedal at the heel, BEFORE DLY: the octave silent too (%.1f dB)", db(peak(o_r, (int)(0.2f * SR), N)));
+            ok(peak(o_r, (int)(0.2f * SR), N) < 1e-4f, what);
+        } else {                                       /* (the guitar silent from the start: the octave of what came in during
+                                                        * the volume's 10 ms glide fades by its own release, a trail) */
+            snprintf(what, sizeof what, "the volume pedal at the heel, AT INPUT: the octave fades by its own release (%.1f dB at 0.2 s, %.1f dB from 0.4 s)",
+                     db(peak(o_r, (int)(0.2f * SR), (int)(0.225f * SR))), db(peak(o_r, (int)(0.4f * SR), N)));
+            ok(peak(o_r, (int)(0.2f * SR), (int)(0.225f * SR)) < 1e-2f && peak(o_r, (int)(0.4f * SR), N) < 1e-5f, what);
+        }
+    }
 
     /* 6. STEREO: the mono sound in the middle, DELAY's and REVERB's wet (and their TAILS) to the sides; inline and in the lanes */
     for (lanes = 0; lanes < 2; lanes++) {

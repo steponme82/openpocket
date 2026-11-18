@@ -454,7 +454,7 @@ static void command(const char *l)
         mid_last[0] = PXM_CC; mid_last[1] = (uint8_t)v; mid_last[2] = (uint8_t)w;
         mid_in_n++;
         if (px_learn_feed(c, x)) { }                   /* (test build 46: a learn on a block page takes it) */
-        else if (px_midi_map_in(&c, &x, cur_preset)) {
+        else if (px_midi_map_in(&c, &x, cur_preset, &PRESET)) {
             if (c == PXM_CC_NEXT || c == PXM_CC_PREV) { if (x >= 64u) ui_preset_step(c == PXM_CC_NEXT ? 1 : -1); }
             else if (c - PXM_CC_SCENE0 < PX_SC_N) ui_scene_recall(c - PXM_CC_SCENE0);
             else if (px_midi_cc_apply(&PRESET, c, x, &mv, &mset) == 0 && mset) master_vol = mv;

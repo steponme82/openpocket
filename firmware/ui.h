@@ -272,15 +272,20 @@ static int ui_row_cc(uint32_t item)                    /* the control a row has 
  * control: 1 PEDAL or SWITCH (the knob; PUSH: next); 2 the controller heard (a pedal at its first message; a switch pressed and
  * let go, or not, within 1.2 s); on a setting 3 the value at the heel (a switch: OFF) and 4 at the toe (ON), set with the
  * knob and heard, the pedal held there: where it is is taken too (its own travel, heel to toe); PUSH: next. HOME at any step:
- * nothing learned, nothing changed. Meanwhile the controller moves nothing; the setting's own value comes back at the end */
-enum { LG_TYPE, LG_LISTEN, LG_LO, LG_HI };
+ * nothing learned, nothing changed. Meanwhile the controller moves nothing; the setting's own value comes back at the end.
+ * Test build 51: a pedal on a block's setting (not the GATE's) has a step 5, WHEN SFX IS OFF: VOLUME (a two-job pedal, px_midi.h
+ * PXM_PL_DUAL: the block's on/off picks its job, the line at the screen's right edge says which) or NOTHING (as before).
+ * VOLUME to begin with on a WAH's or AUTO WAH's sweep and a WHAMMY's PEDAL */
+enum { LG_TYPE, LG_LISTEN, LG_LO, LG_HI, LG_DUAL };
 #define LG_Y0 62u                                      /* (the steps, a row each) */
-#define LG_ROW 22u
-#define LG_BIG 154u                                    /* (the step's own: what to do, the value) */
+#define LG_ROW 19u                                     /* (test build 51: five of them) */
+#define LG_BIG 158u                                    /* (the step's own: what to do, the value) */
 static struct {
     uint8_t step, sw, knob, k, orig, lo, clo, src, pos, scene;   /* (scene, test build 49: 1 + the scene whose switch is learned) */
+    uint8_t hi, chi, dual;                             /* (test build 51: the toe's, for after step 5; the choice there) */
     uint32_t blk, item, slot, dsw, dval, shown;
 } lg;
+static int lg_two(void) { return lg.knob && !lg.sw && px_midi_pl_dual_ok(lg.dval); }   /* (test build 51: a step 5) */
 static void lg_val(char *b, uint32_t v)                /* a setting's value as its page shows it */
 {
     b[0] = 0;
@@ -293,6 +298,7 @@ static void lg_open(int knob, uint32_t dsw, uint32_t dval)
     lg.knob = (uint8_t)knob; lg.sw = (uint8_t)!knob;   /* (on a setting a pedal, on ON a switch, to begin with) */
     lg.blk = ui_blk; lg.item = ui_item; lg.slot = cur_preset; lg.dsw = dsw; lg.dval = dval;
     if (knob) { lg.k = (uint8_t)(ui_item - 2u); lg.orig = PRESET.p[ui_blk][lg.k]; }
+    lg.dual = (uint8_t)(knob && px_midi_dual_engine(&PRESET, ui_blk, lg.k));   /* (51: a wah's or whammy's: VOLUME) */
     lg.shown = ~0u; lg.pos = 0xFFu;
     ui_mode = M_GUIDE;
     lcd_rect(0, 30, 240, 210, UI_BG);
@@ -315,14 +321,15 @@ static void lg_close(int note)                         /* back to the block page
 }
 static void lg_finish(uint32_t hi, uint32_t chi)
 {
-    const uint32_t dst = mid_learn.rdst;
-    if (px_midi_pl_put(lg.slot, lg.src, dst, mid_learn.rmode, dst == lg.dsw ? lg.dval : lg.dsw, lg.knob ? lg.lo : 0u,
+    const uint32_t dst = mid_learn.rdst, mode = mid_learn.rmode | (lg_two() && lg.dual ? PXM_PL_DUAL : 0u);   /* (51) */
+    if (px_midi_pl_put(lg.slot, lg.src, dst, mode, dst == lg.dsw ? lg.dval : lg.dsw, lg.knob ? lg.lo : 0u,
                        lg.knob ? hi : 100u)) { lg_close(UL_FULL); return; }
     if (lg.knob && !lg.sw) {                           /* (a pedal on a setting: its own travel) */
         const int i = px_midi_pl_row(lg.slot, dst, 0xFFu);
         if (i >= 0) { mid_pl[i].clo = lg.clo; mid_pl[i].chi = (uint8_t)chi; }
     }
     learn_persist();
+    px_midi_dual_sync(cur_preset);                     /* (test build 51: the engine told) */
     lg_close(UL_DONE);
 }
 static void lg_arm(void)
@@ -339,6 +346,7 @@ static void lg_scene(uint32_t n)                       /* test build 49: a scene
 static void lg_knob(int dd, int fast)
 {
     if (lg.step == LG_TYPE) lg.sw ^= 1u;
+    else if (lg.step == LG_DUAL) lg.dual ^= 1u;        /* (test build 51) */
     else if (lg.step >= LG_LO) {
         const int v = PRESET.p[lg.blk][lg.k] + dd * (fast ? 5 : 1);
         PRESET.p[lg.blk][lg.k] = (uint8_t)(v < 0 ? 0 : v > 100 ? 100 : v);
@@ -361,9 +369,10 @@ static void lg_tick(uint32_t now)
 }
 static void lg_draw(void)
 {
-    const uint32_t v = lg.knob ? PRESET.p[lg.blk][lg.k] : 0u, n = lg.knob ? 4u : 2u;
-    const uint32_t key = lg.step | (uint32_t)lg.sw << 2 | v << 3 | (uint32_t)lg.src << 10 | (uint32_t)mid_learn.got << 17 |
-                         (uint32_t)lg.lo << 18;
+    const int two = lg_two();
+    const uint32_t v = lg.knob ? PRESET.p[lg.blk][lg.k] : 0u, n = lg.knob ? (two ? 5u : 4u) : 2u;
+    const uint32_t key = lg.step | (uint32_t)lg.sw << 3 | v << 4 | (uint32_t)lg.src << 11 | (uint32_t)mid_learn.got << 18 |
+                         (uint32_t)lg.lo << 19 | (uint32_t)lg.dual << 26 | (uint32_t)two << 27;
     char t[24];
     if (key != lg.shown) {
         static const char *const LG_STEP[2][4] = {{"1  PEDAL OR SWITCH", "2  MOVE THE PEDAL", "3  VALUE AT THE HEEL", "4  VALUE AT THE TOE"},
@@ -371,7 +380,7 @@ static void lg_draw(void)
         static const char *const LG_SAY[2][4] = {{"WHAT WILL YOU USE?", "MOVE THE PEDAL", "PEDAL AT THE HEEL", "PEDAL AT THE TOE"},
                                                  {"WHAT WILL YOU USE?", "PRESS THE SWITCH", "SWITCH OFF", "SWITCH ON"}};
         lg.shown = key;
-        for (uint32_t i = 0; i < 4u; i++) {
+        for (uint32_t i = 0; i < 5u; i++) {
             const uint32_t y = LG_Y0 + i * LG_ROW, cur = i == lg.step;
             const uint16_t bg = cur ? C_CARD : UI_BG, fg = i < lg.step ? UI_TXT : cur ? UI_ACC : UI_DIM;
             if (i >= n) { lcd_rect(4, y, 232, LG_ROW - 2u, UI_BG); continue; }
@@ -379,19 +388,26 @@ static void lg_draw(void)
             if (i == 0u) b_str(t, lg.sw ? "SWITCH" : "PEDAL");
             else if (i == 1u && lg.step > 1u) { b_str(t, "CC "); b_num(t, lg.src); }
             else if (i == 2u && lg.step > 2u) lg_val(t, lg.lo);
+            else if (i == 3u && lg.step > 3u) lg_val(t, lg.hi);
             ui_rbox(4, y, 232, LG_ROW - 2u, 5, bg, UI_BG);
-            ft_box(10, y + 3u, 150, LG_STEP[lg.sw][i], &FT_SM, fg, bg, 0);
-            ft_box(160, y + 3u, 70, t, &FT_SM, fg, bg, 2);
+            if (i < 4u) ft_box(10, y + 1u, 150, LG_STEP[lg.sw][i], &FT_SM, fg, bg, 0);
+            else { char r[16] = "5  "; b_str(r, px_block_label(lg.blk)); b_str(r, " OFF"); ft_box(10, y + 1u, 150, r, &FT_SM, fg, bg, 0); }
+            ft_box(160, y + 1u, 70, t, &FT_SM, fg, bg, 2);
         }
-        ft_box(0, LG_BIG, 240, LG_SAY[lg.sw][lg.step], &FT_MD, UI_TXT, UI_BG, 1);
+        if (lg.step == LG_DUAL) {                      /* (test build 51: WHEN SFX IS OFF, the pedal is ...) */
+            t[0] = 0; b_str(t, "WHEN "); b_str(t, px_block_label(lg.blk)); b_str(t, " IS OFF");
+            ft_box(0, LG_BIG, 240, t, &FT_MD, UI_TXT, UI_BG, 1);
+        } else ft_box(0, LG_BIG, 240, LG_SAY[lg.sw][lg.step], &FT_MD, UI_TXT, UI_BG, 1);
         t[0] = 0;
         if (lg.step == LG_TYPE) b_str(t, lg.sw ? "SWITCH" : "PEDAL");
         else if (lg.step == LG_LISTEN) b_str(t, mid_learn.got ? "HEARD" : "LISTENING");
+        else if (lg.step == LG_DUAL) b_str(t, lg.dual ? "VOLUME" : "NOTHING");
         else lg_val(t, v);
         ft_box(0, LG_BIG + 26u, 240, t, lg.step == LG_LISTEN ? &FT_MD : &FT_NM, lg.step == LG_LISTEN ? UI_DIM : UI_ACC, UI_BG, 1);
         if (lg.step == LG_LISTEN) lcd_rect(0, LG_BIG + 49u, 240, 9, UI_BG);   /* (FT_MD under FT_NM's height) */
         ft_box(0, F_Y + 3u, 240, lg.step == LG_TYPE ? "KNOB: CHOOSE    PUSH: NEXT" : lg.step == LG_LISTEN ? "HOME: CANCEL"
-                                 : lg.step == LG_LO ? "KNOB: VALUE    PUSH: NEXT" : "KNOB: VALUE    PUSH: DONE",
+                                 : lg.step == LG_DUAL ? "KNOB: CHOOSE    PUSH: DONE"
+                                 : lg.step == LG_LO || two ? "KNOB: VALUE    PUSH: NEXT" : "KNOB: VALUE    PUSH: DONE",
                &FT_SM, UI_ACC, UI_PANEL, 1);
         lg.pos = 0xFFu;
     }
@@ -846,6 +862,27 @@ static void draw_edit(int force)
 }
 
 /* ---- render: sends only what changed to the screen ---- */
+#if PX_OWN_FX
+/* test build 51: a two-job pedal's job (px_midi.h PXM_PL_DUAL), as a multi-effect's LED by its pedal: a line at the screen's right
+ * edge on PLAY and the block pages, green while its block is off (the pedal is the volume), red while it is on (the block's
+ * setting); none in a preset without one. Drawn again after anything drawn over it (lcd_gen: every drawing bumps it). The
+ * engine is told the block here too, whatever changed it (a learn, a clear, the editor) */
+#define EXL_X 236u
+#define EXL_W 4u
+static int ui_exp_job(void) { const int b = px_midi_pl_dual(cur_preset); return b < 0 ? -1 : PRESET.on[b] ? 1 : 0; }
+static void draw_exl(int scr)
+{
+    static int was = -1, wscr = -1, wb = -2;
+    static uint32_t gen;
+    const int b = px_midi_pl_dual(cur_preset), j = ui_exp_job();
+    if (b != wb) { wb = b; px_midi_dual_sync(cur_preset); }
+    if (j == was && scr == wscr && gen == lcd_gen) return;
+    const uint32_t y0 = scr ? E_BAND + 4u : S_H + 4u, y1 = F_Y - 4u;
+    if (j >= 0) lcd_rect(EXL_X, y0, EXL_W, y1 - y0, j ? RED : GRN);
+    else if (was >= 0 && scr == wscr) lcd_rect(EXL_X, y0, EXL_W, y1 - y0, UI_BG);   /* (gone: the edge as the page has it) */
+    was = j; wscr = scr; gen = lcd_gen;
+}
+#endif
 static void ui_render(void)
 {
     if (ui_mode == M_TUNER || ui_mode == M_DIAG) return;   /* (the main loop draws them every 100 ms: tuner_draw, diag_draw) */
@@ -898,6 +935,9 @@ static void ui_render(void)
     } else draw_edit(f);
     draw_hint(f);
     if (f) { char s[12]; for (int i = 0; i < 12; i++) s[i] = uc.status[i]; uc.full = 1; ui_status(s, uc.status_kind); uc.full = 0; }
+#if PX_OWN_FX
+    draw_exl(scr);                                     /* (test build 51: last, over whatever was drawn) */
+#endif
 }
 
 /* ---- actions ---- */
@@ -1055,7 +1095,7 @@ static void save_confirm(void)
  * scrolls with the selected one, a bar at the right edge saying where. USB RETURN's knob moves the return along this preset's
  * chain: INPUT, before each block after the first, OUTPUT */
 #if PX_OWN_FX
-enum { MI_CHAN, MI_SEND, MI_CLOCK, MI_EACH, MI_LIVE, MI_SCRULE, MI_SCFEET, MI_INPUT, MI_INZ, MI_PICKUP, MI_TAILS, MI_BTPWR,
+enum { MI_CHAN, MI_SEND, MI_CLOCK, MI_EACH, MI_LIVE, MI_SCRULE, MI_SCFEET, MI_VOLAT, MI_INPUT, MI_INZ, MI_PICKUP, MI_TAILS, MI_BTPWR,
        MI_OUT, MI_USB,
 #if OP_UAUDIO
        MI_UAUDIO, MI_USEND, MI_URET, MI_UGTR,
@@ -1107,7 +1147,7 @@ static void midi_open(void)
     ui_mode = M_MIDI; mi_row = 0; mi_shown_hash = ~0u; mi_orig = px_midi_cfg_pack(&mid_cfg); mi_ua = px_ua_on;
 #if PX_OWN_FX
     mi_set_orig = px_set_pack(); mi_out_orig = px_out_mode; mi_route_orig = px_ua_route; mi_inz_orig = px_inz_pack();
-    mi_live_orig = (uint8_t)(px_live | px_sc_rule << 2 | px_sc_feet << 3);
+    mi_live_orig = (uint8_t)(px_live | px_sc_rule << 2 | px_sc_feet << 3 | px_vol_at << 4);   /* (51: VOL PEDAL) */
 #endif
     lcd_rect(0, 0, 240, 240, UI_BG);
     lcd_rect(0, 0, 240, 4, UI_ACC); lcd_rect(0, 27, 240, 3, UI_ACC); lcd_rect(0, 4, 8, 23, UI_ACC);
@@ -1130,7 +1170,8 @@ static void midi_draw(void)
     h ^= ((uint32_t)px_usb_foot << 4 | px_uh.st) * 0xC2B2AE35u;   /* (test build 41: the row, and what the host sees) */
     h ^= (uint32_t)px_out_mode * 0x165667B1u;        /* (test build 42: OUTPUT) */
     h ^= (uint32_t)px_ua_route * 0xD3A2646Cu;        /* (test build 43: USB SEND, USB RETURN, GUITAR) */
-    h ^= ((uint32_t)px_inz_pack() | (uint32_t)px_live << 8 | (uint32_t)px_sc_rule << 10 | (uint32_t)px_sc_feet << 11) * 0x2545F491u;   /* (test build 47: GUITAR TONE and PICKUP, which 46
+    h ^= ((uint32_t)px_inz_pack() | (uint32_t)px_live << 8 | (uint32_t)px_sc_rule << 10 | (uint32_t)px_sc_feet << 11 |
+          (uint32_t)px_vol_at << 12) * 0x2545F491u;   /* (test build 47: GUITAR TONE and PICKUP, which 46
                                                                                    * never redrew; PLAY VIEW) */
 #if OP_UAUDIO
     const uint32_t ust = a_ua ? ed_ua_stat(0) & 5u : 0u;   /* (the computer records: 1, plays: 4) */
@@ -1141,7 +1182,8 @@ static void midi_draw(void)
     mi_shown_hash = h;
 #if PX_OWN_FX
     static const char *const NAME[MI_ROWS] = {"CHANNEL", "SEND", "CLOCK > DELAY",
-                                              "SWITCH", "PLAY VIEW", "SCENE+SWITCH", "SCENE FOOTSW", "INPUT", "GUITAR TONE", "PICKUP",
+                                              "SWITCH", "PLAY VIEW", "SCENE+SWITCH", "SCENE FOOTSW", "VOL PEDAL", "INPUT", "GUITAR TONE",
+                                              "PICKUP",
                                               "TAILS", "BT POWER", "OUTPUT", "USB PORT",
 #if OP_UAUDIO
                                               "USB AUDIO", "USB SEND", "USB RETURN", "GUITAR",
@@ -1179,6 +1221,8 @@ static void midi_draw(void)
         b_str(v[MI_LIVE], LV[px_live < 3u ? px_live : 0]);   /* (test build 47; 49: SCENES) */
         b_str(v[MI_SCRULE], px_sc_rule ? "SCENE WINS" : "SWITCH WINS");   /* (test build 49) */
         b_str(v[MI_SCFEET], px_sc_feet ? "PRESETS" : "SCENES");
+        v[MI_VOLAT][0] = 0;
+        b_str(v[MI_VOLAT], px_vol_at ? "BEFORE DLY" : "AT INPUT");   /* (test build 51: the expression pedal's volume) */
     }
     v[MI_TAILS][0] = 0;
     b_str(v[MI_TAILS], px_tails ? "ON" : "OFF");
@@ -1279,7 +1323,7 @@ static void midi_close(void)
     ui_mode = M_CHAIN; ui_item = 0;
 #if PX_OWN_FX
     if (px_midi_cfg_pack(&mid_cfg) != mi_orig || mi_ua != px_ua_on || px_set_pack() != mi_set_orig || px_out_mode != mi_out_orig ||
-        px_ua_route != mi_route_orig || px_inz_pack() != mi_inz_orig || (px_live | px_sc_rule << 2 | px_sc_feet << 3) != mi_live_orig) {
+        px_ua_route != mi_route_orig || px_inz_pack() != mi_inz_orig || (px_live | px_sc_rule << 2 | px_sc_feet << 3 | px_vol_at << 4) != mi_live_orig) {
         px_ua_on = mi_ua; midi_persist();
     }
 #else
@@ -1302,6 +1346,7 @@ static void midi_knob(int dd)
                                                        * leaving; 49: of three) */
     else if (mi_row == MI_SCRULE) px_sc_rule ^= 1u;   /* (test build 49) */
     else if (mi_row == MI_SCFEET) px_sc_feet ^= 1u;
+    else if (mi_row == MI_VOLAT) { px_vol_at ^= 1u; PX_EXP_PLACE(px_vol_at); }   /* (test build 51: heard at once, saved on leaving) */
     else if (mi_row == MI_PICKUP) { px_pickup = (uint8_t)((px_pickup + (dd > 0 ? 1u : 2u)) % 3u); a_inz_apply(); }
     else if (mi_row == MI_TAILS) { px_tails ^= 1u; a_tails_apply(); }
     else if (mi_row == MI_BTPWR) { px_bt_pwr = (uint8_t)((px_bt_pwr + (dd > 0 ? 1u : 2u)) % 3u); PX_BT_POWER_APPLY(); }
@@ -1487,7 +1532,8 @@ static void lt_draw(uint32_t now)
     if (lt_at >= n) lt_at = n ? n - 1u : 0u;
     uint32_t key = lt_at | n << 8 | (uint32_t)lt_note << 16;
     for (uint32_t r = 0; r < n; r++)
-        key = key * 31u + (uint32_t)idx[r] * 7u + (idx[r] < 100 ? mid_pl[idx[r]].src + mid_pl[idx[r]].lo * 3u + mid_pl[idx[r]].hi * 5u : 0u);
+        key = key * 31u + (uint32_t)idx[r] * 7u + (idx[r] < 100 ? mid_pl[idx[r]].src + mid_pl[idx[r]].lo * 3u + mid_pl[idx[r]].hi * 5u +
+                                                       mid_pl[idx[r]].mode * 11u : 0u);
     if (key == lt_shown) return;
     lt_shown = key;
     const uint32_t top = lt_at >= LT_VIS ? lt_at + 1u - LT_VIS : 0u;
@@ -1508,7 +1554,8 @@ static void lt_draw(uint32_t now)
         t[0] = 0;
         if (!mine) b_str(t, "ALL: ");
         lt_target(t, dst);
-        if (sel && mine && mid_pl[idx[r]].mode == PXM_MAP_VALUE && (mid_pl[idx[r]].lo != 0u || mid_pl[idx[r]].hi != 100u) &&
+        if (mine && (mid_pl[idx[r]].mode & PXM_PL_DUAL)) b_str(t, " +VOL");   /* (test build 51: a two-job pedal) */
+        if (sel && mine && PXM_PL_MODE(mid_pl[idx[r]].mode) == PXM_MAP_VALUE && (mid_pl[idx[r]].lo != 0u || mid_pl[idx[r]].hi != 100u) &&
             px_cc_tab[dst & 127u].kind == PXM_PARAM) {
             const px_cc_t c = px_cc_tab[dst & 127u];
             char v[12];
@@ -1818,7 +1865,10 @@ static void lg_action(int a)                           /* (ui_action on this pag
         lg.lo = PRESET.p[lg.blk][lg.k]; lg.clo = mid_learn.last;
         PRESET.p[lg.blk][lg.k] = lg.orig;              /* (the toe from the preset's own value: PUSH alone keeps it) */
         lg.step = LG_HI;
-    } else if (lg.step == LG_HI) lg_finish(PRESET.p[lg.blk][lg.k], mid_learn.last);
+    } else if (lg.step == LG_HI) {
+        if (lg_two()) { lg.hi = PRESET.p[lg.blk][lg.k]; lg.chi = mid_learn.last; lg.step = LG_DUAL; }   /* (51: step 5) */
+        else lg_finish(PRESET.p[lg.blk][lg.k], mid_learn.last);
+    } else if (lg.step == LG_DUAL) lg_finish(lg.hi, lg.chi);
 }
 #endif
 static void ui_action(int a)

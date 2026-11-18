@@ -364,8 +364,9 @@ static int st_commit(void)
     if (!st_ok) return -1;
     memset(&h, 0, sizeof h);
 #if PX_OWN_FX
-    st_usb = (uint8_t)((st_usb & 0x0Fu) | (uint32_t)px_live << 4 | (px_sc_rule ? PX_ST_SCRULE : 0u) | (px_sc_feet ? PX_ST_SCFEET : 0u));
-                                                  /* (test build 49: PLAY VIEW as CAB left it, with whatever is written) */
+    st_usb = (uint8_t)((st_usb & 0x0Du) | (px_vol_at ? PX_ST_VOLAT : 0u) | (uint32_t)px_live << 4 | (px_sc_rule ? PX_ST_SCRULE : 0u) |
+                       (px_sc_feet ? PX_ST_SCFEET : 0u));   /* (test build 49: PLAY VIEW as CAB left it, with whatever is
+                                                  * written; 51: VOL PEDAL) */
 #endif
     h.magic = ST_MAGIC; h.seq = st_seq + 1u; h.crc = (uint16_t)st_crc(); h.ver = ST_VER; h.nslot = ST_NSLOT; h.last = st_last; h.pad[0] = st_midi; h.pad[1] = st_usb;
 #if PX_OWN_FX
@@ -451,6 +452,8 @@ static void px_store_boot(void)
     px_live = (uint8_t)((st_usb & PX_ST_VIEW) >> 4); /* test build 47: PLAY VIEW; 49: of three, and the scenes' two rows */
     if (px_live > 2u) px_live = 0;
     px_sc_rule = (uint8_t)!!(st_usb & PX_ST_SCRULE); px_sc_feet = (uint8_t)!!(st_usb & PX_ST_SCFEET);
+    px_vol_at = (uint8_t)!!(st_usb & PX_ST_VOLAT);   /* test build 51: VOL PEDAL (0, as every store before it: the input) */
+    PX_EXP_PLACE(px_vol_at);
     if (px_out_mode > 2u) px_out_mode = 0;
     a_in_gain_apply();                            /* test build 39: INPUT as stored; test build 40: TAILS to the engine */
     a_tails_apply();

@@ -385,7 +385,16 @@ void px_pad_stop(px_engine *e);    /* PAD: fade it out over RELEASE (the left fo
 /* test build 25: the expression pedal (MIDI CC 117: firmware/px_midi_io.h), 0..127; -1 forgets it (the engine then plays as
  * if none had come). It moves what the preset has on: the WHAMMY, else an AUTO WAH, else a volume before the delay */
 void px_exp_set(int v);
-int  px_exp_info(void);            /* the position (-1: none) | its job << 8 (0 volume, 1 wah, 2 whammy) | the hold << 10 */
+int  px_exp_info(void);            /* the position (-1: none) | its job << 8 (0 volume, 1 wah, 2 whammy, 3 another setting:
+                                    * test build 51) | the hold << 10 */
+/* test build 51: a two-job pedal (firmware/px_midi.h PXM_PL_DUAL): the block whose on/off picks the job, -1 none (the jobs as
+ * above). On, the pedal is that block's (a WAH's, AUTO WAH's or WHAMMY's own, else a setting the firmware moves: the volume
+ * stays at unity); off, the volume. A change of block forgets the position, as px_exp_set(-1) */
+void px_exp_dual(int b);
+/* test build 51: the volume's place, for every preset: 0 right after the input (after the GATE when it comes first: like the
+ * guitar's own volume knob), 1 before the first DELAY or REVERB (else the chain's end): the tone kept. The tails ring on in
+ * both */
+void px_exp_place(int at);
 #endif
 void px_engine_process(px_engine *e, const float *in, float *out, int n);
 enum { PX_PART_ALL, PX_PART_PRE, PX_PART_NAM, PX_PART_POST };   /* v37: px_engine_part's stages (see px_dsp.c) */

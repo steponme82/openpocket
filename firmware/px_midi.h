@@ -168,13 +168,25 @@ typedef struct { uint16_t mask[PX_SC_N]; uint8_t cur, set; } px_sc_t;   /* set: 
 static px_sc_t px_sc_tab[52];                          /* every preset's, as saved (52: px_store.h ST_NSLOT, PXM_PL_SLOTS) */
 static px_sc_t px_sc;                                  /* the playing preset's, as it plays */
 static uint8_t px_sc_rule, px_sc_feet;                 /* (SETTINGS: 1 SCENE WINS; 1 the footswitches stay on the presets) */
+/* test build 51: SETTINGS' VOL PEDAL, where the expression pedal's volume acts, in every preset (engine px_exp_place): 0 right
+ * after the input (the default: as the guitar's own volume knob, the drive cleans up with it), 1 before the delay and the
+ * reverb (the tone kept). The tails ring on in both. Bit 1 of the USB settings byte (px_store.h st_usb) */
+#define PX_ST_VOLAT 0x02u
+static uint8_t px_vol_at;
+#ifndef PX_EXP_PLACE
+#define PX_EXP_PLACE(at) ((void)0)                     /* (the firmware's: the engine's px_exp_place) */
+#endif
+#ifndef PX_EXP_DUAL
+#define PX_EXP_DUAL(b) ((void)0)                       /* (the firmware's: the engine's px_exp_dual, the two-job pedal's block) */
+#endif
+static void px_midi_dual_sync(uint32_t slot);         /* (below: the engine told the block of the preset's two-job pedal) */
 /* test build 50: the scenes' names, typed in the web editor: 3 letters each, every preset (px_store.h "OPN1" and "OPN2"), shown
  * on the pedal in place of SCENE 2. Only the playing preset's are in RAM: px_scn as it plays (the editor changes them, SAVE
  * writes them), px_scn_saved as its slot has them (EDITED). A name ends at its first 0 */
 #define PX_SCN_LEN 3u
 static char px_scn[PX_SC_N][PX_SCN_LEN], px_scn_saved[PX_SC_N][PX_SCN_LEN];
 static void px_scn_load(uint32_t slot);                /* (px_store.h: the slot's, from the copy in use) */
-#define PX_SC_LOAD(i) (px_sc = px_sc_tab[(i) < 52u ? (i) : 0u], px_scn_load(i))
+#define PX_SC_LOAD(i) (px_sc = px_sc_tab[(i) < 52u ? (i) : 0u], px_scn_load(i), px_midi_dual_sync(i))   /* (51: its pedal) */
 static void px_scene_label(char *t, uint32_t n, int narrow)   /* scene n's name, else "SCENE 2" ("SC 2" where narrow) */
 {
     uint32_t i = 0;
@@ -267,6 +279,7 @@ static uint32_t mid_in_n;                              /* the musical messages r
 #define PXM_CC_PAD  64u                                /* (px_midi_io.h: 64 catches a SYN PAD's chord, 116 taps the tempo, */
 #define PXM_CC_NEXT 118u                               /* 117 is the expression pedal) 118 / 119 at 64 and up: the next / */
 #define PXM_CC_PREV 119u                               /* the previous preset, as the footswitches */
+#define PXM_CC_EXP 117u   /* test build 25: the expression pedal, 0..127 (engine/px_dsp.c px_exp: WHAMMY, AUTO WAH or volume) */
 static void px_midi_map_clear(void) { memset(mid_map, 0xFF, sizeof mid_map); }
 /* a number the pedal reads: its map, or one of the image's own (64, 116, 117, 118, 119) */
 static int px_midi_known(uint32_t cc)
@@ -299,13 +312,36 @@ typedef struct { uint8_t slot, src, dst, mode, lo, hi, clo, chi; } px_pl_t;   /*
                                        * build 47): a pedal's setting at the heel and the toe, 0..100; clo / chi (48): the values
                                        * the pedal sends there, 0..127 (the same twice: 0 and 127) */
 static px_pl_t mid_pl[PXM_PL_N];
+/* test build 51: a two-job pedal, in its mode (PXM_MAP_VALUE | PXM_PL_DUAL), on a setting of a block that has an on/off (not
+ * the GATE's: PRESET LVL is the preset's own level). While that block is on, the pedal is that setting (a WAH's or AUTO WAH's
+ * sweep and a WHAMMY's PEDAL go as the expression pedal, CC 117: the engine's own, smoothed, the heel and toe kept); while it
+ * is off, the pedal is the volume (CC 117 again, along the pedal's own travel), wherever SETTINGS' VOL PEDAL puts it. So the
+ * switch, scene or button that turns the effect on is the one that changes the pedal's job, as a multi-effect's toe switch.
+ * One a preset (another one learned so takes its place). Bit 6, not 7: the editor's protocol carries 7 bits a byte, and the
+ * counting kinds are 0 to 2 */
+#define PXM_PL_DUAL 0x40u
+#define PXM_PL_MODE(m) ((m) & 0x3Fu)
 static void px_midi_pl_clear(void) { memset(mid_pl, 0xFF, sizeof mid_pl); }
+static int px_midi_pl_dual_ok(uint32_t dst)           /* a setting a two-job pedal may have: a block's, not the GATE's */
+{
+    px_cc_build();
+    return dst < 128u && px_cc_tab[dst].kind == PXM_PARAM && px_cc_tab[dst].blk != PX_B_GATE;
+}
 static int px_midi_pl_valid(const px_pl_t *e)          /* an entry as stored: empty, or a usable one */
 {
     if (e->slot == 0xFFu) return 1;
-    return e->slot < PXM_PL_SLOTS && e->src < 128u && e->mode <= PXM_MAP_VALUE && px_midi_known(e->dst) && e->lo <= 100u &&
-           e->hi <= 100u && e->clo < 128u && e->chi < 128u;
+    if ((e->mode & PXM_PL_DUAL) && (PXM_PL_MODE(e->mode) != PXM_MAP_VALUE || !px_midi_pl_dual_ok(e->dst))) return 0;
+    return e->slot < PXM_PL_SLOTS && e->src < 128u && PXM_PL_MODE(e->mode) <= PXM_MAP_VALUE && px_midi_known(e->dst) &&
+           e->lo <= 100u && e->hi <= 100u && e->clo < 128u && e->chi < 128u;
 }
+static int px_midi_pl_dual(uint32_t slot)              /* test build 51: the block of this preset's two-job pedal, or -1 */
+{
+    for (uint32_t i = 0; i < PXM_PL_N; i++)
+        if (mid_pl[i].slot == slot && (mid_pl[i].mode & PXM_PL_DUAL) && px_midi_pl_dual_ok(mid_pl[i].dst))
+            return px_cc_tab[mid_pl[i].dst].blk;
+    return -1;
+}
+static void px_midi_dual_sync(uint32_t slot) { PX_EXP_DUAL(px_midi_pl_dual(slot)); }
 static int px_midi_pl_row(uint32_t slot, uint32_t d1, uint32_t d2)   /* this preset's entry driving a row (either of its two
                                                                       * numbers: ON's flip and its on/off), or -1 */
 {
@@ -345,6 +381,7 @@ static int px_midi_pl_put(uint32_t slot, uint32_t src, uint32_t dst, uint32_t mo
     for (uint32_t i = 0; i < PXM_PL_N; i++) {
         px_pl_t *e = &mid_pl[i];
         if (e->slot == slot && (e->src == src || e->dst == dst || e->dst == d_other)) memset(e, 0xFF, sizeof *e);
+        if (e->slot == slot && (mode & PXM_PL_DUAL)) e->mode &= (uint8_t)~PXM_PL_DUAL;   /* (51: one two-job pedal a preset) */
         if (e->slot == 0xFFu && free_i < 0) free_i = (int)i;
     }
     if (free_i < 0) return -1;
@@ -426,13 +463,37 @@ static int px_midi_map_dst(uint32_t dst, uint32_t mode, uint32_t lo, uint32_t hi
     *val = dst >= PXM_CC_TOGGLE0 && dst < PXM_CC_TOGGLE0 + PX_NBLK ? 0u : 127u;
     return 1;
 }
-static int px_midi_map_in(uint32_t *cc, uint32_t *val, uint32_t slot)
+/* test build 51: a value along a pedal's own travel (clo heel, chi toe; the same twice: 0 and 127), as 0..127 */
+static uint32_t px_midi_travel(uint32_t v, uint32_t clo, uint32_t chi)
+{
+    int a = (int)clo, b = (int)chi, t;
+    if (a == b) { a = 0; b = 127; }
+    t = ((int)v - a) * 127 / (b - a);
+    return (uint32_t)(t < 0 ? 0 : t > 127 ? 127 : t);
+}
+/* test build 51: a two-job pedal's setting that is the expression pedal's own job in the engine: a WAH's or an AUTO WAH's sweep
+ * (PEDAL, CENTER), a WHAMMY's PEDAL */
+static int px_midi_dual_engine(const px_preset_t *pr, uint32_t b, uint32_t k)
+{
+    if (b == PX_B_SFX) { const uint32_t t = pr->type[b] % PX_SFX_COUNT; return (t == PX_SFX_WAH && k == 0u) || (t == PX_SFX_LFOWAH && k == 3u); }
+    return b == PX_B_PITCH && pr->type[b] % PX_PIT_COUNT == PX_PIT_WHAMMY && k == 3u;
+}
+static int px_midi_map_in(uint32_t *cc, uint32_t *val, uint32_t slot, const px_preset_t *pr)   /* pr: the sound playing */
 {
     uint32_t i;
     for (i = 0; i < PXM_PL_N; i++) {
         const px_pl_t *e = &mid_pl[i];
-        if (e->slot == slot && e->src == *cc && px_midi_known(e->dst))
-            return px_midi_map_dst(e->dst, e->mode, e->lo, e->hi, e->clo, e->chi, cc, val);
+        if (e->slot != slot || e->src != *cc || !px_midi_known(e->dst)) continue;
+        if ((e->mode & PXM_PL_DUAL) && pr && px_midi_pl_dual_ok(e->dst)) {   /* test build 51: a two-job pedal */
+            const px_cc_t t = px_cc_tab[e->dst];
+            if (!pr->on[t.blk]) { *val = px_midi_travel(*val, e->clo, e->chi); *cc = PXM_CC_EXP; return 1; }   /* the volume */
+            if (px_midi_dual_engine(pr, t.blk, t.k)) {     /* the engine's wah or whammy, from the setting's heel and toe */
+                (void)px_midi_map_dst(e->dst, PXM_MAP_VALUE, e->lo, e->hi, e->clo, e->chi, cc, val);
+                *cc = PXM_CC_EXP;
+                return 1;
+            }
+        }
+        return px_midi_map_dst(e->dst, PXM_PL_MODE(e->mode), e->lo, e->hi, e->clo, e->chi, cc, val);
     }
     for (i = 0; i < PXM_MAP_N; i++) {
         const px_map_t *e = &mid_map[i];

@@ -108,16 +108,19 @@ int main(void)
     p.p[PX_B_DELAY][0] = 20; p.p[PX_B_DELAY][1] = 60; p.p[PX_B_DELAY][2] = 60;   /* 265 ms, feedback, mix */
     sine(330.0f, 0.3f, 0.5f, 0.6f);
     run(&p, ref, 0, 0, 0, 0.0f, 0);
-    {
+    for (int a = 1; a >= 0; a--) {                      /* (test build 51: in both of VOL PEDAL's places) */
+        px_exp_place(a);
         float at[2] = {0.2f, 0.65f}; int pos[2] = {127, 0};
         run(&p, out, at, pos, 2, 0.0f, 0);
         float after = rms(out, 0.7f, 2.0f) / rms(ref, 0.7f, 2.0f);
         float at2[1] = {0.2f}; int pos2[1] = {0};
         run(&p, out, at2, pos2, 1, 0.0f, 0);
         float before = rms(out, 0.5f, 2.0f) / rms(ref, 0.5f, 2.0f);
-        printf("  closed after the phrase: the repeats x%.3f; closed before it: x%.2g\n", after, before);
-        ok(after > 0.95f && after < 1.05f && before < 1e-4f, "the volume comes before the delay: closed after a phrase the repeats ring on, before it nothing");
+        printf("  %s: closed after the phrase: the repeats x%.3f; closed before it: x%.2g\n", a ? "BEFORE DLY" : "AT INPUT", after, before);
+        ok(after > 0.95f && after < 1.05f && before < 1e-4f, a ? "the volume before the delay: closed after a phrase the repeats ring on, before it nothing"
+                                                                 : "the volume at the input (51): the same, the repeats ring on");
     }
+    px_exp_place(0);
 
     /* the hold: a wah turned off with the pedal at the heel */
     preset(&p);
@@ -263,6 +266,53 @@ int main(void)
             ok(worst < 0.1f * 6.2831853f * 440.0f / SR * 1.5f && rms(out, 1.1f, 1.5f) < 1e-6f && rms(out, 1.0f, 1.01f) > 0.03f,
                "PRESET LVL: 50 to 0 while playing fades out over 23 ms to silence, no click");
     }
+    }
+    /* test build 51: the volume's place (VOL PEDAL, px_exp_place). BEFORE DLY: after a drive, half way its -18 dB exactly; AT
+     * INPUT (the default): before it, as the guitar's own volume knob: a saturated drive cleans up, its level falls far less */
+    {
+        px_preset_t p; preset(&p);
+        p.on[PX_B_DRIVE] = 1; p.type[PX_B_DRIVE] = 0;
+        for (int k = 0; k < PX_NPAR; k++) p.p[PX_B_DRIVE][k] = 90;
+        sine(220.0f, 0.3f, 0.0f, 4.0f);
+        float at[2] = {0.2f, 1.5f}; int pos[2] = {127, 64};
+        float lv[2];
+        for (int a = 0; a < 2; a++) {
+            px_exp_place(a);
+            run(&p, out, at, pos, 2, 0.0f, 0);
+            lv[a] = db(rms(out, 2.0f, 2.8f) / rms(out, 0.8f, 1.4f));
+        }
+        px_exp_place(0);
+        printf("  half way through a saturated drive: AT INPUT %.1f dB, BEFORE DLY %.1f dB\n", lv[0], lv[1]);
+        ok(lv[1] > -19.5f && lv[1] < -16.5f && lv[0] > lv[1] + 6.0f,
+           "VOL PEDAL: BEFORE DLY after the drive (its -18 dB); AT INPUT before it, the drive cleaning up (far less)");
+    }
+    /* test build 51: a two-job pedal (px_exp_dual): its block's on/off picks the job. The WAH (SFX) on: its sweep, the volume at
+     * unity; turned off with the pedal at the heel: the volume, at unity until the pedal moves. Another block's setting (MOD's):
+     * on, the volume at unity (the firmware moves the setting); off, the volume. A change of block forgets the position */
+    {
+        px_preset_t p, q, r; preset(&p); preset(&r);
+        p.on[PX_B_SFX] = 1; p.type[PX_B_SFX] = PX_SFX_WAH;
+        q = p; q.on[PX_B_SFX] = 0;
+        sine(440.0f, 0.3f, 0.0f, 4.0f);
+        run(&r, ref, 0, 0, 0, 0.0f, 0);
+        px_exp_dual(PX_B_SFX);
+        float at[2] = {0.2f, 2.5f}; int pos[2] = {0, 0};
+        run(&p, out, at, pos, 2, 1.0f, &q);            /* (the WAH off at 1.0 s, the pedal at the heel; it moves at 2.5 s) */
+        const float wah = rms(out, 0.5f, 0.95f), held = rms(out, 1.6f, 2.4f) / rms(ref, 1.6f, 2.4f), moved = rms(out, 2.8f, 3.8f);
+        printf("  two jobs, the WAH: on at the heel %.3f; off: x%.4f, the pedal moved %.2g\n", wah, held, moved);
+        ok(wah > 0.01f && fabsf(held - 1.0f) < 1e-3f && moved < 1e-5f,
+           "two jobs: the WAH on, the pedal at the heel is the wah's (sound); off, the volume: at unity, then the heel's silence once moved");
+        px_preset_t m = r; m.on[PX_B_MOD] = 1; m.type[PX_B_MOD] = 0;
+        px_preset_t m0 = m; m0.on[PX_B_MOD] = 0;
+        run(&m0, ref, 0, 0, 0, 0.0f, 0);
+        px_exp_set(64); px_exp_dual(PX_B_MOD);
+        const int forgot = (px_exp_info() & 0xFF) == 0xFF;
+        run(&m, out, at, pos, 2, 1.0f, &m0);           /* (MOD on, the pedal at the heel; MOD off at 1.0 s; moved at 2.5 s) */
+        const float on_ = rms(out, 0.5f, 0.95f), held2 = rms(out, 1.6f, 2.4f) / rms(ref, 1.6f, 2.4f), moved2 = rms(out, 2.8f, 3.8f);
+        printf("  two jobs, MOD's setting: on at the heel %.3f; off: x%.4f, moved %.2g\n", on_, held2, moved2);
+        ok(forgot && on_ > 0.05f && fabsf(held2 - 1.0f) < 1e-3f && moved2 < 1e-5f,
+           "two jobs: on another block's setting, its block on: the volume at unity; off: the volume; a new block forgets the position");
+        px_exp_dual(-1);
     }
     px_exp_set(-1);
     printf("\n%s\n", failed ? "expression pedal tests FAILED" : "all expression pedal tests passed");

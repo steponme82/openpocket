@@ -12,6 +12,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include "px_dsp.h"
+#if PX_OWN_FX   /* test build 51: what the engine is told (openpocket.c: px_exp_dual, px_exp_place), seen here */
+static int uis_dual = -2, uis_dual_n, uis_place = -1;
+#define PX_EXP_DUAL(b) (uis_dual = (int)(b), uis_dual_n++)
+#define PX_EXP_PLACE(at) (uis_place = (int)(at))
+#endif
 #include "../firmware/px_midi.h"
 #if PX_OWN_FX
 static int a_in_gain_n;                                  /* test build 39: INPUT applied (px_audio.h's, counted here) */
@@ -510,6 +515,9 @@ static int learn_live(const char *d)
         px_learn_feed(4, 120);                         /* (the pedal at its toe: 120) */
         ui_turn(1, 0); ui_turn(1, 0); hold(0, 10); ui_render(); shot(d, "learn_guide_toe");
         CHECK(count_col(8, F_Y - 6u, 200, 4, UI_ACC) > 0, "learn: the pedal's place shown (at its toe)");
+        tap(UB_PUSH); hold(0, 10); ui_render(); shot(d, "learn_guide_two_jobs");
+        CHECK(ui_mode == M_GUIDE && lg.step == LG_DUAL && !lg.dual && px_midi_pl_count(9) == 0 && learn_saved == 2,
+              "learn: PUSH at the toe: step 5 (test build 51), WHEN AMP IS OFF, NOTHING to begin with (a gain), nothing in yet");
         tap(UB_PUSH); hold(0, 10); ui_render(); shot(d, "edit_learn_pedal_learned");
         e = px_midi_pl_row(9, px_cc_param(PX_B_AMP, 1), 0xFFu);
         CHECK(ui_mode == M_BLOCK && ui_item == 3u && e >= 0 && mid_pl[e].src == 4 && mid_pl[e].mode == PXM_MAP_VALUE && mid_pl[e].lo == heel &&
@@ -724,6 +732,80 @@ static int scenes(const char *d)
 }
 /* test build 41: the USB footswitch's notes on the footer (px_usbhost.h pxu_note): PLAY across the footer, a block page in the
  * hint's box beside the load figure; an overload's instruction first; the hint back when the note ends */
+/* test build 51: a two-job pedal: the volume while its block is off, the block's setting while it is on (here a WAH's sweep);
+ * the guided learn's step 5, the line at the screen's right edge, the engine told the block, scenes, one a preset */
+static int two_jobs(const char *d)
+{
+    px_midi_map_clear(); px_midi_pl_clear(); learn_saved = 0;
+    px_live = 0; px_sc_rule = 0; px_sc_feet = 0;
+    ui_home(); load_preset(9); cur_preset = 9; hold(0, 10); full();
+    CHECK(px_midi_pl_dual(9) < 0 && uis_dual == -1 && count_col(EXL_X, S_H + 4u, EXL_W, F_Y - S_H - 8u, GRN) == 0 &&
+          count_col(EXL_X, S_H + 4u, EXL_W, F_Y - S_H - 8u, RED) == 0, "two jobs: a preset without one: no line, the engine told none");
+    PRESET.type[PX_B_SFX] = PX_SFX_WAH; PRESET.on[PX_B_SFX] = 0; PRESET.p[PX_B_SFX][0] = 0;
+    ui_enter_block(PX_B_SFX); ui_item = 2; hold(0, 10); ui_render();
+    hold(1u << UB_FX, 850); hold(0, 10);
+    CHECK(ui_mode == M_GUIDE && lg.knob && !lg.sw && lg.dual && lg_two(), "two jobs: a pedal on the WAH's PEDAL: five steps, VOLUME to begin with");
+    tap(UB_PUSH); px_learn_feed(7, 40); hold(0, 10);
+    CHECK(lg.step == LG_LO && lg.src == 7, "two jobs: the pedal heard");
+    px_learn_feed(7, 0); tap(UB_PUSH);                 /* (the heel: PEDAL 0, the pedal at 0) */
+    px_learn_feed(7, 127); for (int i = 0; i < 25; i++) ui_turn(1, 1);
+    tap(UB_PUSH); hold(0, 10); ui_render(); shot(d, "learn_guide_two_jobs_volume");
+    CHECK(lg.step == LG_DUAL && lg.hi == 100u && lg.chi == 127u && px_midi_pl_count(9) == 0, "two jobs: step 5, WHEN SFX IS OFF: VOLUME; nothing in yet");
+    ui_turn(1, 0); CHECK(!lg.dual, "two jobs: the knob: NOTHING");
+    ui_turn(1, 0); CHECK(lg.dual, "two jobs: and back: VOLUME");
+    tap(UB_PUSH); hold(0, 10); ui_render();
+    const int e = px_midi_pl_row(9, px_cc_param(PX_B_SFX, 0), 0xFFu);
+    CHECK(ui_mode == M_BLOCK && e >= 0 && mid_pl[e].mode == (PXM_MAP_VALUE | PXM_PL_DUAL) && mid_pl[e].lo == 0u && mid_pl[e].hi == 100u &&
+          mid_pl[e].clo == 0u && mid_pl[e].chi == 127u && px_midi_pl_dual(9) == PX_B_SFX && uis_dual == PX_B_SFX && learn_saved == 1,
+          "two jobs: in: a two-job pedal on the WAH, written, the engine told its block");
+    hold(0, 2600); ui_render(); shot(d, "two_jobs_block_green");
+    CHECK(ui_exp_job() == 0 && count_col(EXL_X, E_BAND + 4u, EXL_W, F_Y - E_BAND - 8u, GRN) == (int)(EXL_W * (F_Y - E_BAND - 8u)),
+          "two jobs: SFX off: the line green, the whole edge (the pedal is the volume)");
+    {   /* what the pedal's messages become: SFX off the volume, on the wah's sweep: both the expression pedal, CC 117 */
+        uint32_t c = 7, v = 64;
+        CHECK(px_midi_map_in(&c, &v, 9, &PRESET) && c == PXM_CC_EXP && v == 64u, "two jobs: SFX off: the volume (CC 117, along the pedal's travel)");
+        PRESET.on[PX_B_SFX] = 1; c = 7; v = 64;
+        CHECK(px_midi_map_in(&c, &v, 9, &PRESET) && c == PXM_CC_EXP && v == 64u, "two jobs: SFX on: the wah's sweep (CC 117, the setting's heel and toe)");
+        c = 7; v = 64;
+        CHECK(px_midi_map_in(&c, &v, 10, &PRESET) && c == 7u, "two jobs: another preset: not this one's");
+    }
+    hold(0, 10); ui_render(); shot(d, "two_jobs_block_red");
+    CHECK(ui_exp_job() == 1 && count_col(EXL_X, E_BAND + 4u, EXL_W, F_Y - E_BAND - 8u, RED) == (int)(EXL_W * (F_Y - E_BAND - 8u)),
+          "two jobs: SFX on: red (the pedal is the wah)");
+    ui_home(); hold(0, 10); full(); shot(d, "two_jobs_play_red");
+    CHECK(count_col(EXL_X, S_H + 4u, EXL_W, F_Y - S_H - 8u, RED) == (int)(EXL_W * (F_Y - S_H - 8u)), "two jobs: PLAY: the line too, drawn over a full page");
+    {   /* scenes: the wah off in SCENE 1 (playing: kept in it, as Helix's), on in SCENE 2: the line follows */
+        PRESET.on[PX_B_SFX] = 0;
+        px_sc.set = 3u; px_sc.mask[1] = (uint16_t)(sc_now() | 1u << PX_B_SFX);
+        ui_scene_recall(1); hold(0, 10); ui_render(); shot(d, "two_jobs_scene_2_red");
+        CHECK(PRESET.on[PX_B_SFX] && count_col(EXL_X, S_H + 4u, EXL_W, F_Y - S_H - 8u, RED) == (int)(EXL_W * (F_Y - S_H - 8u)),
+              "two jobs: SCENE 2, the wah on: red");
+        ui_scene_recall(0); hold(0, 10); ui_render(); shot(d, "two_jobs_scene_1_green");
+        CHECK(!PRESET.on[PX_B_SFX] && count_col(EXL_X, S_H + 4u, EXL_W, F_Y - S_H - 8u, GRN) == (int)(EXL_W * (F_Y - S_H - 8u)),
+              "two jobs: SCENE 1, the wah off: green");
+    }
+    {   /* the preset's MIDI table (hold FX on MODEL) says it: +VOL */
+        ui_enter_block(PX_B_SFX); ui_item = 0; hold(0, 10); ui_render();   /* (item 0: MODEL) */
+        hold(1u << UB_FX, 850); hold(0, 10); ui_render(); shot(d, "two_jobs_table");
+        CHECK(ui_mode == M_LEARN, "two jobs: the preset's MIDI table (+VOL after the setting)");
+        tap(UB_HOME); ui_home(); hold(0, 10);
+    }
+    {   /* one a preset; never on the GATE's PRESET LVL */
+        CHECK(px_midi_pl_put(9, 8, px_cc_param(PX_B_MOD, 0), PXM_MAP_VALUE | PXM_PL_DUAL, 0xFFu, 0u, 100u) == 0 && px_midi_pl_dual(9) == PX_B_MOD &&
+              !(mid_pl[px_midi_pl_row(9, px_cc_param(PX_B_SFX, 0), 0xFFu)].mode & PXM_PL_DUAL), "two jobs: one a preset: another takes its place");
+        const px_pl_t g = {9, 9, (uint8_t)px_cc_param(PX_B_GATE, 2), PXM_MAP_VALUE | PXM_PL_DUAL, 0, 100, 0, 127};
+        const px_pl_t ok_ = {9, 9, (uint8_t)px_cc_param(PX_B_DELAY, 1), PXM_MAP_VALUE | PXM_PL_DUAL, 0, 100, 0, 127};
+        const px_pl_t sw = {9, 9, (uint8_t)(PXM_CC_TOGGLE0 + PX_B_DELAY), PXM_MAP_EACH | PXM_PL_DUAL, 0, 100, 0, 127};
+        CHECK(!px_midi_pl_valid(&g) && px_midi_pl_valid(&ok_) && !px_midi_pl_valid(&sw), "two jobs: never PRESET LVL's (the GATE's), nor a switch's");
+        ui_home(); hold(0, 10); ui_render();
+        CHECK(uis_dual == PX_B_MOD, "two jobs: the engine told the new block (from the screen's pass)");
+    }
+    load_preset(10); cur_preset = 10; hold(0, 10); ui_render(); shot(d, "two_jobs_other_preset");
+    CHECK(uis_dual == -1 && count_col(EXL_X, S_H + 4u, EXL_W, F_Y - S_H - 8u, GRN) == 0 && count_col(EXL_X, S_H + 4u, EXL_W, F_Y - S_H - 8u, RED) == 0,
+          "two jobs: a preset without one: the line gone, the engine told");
+    px_midi_pl_clear(); load_preset(9); cur_preset = 9; ui_home(); hold(0, 10);
+    return 0;
+}
 static int usb_notes(const char *d)
 {
     static const uint32_t N[] = {PXU_OK, PXU_NOMIDI, PXU_LOW, PXU_LOST};
@@ -826,6 +908,14 @@ int main(int argc, char **argv)
         midi_knob(1);
         if (px_sc_rule || px_sc_feet) { printf("midi: the scene rows must turn back\n"); return 1; }
         if (ft_width(&FT_SM, "SWITCH WINS") > 92u || ft_width(&FT_SM, "SCENE FOOTSW") > 140u) { printf("midi: the scene rows' texts must fit\n"); return 1; }
+        /* test build 51: VOL PEDAL, the expression pedal's volume: AT INPUT at first, BEFORE DLY; heard at once */
+        midi_push();
+        if (mi_row != MI_VOLAT || px_vol_at) { printf("midi: VOL PEDAL must follow SCENE FOOTSW, AT INPUT at first\n"); return 1; }
+        midi_knob(1); midi_draw(); shot(d, "midi_vol_pedal");
+        if (px_vol_at != 1u || uis_place != 1) { printf("midi: VOL PEDAL must turn to BEFORE DLY, heard at once\n"); return 1; }
+        midi_knob(1);
+        if (px_vol_at || uis_place != 0) { printf("midi: VOL PEDAL must turn back to AT INPUT\n"); return 1; }
+        if (ft_width(&FT_SM, "BEFORE DLY") > 92u || ft_width(&FT_SM, "VOL PEDAL") > 140u) { printf("midi: VOL PEDAL's texts must fit\n"); return 1; }
     }
     {   /* INPUT: -10..+10 dB, applied at once (each knob step), saved on leaving with the rest */
         const int n0 = a_in_gain_n;
@@ -1013,7 +1103,7 @@ int main(int argc, char **argv)
     if (mid_cfg.chan != 0) { printf("midi: channel 16 + 1 must wrap to omni\n"); return 1; }
     midi_knob(-1); if (mid_cfg.chan != 16) { printf("midi: omni - 1 must wrap to 16\n"); return 1; }
 #if PX_OWN_FX
-    return quick_wins(d) || overhaul(d) || pad_gestures(d) || usb_notes(d) || learn_live(d) || live_view(d) || scenes(d);
+    return quick_wins(d) || overhaul(d) || pad_gestures(d) || usb_notes(d) || learn_live(d) || live_view(d) || scenes(d) || two_jobs(d);
 #else
     return quick_wins(d) || overhaul(d);
 #endif

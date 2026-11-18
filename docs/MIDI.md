@@ -219,6 +219,40 @@ switches the blocks to it at once (each block fades, as when switched by hand).
   four under the chain in its Sound view: a tap recalls one, a grid sets each one's blocks; its MIDI section learns a switch
   on a scene and holds SCENE+SWITCH, SCENE FOOTSW and PLAY VIEW.
 
+## Two jobs for one pedal: the volume or an effect (the Bluetooth test image, test build 51)
+
+As a multi-effect's expression pedal with a toe switch: the controller's pedal is the **volume** while an effect is off, and
+that **effect's setting** while it is on (a wah, a whammy, any setting of a block that has an on/off). Whatever turns the
+effect on and off (a Chocolate switch learned on its ON row, a scene, its button on the pedal) changes the pedal's job.
+
+- **Set it**: learn the pedal on the effect's setting (hold FX on it, above). After the toe, a fifth step asks **WHEN SFX IS
+  OFF**: **VOLUME** (the two jobs) or **NOTHING** (as before: the pedal moves the setting, the block on or off). VOLUME to begin
+  with on a WAH's PEDAL, an AUTO WAH's CENTER and a WHAMMY's PEDAL, NOTHING elsewhere. Not on the GT page (PRESET LVL is the
+  preset's own level). One a preset: another one learned so takes its place. The preset's MIDI table shows it as
+  `CC 7  SFX PEDAL +VOL`.
+- **What it does**: with the effect on, the pedal is its setting, between the heel's and the toe's values (a WAH's sweep, an
+  AUTO WAH's CENTER and a WHAMMY's PEDAL go as the expression pedal, CC 117: smoothed sample by sample, as since test build
+  25), and the volume stays at unity. With the effect off, the pedal is the volume, along its own travel: the heel silent, the
+  toe at unity, -18 dB half way. Turned off with the pedal anywhere, the volume stays at unity until the pedal moves (a wah
+  left at the heel does not silence the next song). In a preset without one, the pedal does what it learned there or what the
+  editor's learned controls say (a PRESET LVL from -INF to +4.2 DB, for example).
+- **The line**: on PLAY and the block pages, a line down the screen's right edge says the pedal's job, as the LED by a
+  multi-effect's pedal: **green** the volume, **red** the effect. None in a preset without a two-job pedal.
+- **Scenes**: a scene sets the effect on or off, so the pedal's job follows it (a solo scene with the wah on: red). If the effect
+  also has its own switch, SETTINGS' SCENE+SWITCH on SCENE WINS lets the scenes set it too.
+- **Where the volume acts**: SETTINGS' **VOL PEDAL**, for every preset. **AT INPUT** (the default; right after the input, after
+  the gate when it comes first) works as the guitar's own volume knob: a drive or a high-gain amp cleans up as the pedal goes
+  back, and the level falls mostly near the heel (through a saturated drive, half way is only 0.3 dB down). **BEFORE DLY**
+  (before the first delay or reverb, else at the chain's end) keeps the tone: half way is 18 dB down at any gain. In both, the
+  delay's repeats and the reverb's tail ring on when the pedal goes back. CC 117's own volume (test build 25) follows the same
+  setting.
+- **Where it is kept**: bit 6 of the control's "how it counts" in "OPP3" (no more room taken); VOL PEDAL in bit 1 of the USB
+  settings byte. The web editor (editor protocol 7) shows and sets both.
+- **In the web editor**: the MIDI section's list of the preset's own controls ("Learned by the pedal, only in ...") marks a
+  two-job pedal `+VOL` and gives a pedal on a block's setting (not the GT's) a box, **or VOLUME when SFX is off** (the block's
+  label), one a preset; a pedal learned there on a WAH's PEDAL, an AUTO WAH's CENTER or a WHAMMY's PEDAL begins with it ticked,
+  as the pedal's own learn begins on VOLUME. VOL PEDAL is the **Volume pedal** row, beside the scene rows.
+
 ## PLAY VIEW: what the switches turn on and off (the Bluetooth test image, test build 47)
 
 SETTINGS' **PLAY VIEW** on **SWITCHES**: on PLAY, in place of the chain's tiles and the selected block, the blocks that this
@@ -254,6 +288,7 @@ follow a tempo with another note value, set the delay's own TIME; this is not a 
 | PLAY VIEW (the Bluetooth test image, test build 47; SCENES and CAB held: 49) | CHAIN, SWITCHES, SCENES | CHAIN |
 | SCENE+SWITCH (the Bluetooth test image, test build 49) | SWITCH WINS, SCENE WINS | SWITCH WINS |
 | SCENE FOOTSW (the Bluetooth test image, test build 49) | SCENES, PRESETS | SCENES |
+| VOL PEDAL (the Bluetooth test image, test build 51) | AT INPUT, BEFORE DLY | AT INPUT |
 | GUITAR TONE (the Bluetooth test image, test build 46; named by its sound since 47) | BRIGHT, NATURAL, SMOOTH, WARM, WARMER, PUNCHY, DARK, DARKER, MUDDY | NATURAL |
 | PICKUP (the Bluetooth test image, test build 46) | SINGLE, HUMBUCK, P90 | SINGLE |
 | OUTPUT (the Bluetooth test image, test build 42) | MONO, STEREO, GTR+BASS | MONO |
@@ -270,7 +305,8 @@ delay, the reverb and the modulations spread to the sides, the two channels summ
 LOW OCTAVE's octave alone on the right; [OWN-FX.md](OWN-FX.md)). The editor's MIDI section sets them too. Since test build 43
 its rows end with USB PORT, then USB AUDIO and its three routing rows, USB SEND, USB RETURN and GUITAR (what the computer
 records, where its sound comes back into the chain, the guitar cut there; [BT-AUDIO-TEST.md](BT-AUDIO-TEST.md), "Test build
-43"); 18 rows since test build 49, so the page shows 8 at a time and scrolls with the one selected.
+43"); 19 rows since test build 51 (VOL PEDAL, after the scene rows), so the page shows 8 at a time and scrolls with the one
+selected.
 
 The knob changes the row, PUSH goes to the next one (after the last it leaves), HOME leaves. In the Bluetooth test image (test
 build 47) the footswitches walk the rows as well: the right one down, the left one up, round. The page also shows whether a

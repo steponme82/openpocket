@@ -153,6 +153,22 @@ export function presetEntry(src, tgt, mode) {
   if (!d || !Number.isInteger(src) || src < 0 || src > 127) return null;
   return { src, dst: d.dst, mode: d.value ? MAP_VALUE : mode === MAP_EACH ? MAP_EACH : MAP_PRESS, lo: 0, hi: 100, clo: 0, chi: 127 };
 }
+// ---- editor protocol 7 (test build 51): a two-job pedal (firmware/px_midi.h PXM_PL_DUAL) ----
+// A preset's own pedal (mode "value") on a block's setting with bit 6 of its mode set: the setting while the block is on, the
+// volume while it is off (wherever SETTINGS' VOL PEDAL puts it). Not on the GATE's settings (its PRESET LVL is the preset's own
+// level), never on a switch. One a preset: the pedal clears the bit on the preset's other entries when one is learned with it.
+// The way an entry counts is its mode without the bit (plKind).
+export const PL_DUAL = 0x40, B_GATE = 0, B_PITCH = 2, B_SFX = 3;   // (the blocks by index: docs/EDITOR-PROTOCOL.md)
+export const plKind = (mode) => mode & 0x3F;
+export function dualOk(e) {
+  const t = pedalTarget(e.dst);
+  return plKind(e.mode) === MAP_VALUE && !!t && t.kind === "param" && t.b !== B_GATE;
+}
+// as the pedal's own learn begins its WHEN ... IS OFF step (px_midi.h px_midi_dual_engine): VOLUME on a WAH's PEDAL, an AUTO
+// WAH's CENTER and a WHAMMY's PEDAL (the catalogue's type names), NOTHING elsewhere
+export function dualDefault(b, typeName, k) {
+  return (b === B_SFX && ((typeName === "WAH" && k === 0) || (typeName === "AUTO WAH" && k === 3))) || (b === B_PITCH && typeName === "WHAMMY" && k === 3);
+}
 // how a switch behaves, from the messages one press gave (values, in order): "press" when a value of 64 or more is
 // followed by one below (it sends 127, then 0 when let go), else "each" (one message a press)
 export const switchMode = (values) => (values.length >= 2 && values[0] >= 64 && values.slice(1).some((v) => v < 64)) ? MAP_PRESS : MAP_EACH;

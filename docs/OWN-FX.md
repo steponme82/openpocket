@@ -243,6 +243,21 @@ the reverb's tails down with it: for a volume pedal that lets them ring, CC 117'
 REVERB) is the one. `tests/ownfx_equiv.sh` compares PRESET LVL from 20 up. The web editor reads the catalogue again (INFO
 "v42 FX6": PRESET LVL's texts).
 
+## Test build 51: the expression pedal's volume, and its two jobs
+
+CC 117's volume (the expression pedal's, test build 25) and a two-job pedal's ([MIDI.md](MIDI.md), "Two jobs for one pedal")
+act where SETTINGS' **VOL PEDAL** says: **AT INPUT** (the default) right after the input (after the GATE when it comes first,
+so the gate still opens on the guitar's own level): the guitar's own volume knob, a drive cleaning up as it goes down
+(`tests/engine/exp.c`: through a saturated drive, half way is 0.3 dB down); or **BEFORE DLY**, before the first DELAY or REVERB
+(else at the chain's end), as before: the tone kept, half way 18 dB down. The repeats and the reverb's tail ring on in both;
+LOW OCTAVE's octave fades by its own release AT INPUT, and is cut with the chain BEFORE DLY (`tests/engine/bassout.c`). With a
+NAM amp right after the GATE, the volume AT INPUT comes before the network (pass 0's end, as USB RETURN's).
+
+A two-job pedal (`px_exp_dual`): the engine is told the block whose on and off pick the job. On: a WAH's or AUTO WAH's sweep
+or a WHAMMY's interval from the pedal (job 1 or 2, as CC 117 always was), another setting moved by the firmware with the volume
+at unity (job 3); off: the volume (job 0), at unity until the pedal moves. Another block (a preset change) forgets the position.
+The web editor reads the catalogue again (INFO "v42 FX7", editor protocol 7).
+
 ## SYN PAD
 
 A smooth chord held under your playing, for as long as you want. Strum a chord and press the **left footswitch** (or press

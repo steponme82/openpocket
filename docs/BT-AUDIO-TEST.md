@@ -5,7 +5,8 @@ phone as **`OpenPocket`**, pairs with no PIN, and the phone's music plays **mixe
 
 It is a test image, its own build target (`make bt`). The normal firmware and the installer's packages are unchanged.
 
-> **Status: test build 44** (below; build 38 is the one played longest, about 2 hours of music). Test build 27 brought the web
+> **Status: test build 51** (below; build 50 runs on a pedal: the guided learn, the scenes and their names; build 38 is the one
+> played longest, about 2 hours of music). Test build 27 brought the web
 > editor over Bluetooth. Up to test build 14: builds 1 to 10 ran on a pedal: the
 > radio starts, a phone sees the pedal and links, but no phone
 > could pair, and the guitar crackled. Build 11 paired an iPhone (below, "Test build 11"), but no music came out, and the guitar
@@ -1582,6 +1583,45 @@ a name typed through the editor's request shows on its tile with `EDITED`, SAVE 
 2. Change preset and back: the names are there. Power off and on: still there.
 
 Install it from this branch's folder, as before; the start-up screen reads `v42 BT AUDIO TEST 50`.
+
+On the pedal (2026-11-18): builds 48, 49 and 50's checks all pass.
+
+## Test build 51: the expression pedal's two jobs, VOL PEDAL
+
+Build 50 with the player's next round ([MIDI.md](MIDI.md), "Two jobs for one pedal"): a controller's expression pedal is the
+**volume** while an effect is off and that **effect's setting** while it is on (a WAH's sweep, a WHAMMY's PEDAL, any block's
+setting), as a multi-effect's pedal with its toe switch. Whatever turns the effect on (its Chocolate switch, a scene, its
+button) changes the pedal's job, and a line down the screen's right edge says which: **green** the volume, **red** the effect.
+Set in the guided learn: on a block's setting, a pedal gets a fifth step, **WHEN SFX IS OFF: VOLUME** or **NOTHING**. A preset
+without one keeps what its pedal learned (the PRESET LVL volume, for example). SETTINGS' new row **VOL PEDAL** puts the volume
+**AT INPUT** (the default: the guitar's own volume knob, the drive cleans up with it) or **BEFORE DLY** (the tone kept); the
+delay's repeats and the reverb's tail ring on in both.
+
+Room: the image is 638,248 bytes (6.5 KB of the slot left: this round took 2.5 KB), the RAM code window has 536 bytes free
+(224 for the volume's new places in the chain: the tightest margin now), the RAM 1,248, the pool 852. Nothing new in the
+store: the two jobs are bit 6 of the control's entry (the editor's protocol carries 7 bits a byte), VOL PEDAL bit 1 of the
+settings byte. The release image is v42's, byte for byte.
+
+The web editor (editor protocol 7, INFO "v42 FX7"): on a preset's own pedal, a box **or VOLUME when SFX is off** and the
+`+VOL` mark; the **Volume pedal** row (AT INPUT, BEFORE DLY).
+
+On the simulated pedal, with its buttons only: a pedal learned on DLY's TONE, step 5 on VOLUME; the line green with DLY off and
+red after DLY's button; with DLY on the pedal moved TONE, with DLY off it left it alone (the volume); after SAVE and a restart
+the pedal and its line were still there (the editor reads its mode as 0x42).
+
+### What to check
+
+1. A preset with the WAH (SFX) off: on the SFX page, PEDAL, hold FX. PEDAL, PUSH, move the Chocolate's pedal; heel `0`,
+   PUSH; toe `100`, PUSH; **WHEN SFX IS OFF: VOLUME**, PUSH. The line on the right is green: the pedal is the volume (the heel
+   silent).
+2. Learn a Chocolate switch on SFX's ON row. Press it: the wah on, the line red, the pedal sweeps the wah. Again: green, the
+   volume (at unity until the pedal moves).
+3. Play a phrase with a delay on and pull the pedal back: the repeats ring on. SETTINGS, VOL PEDAL on **BEFORE DLY**: with a
+   drive on, half way is clearly quieter than AT INPUT (where the drive cleans up first).
+4. Scenes: the wah on in one scene, off in another: the line follows the scene. Change to a preset without a two-job pedal: no
+   line, the pedal does that preset's own job.
+
+Install it from this branch's folder, as before; the start-up screen reads `v42 BT AUDIO TEST 51`.
 
 ## Checked on a computer
 

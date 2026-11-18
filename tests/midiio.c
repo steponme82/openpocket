@@ -210,7 +210,9 @@ int main(void)
         ok(commits == (int)c0 + 1 && st_midi == px_midi_cfg_pack(&mid_cfg), "leaving the MIDI page writes the settings byte to the store, once");
         ok(st_usb == 0, "USB AUDIO off: the USB settings byte stays 0");
 #if PX_OWN_FX
-        const uint8_t OB = 0x02;                       /* (test build 49: bits 2 to 7 are the Bluetooth image's settings: bit 1) */
+        const uint8_t OB = PX_ST_VOLAT;                /* (test build 49: bits 2 to 7 are the Bluetooth image's settings; 51: bit
+                                                        * 1 too, VOL PEDAL: set as its own, kept beside USB AUDIO's) */
+        px_vol_at = 1;
 #else
         const uint8_t OB = 0x80;
 #endif
@@ -221,6 +223,9 @@ int main(void)
         midi_persist();
         ok(st_usb == OB, "USB AUDIO off again: bit 0 cleared");
         st_usb = 0;
+#if PX_OWN_FX
+        px_vol_at = 0;
+#endif
     }
     reset();
     {
@@ -576,6 +581,37 @@ int main(void)
         midi_enqueue(cc(0, 117, 30), 4); px_midi_service();
         ui_mode = M_BLOCK;
         ok(all && exp_n == 4 && exp_last == 30, "CC 117 sends every position to the expression pedal (the tuner too), the preset unchanged");
+    }
+    {   /* test build 51: a two-job pedal (px_midi.h PXM_PL_DUAL): its block off, the volume (CC 117, along the pedal's own
+         * travel); on, a WAH's sweep as the expression pedal (from the setting's heel and toe), another setting as itself */
+        reset();
+        cur_preset = 3; load_preset(3);
+        PRESET.type[PX_B_SFX] = PX_SFX_WAH; PRESET.on[PX_B_SFX] = 0;
+        const uint32_t KW = px_cc_param(PX_B_SFX, 0), KM = px_cc_param(PX_B_MOD, 0);
+        px_midi_pl_put(3, 7, KW, PXM_MAP_VALUE | PXM_PL_DUAL, 0xFFu, 20u, 80u);
+        const int e = px_midi_pl_row(3, KW, 0xFFu);
+        mid_pl[e].clo = 3; mid_pl[e].chi = 120;        /* (a pedal that sends 3 to 120) */
+        px_preset_t before = PRESET; exp_n = 0; exp_last = -1;
+        midi_enqueue(cc(0, 7, 3), 1); px_midi_service();
+        const int heel = exp_last;
+        midi_enqueue(cc(0, 7, 120), 2); px_midi_service();
+        ok(exp_n == 2 && heel == 0 && exp_last == 127 && !memcmp(&before, &PRESET, sizeof before),
+           "a two-job pedal, its block off: the volume (CC 117 to the engine), its heel silence, its toe full, the preset unchanged");
+        PRESET.on[PX_B_SFX] = 1; before = PRESET;
+        midi_enqueue(cc(0, 7, 3), 3); px_midi_service();
+        const int w0 = exp_last;
+        midi_enqueue(cc(0, 7, 120), 4); px_midi_service();
+        ok(exp_n == 4 && w0 == pxm_to_cc(20) && exp_last == pxm_to_cc(80) && !memcmp(&before, &PRESET, sizeof before),
+           "its block on (a WAH): the wah's sweep as the expression pedal, from the heel's 20 to the toe's 80, the preset unchanged");
+        px_midi_pl_put(3, 7, KM, PXM_MAP_VALUE | PXM_PL_DUAL, 0xFFu, 0u, 100u);
+        PRESET.on[PX_B_MOD] = 1; exp_n = 0;
+        midi_enqueue(cc(0, 7, 127), 5); px_midi_service();
+        const int set = PRESET.p[PX_B_MOD][0] == 100 && exp_n == 0;
+        PRESET.on[PX_B_MOD] = 0;
+        midi_enqueue(cc(0, 7, 0), 6); px_midi_service();
+        ok(set && exp_n == 1 && exp_last == 0 && PRESET.p[PX_B_MOD][0] == 100 && px_midi_pl_dual(3) == PX_B_MOD && px_midi_pl_count(3) == 1,
+           "on another setting (MOD's): on, the setting itself; off, the volume; the same pedal learned again takes the first's place");
+        px_midi_pl_clear();
     }
     {   /* test build 41: the Chocolate by cable (SETTINGS' USB PORT on FOOTSW). chip/usb_host.c puts its packets in usb.c's ring
          * (source 1), so they act as a computer's, the controls learned on the pedal with them; nothing is sent to it; while it is

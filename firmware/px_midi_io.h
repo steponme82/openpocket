@@ -32,8 +32,9 @@ static void midi_persist(void)                  /* the page's HOME: save the set
     st_usb = (uint8_t)((st_usb & ~1u) | (px_ua_on & 1u));   /* v42: USB AUDIO (px_usb.h then presents the device anew) */
 #if PX_OWN_FX
     st_usb = (uint8_t)((st_usb & ~PX_ST_OUT_MASK) | (px_out_mode << PX_ST_OUT_SH));   /* test build 42: OUTPUT */
-    st_usb = (uint8_t)((st_usb & 0x0Fu) | (uint32_t)px_live << 4 | (px_sc_rule ? PX_ST_SCRULE : 0u) |
-                       (px_sc_feet ? PX_ST_SCFEET : 0u));   /* test build 47: PLAY VIEW; 49: of three, the scenes' two rows */
+    st_usb = (uint8_t)((st_usb & 0x0Du) | (px_vol_at ? PX_ST_VOLAT : 0u) | (uint32_t)px_live << 4 |
+                       (px_sc_rule ? PX_ST_SCRULE : 0u) | (px_sc_feet ? PX_ST_SCFEET : 0u));   /* test build 47: PLAY VIEW; 49:
+                                                    * of three, the scenes' two rows; 51: VOL PEDAL */
 #endif
     ft_box(0, 186, 240, "SAVING...", &FT_MD, UI_ACC, UI_BG, 1);
     if (st_ok) (void)st_commit();
@@ -81,8 +82,7 @@ static void px_midi_ble_write(const uint8_t *p, uint32_t n) { px_midi_ble_write_
  * at 64 and up is a tap (a footswitch's release, value 0, is not). Two taps 200 ms to 2 s apart set the delay's TIME to their
  * interval, the nearest TIME step as MIDI clock does; from the third tap on, to the mean of the last three intervals. A pause
  * of more than 2 s starts over. In this image TIME stops at 780 ms (REVERSE 390): a slower tap gives 780 */
-#define PXM_CC_TAP 116u
-#define PXM_CC_EXP 117u   /* test build 25: the expression pedal, 0..127 (engine/px_dsp.c px_exp: WHAMMY, AUTO WAH or volume) */
+#define PXM_CC_TAP 116u                                /* (117, PXM_CC_EXP: px_midi.h) */
 static uint32_t tap_ms, tap_n, tap_iv[3];
 static void px_midi_tap(uint32_t ms, int *touched)
 {
@@ -121,7 +121,7 @@ static void px_midi_in(uint32_t pkt, uint32_t ms, int free_ui, int *touched)
     if (m.type == PXM_CC) {                            /* test build 39: a control learned on the pedal, as the pedal's own */
         uint32_t c = m.d1, v = m.d2;
         if (px_learn_feed(c, v)) return;               /* (test build 46: a learn on a block page takes it, not played) */
-        if (!px_midi_map_in(&c, &v, cur_preset)) return;   /* (a switch's release) */
+        if (!px_midi_map_in(&c, &v, cur_preset, &PRESET)) return;   /* (a switch's release; 51: the sound, a two-job pedal's job) */
         m.d1 = (uint8_t)c; m.d2 = (uint8_t)v;
     }
 #endif

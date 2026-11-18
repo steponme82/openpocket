@@ -42,7 +42,10 @@
 #    page (tests/uisim.c), the pedal's own travel (tests/midiio.c), 47's record read (tests/test_store.c), PRESET LVL down to
 #    silence (tests/engine/exp.c). Test build 49: scenes, CAB held, PLAY's three views, the scene rows (tests/uisim.c), CC 65 to
 #    68 (tests/midiio.c), the scenes' record (tests/test_store.c). Test build 50: the scenes' names (tests/uisim.c, their
-#    records: tests/test_store.c)
+#    records: tests/test_store.c). Test build 51: a two-job expression pedal, the volume or its block's setting by the block's
+#    on and off (tests/engine/exp.c, tests/midiio.c), the guided learn's step 5, the line at the screen's edge, VOL PEDAL
+#    (tests/uisim.c), their bits in the store (tests/test_store.c), the volume AT INPUT or BEFORE DLY (tests/engine/exp.c,
+#    tests/engine/bassout.c)
 #  - preset store: save / reload / power cut at every step of a save (firmware/px_store.h on a simulated flash)
 #  - the audio callbacks' order (v42, firmware/px_aorder.h): the I2S driver calls the output's callback before the
 #    input's when its interrupt enters late; every output block must still be the sound of that interrupt's guitar block

@@ -10,6 +10,7 @@ enum { UI_BG = 0x0841, UI_PANEL = 0x18E3, UI_SEL = 0xFB00, UI_ACC = 0xFD20, UI_T
 
 static uint16_t fb[240 * 240];
 static uint32_t fb_gen;
+#define lcd_gen fb_gen                                 /* (ui.h, test build 51: the pedal's own count of drawings) */
 static uint32_t wx, wy, ww, wh, wi;
 static unsigned long px_sent;
 static void lcd_win(uint32_t x, uint32_t y, uint32_t w, uint32_t h) { wx = x; wy = y; ww = w; wh = h; wi = 0; }
