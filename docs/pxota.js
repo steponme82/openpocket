@@ -17,13 +17,24 @@ export const IS_OTA = (id) => /^ota-/i.test(id.model);
 export const OUR_LOADER = (id) => /^ota-OpenPocket_9\d\d$/i.test(id.text);
 export const IS_OPENPOCKET = (id) => MODELS.includes(id.model) && id.version >= 900;
 export const IS_OFFICIAL = (id) => MODELS.includes(id.model) && id.version < 900;
+// M-VAVE's BlackBox firmware V22 (2026-11-12) and later put the app area at 0x6000, behind a boot loader that runs to
+// 0x5CA0; OpenPocket's update loader writes from 0x4000, so installing over them would overwrite that boot loader and
+// the pedal would no longer start (isod89/openpocket#31, #33). Refused before anything is sent; the loader itself also
+// checks the pedal's own flash head (loader/ldr_core.c 1b) and refuses it, whatever the pedal says it runs
+export const NEW_LAYOUT = (id) => id.model === "BlackBox" && IS_OFFICIAL(id) && id.version >= 22;
 // the MIDI ports the page may probe: OpenPocket and its loader, and the names the official firmware's USB device gets
 // (its descriptors say "USB Composite Device" / "USB-Midi" / "Jieli Technology"; the system may add its own words)
 export const PORT_RE = /openpocket|pocket|blackbox|black.?box|ota|usb.?midi|composite|jieli|sinco|m-?vave|donner/i;
 
 // errors carry a code the page translates: notfound, model, stopped, noloader, lost, noreturn, mismatch, badreq,
-// foreign (detail: the loader's identity)
+// foreign (detail: the loader's identity), layout (the pedal's flash layout is M-VAVE V22's or later: nothing written;
+// detail: the pedal's identity, or the loader's reason)
 function fail(code, msg, detail = "") { const e = new Error(msg); e.code = code; e.detail = detail; return e; }
+// the update loader's refusal of the pedal's flash head (loader/ldr_core.c ldr_head_ok): nothing written, the pedal restarts
+// on its own firmware
+const HEAD_WHY = ["", "head unreadable", "head unreadable", "app area not at 0x4000", "boot loader past 0x4000", "no app area"];
+const refused = (why) => fail("layout", `the update loader refused this pedal's flash layout (${HEAD_WHY[why] || why}): nothing was written`,
+  HEAD_WHY[why] || String(why));
 
 export function pack7(data) {
   const out = []; let acc = 0, nb = 0;
@@ -183,6 +194,10 @@ export class Updater {
         if (r.addr === finishAddr) return { served, finished: true };
         continue;
       }
+      if (r.addr >>> 24 === 0xF1) {                    // the loader refused the pedal's flash head (ldr_core.c 1b): nothing written
+        link.send(response(r.addr, [...new TextEncoder().encode("refused"), 0]));
+        return { served, finished: false, refused: r.addr & 0xFFFFFF };
+      }
       if (r.len > MAXDATA || r.addr + r.len > image.length) throw fail("badreq", `bad request ${r.addr.toString(16)}+${r.len}`);
       if (this.t.perRequest) await sleep(this.t.perRequest);
       if (!link.send(response(r.addr, Array.from(image.subarray(r.addr, r.addr + r.len)), r.fl)))
@@ -242,6 +257,10 @@ export class Updater {
   }
 
   async installOn(dev, image, product, step) {
+    if (NEW_LAYOUT(dev.id) && parseInt(product.split("_")[1], 10) >= 900) {
+      dev.link.close();
+      throw fail("layout", `the pedal runs ${dev.id.text}: M-VAVE V22 or later, a flash layout OpenPocket cannot write yet`, dev.id.text);
+    }
     step("start", dev.id.text);
     dev.link.send(UPGRADE);
     await sleep(this.t.afterUpgrade);
@@ -254,6 +273,7 @@ export class Updater {
     const ota = await this.waitFor(IS_OTA, this.t.loaderWait);
     if (!ota) throw fail("noloader", "the update loader did not appear");
     const s2 = await this.write(ota, image, step);
+    if (s2.refused) throw refused(s2.refused);
     if (!s2.finished)
       throw fail(s2.lost ? "lost" : "stopped", `the loader ${s2.lost ? "was disconnected" : "stopped"} after ${s2.served} requests`);
     return this.comeBack(product, step);
@@ -289,6 +309,7 @@ export class Updater {
     }
     const step = onStep || (() => {});
     const s = await this.write(ota, image, step);
+    if (s.refused) throw refused(s.refused);
     if (!s.finished) throw fail(s.lost ? "lost" : "stopped", `the loader stopped after ${s.served} requests`);
     await this.comeBack(product, step);
     return true;

@@ -27,5 +27,47 @@ flash = bytearray(b"\xFF" * 0x100000)
 flash[:len(old)] = old
 flash[0xC0000:0xC0010] = b"STOCK USER DATA!"                                     # USR: must survive
 (out / "flash_old.bin").write_bytes(bytes(flash))
+
+
+# M-VAVE's BlackBox V22 (2026-11-12) and later: the boot loader runs to 0x5CA0, its isd_config follows it, the app area
+# (app_dir_head) is at 0x6000. The same flash with its head's top entries moved so (JLFS: 32 bytes each, ENC 0xFFFF, CRC16
+# of bytes 2..31 first): loader/ldr_core.c's 1b must refuse it and write nothing (isod89/openpocket#31, #33)
+def jl_enc(b, k=0xFFFF):
+    b = bytearray(b)
+    for i in range(len(b)):
+        b[i] ^= k & 0xFF
+        k = ((k << 1) ^ (0x1021 if k & 0x8000 else 0)) & 0xFFFF
+    return bytes(b)
+
+
+def crc16(d, c=0):
+    for x in d:
+        c ^= x << 8
+        for _ in range(8):
+            c = ((c << 1) ^ 0x1021 if c & 0x8000 else c << 1) & 0xFFFF
+    return c
+
+
+v22 = bytearray(flash)
+seen = []
+for o in range(32, 0x400, 32):
+    e = bytearray(jl_enc(v22[o:o + 32]))
+    name = bytes(e[16:32]).split(b"\0")[0].decode("latin1")
+    seen.append(name)
+    addr, ln = int.from_bytes(e[4:8], "little"), int.from_bytes(e[8:12], "little")
+    if name == "uboot.boot":
+        ln = 0x5C00                                                               # [0xA0, 0x5CA0)
+    elif name == "isd_config.ini":
+        v22[0x5CA0:0x5CA0 + ln] = v22[addr:addr + ln]                             # (its blob too)
+        addr = 0x5CA0
+    elif name == "app_dir_head":
+        addr = 0x6000
+    e[4:8], e[8:12] = addr.to_bytes(4, "little"), ln.to_bytes(4, "little")
+    e[0:2] = crc16(e[2:32]).to_bytes(2, "little")
+    v22[o:o + 32] = jl_enc(e)
+    if int.from_bytes(e[14:16], "little"):
+        break
+assert seen[:3] == ["uboot.boot", "isd_config.ini", "app_dir_head"], seen          # (the official heads' order)
+(out / "flash_v22.bin").write_bytes(bytes(v22))
 (out / "app_new_px.bin").write_bytes(pxpkg.with_product(app, "PocketX_924"))
 print("fixtures ok:", ", ".join(sorted(p.name for p in out.iterdir())))

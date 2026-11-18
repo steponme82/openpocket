@@ -5,6 +5,26 @@ about 44 seconds in the JieLi mask-ROM USB boot state ("UBOOT": USB 4C4A:8057, s
 mask ROM is chip ROM, so it cannot be damaged. `tools/uboot_rescue.py` waits for that state, loads JieLi's RAM loader and
 rewrites the app area of the flash from the official package, then restarts the pedal.
 
+## After OpenPocket over M-VAVE's V22 or later
+
+M-VAVE's BlackBox firmware V22 and later put a bigger boot loader at the start of the flash (to `0x5CA0`) and the app at
+`0x6000`. OpenPocket's installer up to v42 wrote from `0x4000`, over the end of that boot loader: the pedal stays dark and no
+installer sees it ([#31](https://github.com/isod89/openpocket/issues/31), [#33](https://github.com/isod89/openpocket/issues/33)).
+Its first 16 KiB are untouched, so this tool can write M-VAVE's own file back over the rest: its head check compares the
+pedal's `[0, 0x4000)` with the image's before anything is written. This is the route that brought the pedal of #31 back;
+it has not been tried here. Use the M-VAVE file of the version the pedal had (V22 and V23 share those first 16 KiB, so
+#31's check passed with V22), downloaded from M-VAVE, after the one-time setup below:
+
+```
+python3 -c 'import sys; sys.path.insert(0, "tools"); import pocketx_fw as p; _, L, _, m = p.load(sys.argv[1]); e = next(x for x in m["ents"] if x["name"] == "flash.bin"); open(sys.argv[2], "wb").write(L[e["off"]:e["off"] + e["len"]])' BlackBox-V23.fwsc build/mvave-flash.bin
+make rescue ARGS="--image build/mvave-flash.bin"
+make rescue-write ARGS="--image build/mvave-flash.bin"
+```
+
+The first command takes `flash.bin` out of the package, the second only reads and compares (it stops if the heads differ),
+the third writes. The installer no longer does this to a pedal: the page and the update loader both refuse those
+firmware versions (README, "Install").
+
 ## One-time setup (macOS)
 
 ```

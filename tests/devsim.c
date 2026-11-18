@@ -163,7 +163,7 @@ static const char *flash_app_id(void)
 
 int main(int argc, char **argv)
 {
-    const char *stock = 0, *dump = 0;
+    const char *stock = 0, *stock0 = 0, *dump = 0;
     FILE *f;
     int i, mode = 0;                                    /* 0 app, 1 loader */
     if (argc < 2) { fprintf(stderr, "devsim FLASH.bin [--stock ID] [--dump OUT]\n"); return 2; }
@@ -174,6 +174,7 @@ int main(int argc, char **argv)
     f = fopen(argv[1], "rb");
     if (!f || fread(nor, 1, sizeof nor, f) != sizeof nor) { fprintf(stderr, "devsim: %s: need 1 MiB\n", argv[1]); return 2; }
     fclose(f);
+    stock0 = stock;                                     /* (a refused update: back to it) */
     cur_id = stock ? stock : flash_app_id();
     printf("#port %s\n#log app %s\n", stock ? "USB-Midi" : "OpenPocket", cur_id);
     fflush(stdout);
@@ -213,6 +214,12 @@ int main(int argc, char **argv)
                 mode = 0;
                 cur_id = flash_app_id();
                 printf("#port OpenPocket\n#log app %s\n", cur_id);
+            } else if (rc <= LDR_REFUSED) {             /* the device's head refused (1b): the records gone, it restarts */
+                const int rec = ota_rd16(nor + 0xE4F00 + 6) == 0x5441u;   /* on its own firmware (ota.c's record) */
+                mode = 0;
+                stock = stock0;
+                cur_id = stock ? stock : flash_app_id();
+                printf("#port %s\n#log app %s refused record=%s\n", stock ? "USB-Midi" : "OpenPocket", cur_id, rec ? "flash" : "none");
             }
         }
         fflush(stdout);

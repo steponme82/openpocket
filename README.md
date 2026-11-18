@@ -63,6 +63,15 @@ Open the installer page (GitHub Pages of this repository) in **Chrome or Edge** 
 USB, press **Connect**, then **Install**. The page also takes the pedal back to the official firmware: pick the
 official `.fwsc` from the maker, it is checked in the browser.
 
+**Not on a BlackBox with M-VAVE's firmware V22 or later (November 2026).** That firmware moved the app area of the flash
+from `0x4000` to `0x6000`, behind a bigger boot loader that runs to `0x5CA0`. OpenPocket's update loader writes from
+`0x4000`, so installing over it overwrote the end of that boot loader and the pedal stayed dark
+([#31](https://github.com/isod89/openpocket/issues/31), [#33](https://github.com/isod89/openpocket/issues/33)). Now the
+page refuses a pedal that reports `BlackBox_022` or later, and the update loader itself reads the pedal's own flash head
+before anything is erased: unless its app area begins at `0x4000` (the official V16 to V21 heads, Pocket X 016), it writes
+nothing, erases the update record and restarts the pedal on its own firmware (`loader/ldr_core.c`, step 1b). A pedal that
+already went dark this way: `docs/RESCUE.md`, "After OpenPocket over M-VAVE's V22 or later".
+
 On the **Donner Pocket X** the page works: updating OpenPocket → a newer OpenPocket is tested (2026-11-02, your saved
 presets are kept), and other Pocket X owners have installed it from the page. On the **M-VAVE BlackBox**, OpenPocket up to v30 restarted every ~4.3 s after
 the pedal was switched off and on ([issue #1](https://github.com/isod89/openpocket/issues/1)). M-VAVE's firmware

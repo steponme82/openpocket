@@ -88,6 +88,40 @@ ok(productOf(px) === "PocketX_924" && productOf(bb) === "BlackBox_924", "package
   await sim.end();
 }
 
+// 4b. M-VAVE's BlackBox V22 and later (their flash head puts the app area at 0x6000, the boot loader running to 0x5CA0):
+//     OpenPocket's loader writes from 0x4000 and would overwrite that boot loader (isod89/openpocket#31, #33)
+{   // the page refuses a pedal that says it runs BlackBox_022 before sending anything
+  const dump = join(TMP, "v22_page.bin");
+  const sim = simAccess([join(TMP, "flash_v22.bin"), "--stock", "BlackBox_022", "--dump", dump]);
+  await sim.ready;
+  const u = new Updater(sim.access, null, FAST);
+  const steps = [];
+  let err = null;
+  try { await u.install(logicalImage(bb), "BlackBox_924", (s) => steps.push(s)); } catch (e) { err = e; }
+  await sim.end();
+  ok(err && err.code === "layout" && err.detail === "BlackBox_022" && !steps.length && !sim.log.some((l) => /step1/.test(l)) &&
+     flashOf(dump).equals(flashOf(join(TMP, "flash_v22.bin"))), "official BlackBox_022: refused by the page, nothing sent, nothing written");
+}
+{   // the loader refuses the V22 head itself, whatever the pedal says (here 021): nothing written, the record gone, the pedal
+    // back on its own firmware, the page told at once (not after the write's 3-minute wait)
+  const dump = join(TMP, "v22_loader.bin");
+  const sim = simAccess([join(TMP, "flash_v22.bin"), "--stock", "BlackBox_021", "--dump", dump]);
+  await sim.ready;
+  const u = new Updater(sim.access, null, { ...FAST, step2Idle: 30000 });
+  const t0 = Date.now();
+  let err = null;
+  try { await u.install(logicalImage(bb), "BlackBox_924", () => {}); } catch (e) { err = e; }
+  const took = Date.now() - t0;
+  await new Promise((r) => setTimeout(r, 200));
+  await sim.end();
+  const before = flashOf(join(TMP, "flash_v22.bin")), after = flashOf(dump);
+  ok(err && err.code === "layout" && /past 0x4000|not at 0x4000/.test(err.detail) && took < 10000 && sim.log.some((l) => /step2 rc=-6[1-5]/.test(l)),
+     `a V22 head behind an older identity: the loader refuses it (${err ? err.detail : "no error"}), the page told in ${took} ms`);
+  ok(after.subarray(0, 0xA3000).equals(before.subarray(0, 0xA3000)), "V22 head refused: the head and [0x4000, 0xA3000) untouched");
+  ok(after.subarray(0xE4000, 0xE5000).every((b) => b === 0xFF) && sim.log.some((l) => /app BlackBox_021 refused record=none/.test(l)),
+     "V22 head refused: the update record erased, the pedal restarts on its own firmware");
+}
+
 // 5. a damaged package: the loader refuses it before erasing anything
 {
   const dump = join(TMP, "damaged.bin");

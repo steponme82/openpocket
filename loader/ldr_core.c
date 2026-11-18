@@ -8,6 +8,11 @@
  * The host serves the package ("logical image") with cmd 0x30 reads (ota.c).
  * The loader:
  *   1. reads the UFW header and finds flash.bin;
+ *   1b. checks the device's own flash head: its app area must begin at 0x4000, where this loader writes it. M-VAVE's
+ *      BlackBox firmware V22 and later moved it to 0x6000, behind a boot loader that runs to 0x5CA0: writing from
+ *      0x4000 there overwrites the boot loader's end and the pedal no longer starts (isod89/openpocket#31, #33). On
+ *      such a head nothing is written: the update records go (as in 4.), the host is told (a read of 0xF1000000 +
+ *      the reason) and the pedal restarts on its own firmware;
  *   2. checks that the package's app area decrypts with THIS chip's key
  *      (taken from isd_config.ini in the device's own flash head), so a
  *      package for another key is refused before anything is erased;
@@ -42,6 +47,8 @@
 #define LDR_IR_HI 0xFC000u                      /* user data as well */
 #define LDR_NSEC ((LDR_APP_HI - LDR_APP_LO) >> 12)
 #define LDR_FL_MAX 0x100000u                    /* flash.bin: at most the 1 MiB part */
+#define LDR_REFUSED (-60)                       /* ldr_session: LDR_REFUSED - 1 .. - 5, the device's head refused (1b): */
+                                                /* nothing written, the records gone: reset, its own firmware boots */
 
 static int ldr_fread(uint32_t off, void *p, uint32_t n);
 static int ldr_erase(uint32_t off);
@@ -93,6 +100,54 @@ static int ldr_chip_key(uint32_t *key)
     return -3;
 }
 
+/* 1b. the device's own flash head (JLFS top entries, as in ldr_chip_key): app_dir_head at LDR_APP_LO, nothing before it
+ * running into the app area. The official heads this loader knows (BlackBox V16, V20, V21; Pocket X 016): uboot.boot
+ * [0xA0, 0x38D0) or [0xA0, 0x3938), isd_config.ini right after it, app_dir_head at 0x4000, key_mac at 0xFF000 (the last).
+ * BlackBox V22: uboot.boot [0xA0, 0x5CA0), isd_config at 0x5CA0, app_dir_head at 0x6000. 0, or why not */
+static int ldr_head_ok(void)
+{
+    uint8_t e[32];
+    uint32_t off, a, n, app = 0;
+    for (off = 32; off < 0x400u; off += 32u) {
+        if (ldr_fread(off, e, 32))
+            return -1;
+        ota_jl_enc(e, 32);
+        if (ota_crc16(e + 2, 30, 0) != ota_rd16(e))
+            return -2;                                   /* a head this loader cannot read */
+        a = ota_rd32(e + 4);
+        n = ota_rd32(e + 8);
+        if (ota_memeq(e + 16, (const uint8_t *)"app_dir_head", 13)) {
+            if (a != LDR_APP_LO)
+                return -3;                               /* the app area elsewhere (V22 and later: 0x6000) */
+            app = 1;
+        } else if (a < LDR_APP_LO && n > LDR_APP_LO - a)
+            return -4;                                   /* the boot loader or its config past 0x4000 (V22's) */
+        if (ota_rd16(e + 14))
+            break;                                       /* the last entry */
+    }
+    return app ? 0 : -5;                                 /* no app area in the head */
+}
+
+/* the update records (4K boundary - 256, between LDR_REC_LO and LDR_REC_HI, outside the user data): erased, so the SPL
+ * boots the app on the next power-on (4. after a write; 1b. after a refusal: the device's own app, untouched) */
+static void ldr_records_erase(void)
+{
+    uint32_t s;
+    for (s = LDR_REC_HI; s > LDR_REC_LO; s -= 0x1000u) {   /* flash records: 4K boundary - 256 */
+        uint8_t r[80];
+        if (s - 0x1000u >= LDR_DATA_LO && s - 0x1000u < LDR_DATA_HI)
+            continue;                                    /* Felucca's store: user data that may look like one */
+        if (s - 0x1000u >= LDR_NAM_LO && s - 0x1000u < LDR_NAM_HI)
+            continue;                                    /* the NAM models (v37) */
+        if (s - 0x1000u >= LDR_IR_LO && s - 0x1000u < LDR_IR_HI)
+            continue;                                    /* the cabinet IRs (v38) */
+        if (ldr_fread(s - 0x100u, r, 80))
+            break;
+        if (ota_rd16(r + 6) == 0x5441u && ota_rd16(r) && ota_rd16(r) == ota_crc16(r + 2, 78, 0))
+            ldr_erase(s - 0x1000u);
+    }
+}
+
 /* 2b. flash.bin [0, fl_size) from the host, before any erase: its CRC16 must be the UFW entry's (want); sc gets
  * the CRC16 of each app sector as it came in */
 static int ldr_check(uint32_t fl_off, uint32_t fl_size, uint32_t want, uint16_t *sc, uint8_t *b)
@@ -127,6 +182,13 @@ static int ldr_session(void)
     for (i = 0; i < ota_rd16(hdr + 8); i++)
         if (ota_rd16(hdr + 0x40 + i * 0x50u) == 0)
             want = ota_rd16(hdr + 0x40 + i * 0x50u + 4u);   /* flash.bin's data CRC16 */
+    /* 1b. the device's own layout: on a head this loader does not know, nothing is written, and the pedal goes back to
+     * its own firmware (the records go, the host is told why: 0xF1000000 + the reason, 1 to 5; then loader.c resets) */
+    if ((rc = ldr_head_ok()) != 0) {
+        ldr_records_erase();
+        (void)ota_read(0xF1000000u + (uint32_t)-rc, sec, 8);
+        return LDR_REFUSED + rc;
+    }
     /* 2. the package's app area must decrypt with this chip's key */
     if ((rc = ldr_chip_key(&key)) != 0)
         return -40 + rc;
@@ -176,18 +238,6 @@ static int ldr_session(void)
         if (!ota_read(0xF0000000u, sec, 8))
             break;
     ldr_record_clear();
-    for (s = LDR_REC_HI; s > LDR_REC_LO; s -= 0x1000u) {   /* flash records: 4K boundary - 256 */
-        uint8_t r[80];
-        if (s - 0x1000u >= LDR_DATA_LO && s - 0x1000u < LDR_DATA_HI)
-            continue;                                    /* Felucca's store: user data that may look like one */
-        if (s - 0x1000u >= LDR_NAM_LO && s - 0x1000u < LDR_NAM_HI)
-            continue;                                    /* the NAM models (v37) */
-        if (s - 0x1000u >= LDR_IR_LO && s - 0x1000u < LDR_IR_HI)
-            continue;                                    /* the cabinet IRs (v38) */
-        if (ldr_fread(s - 0x100u, r, 80))
-            break;
-        if (ota_rd16(r + 6) == 0x5441u && ota_rd16(r) && ota_rd16(r) == ota_crc16(r + 2, 78, 0))
-            ldr_erase(s - 0x1000u);
-    }
+    ldr_records_erase();
     return 0;
 }

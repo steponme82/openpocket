@@ -97,12 +97,14 @@ void ldr_main(void)
         }
         ota_service();                              /* handshake */
         if (usb.ota_req) {
+            int rc;
             usb.ota_req = 0;
-            if (ldr_session() == 0) {
-                fm1_delay_ms(200);                  /* the "success" reply leaves */
+            rc = ldr_session();
+            if (rc == 0 || rc <= LDR_REFUSED) {     /* written; or (1b) the device's head refused, nothing written */
+                fm1_delay_ms(200);                  /* the "success" reply (or the refusal's read) leaves */
                 usb_detach();
                 fm1_delay_ms(30);
-                fm1_core_reset();                   /* the SPL boots the new app */
+                fm1_core_reset();                   /* the SPL boots the new app (refused: the device's own) */
             }
         }
     }

@@ -134,7 +134,7 @@ footer a,.note a{color:inherit}
 </div>
 
 <script type="module">
-import { Updater, IS_OTA, IS_OPENPOCKET, OUR_LOADER, MODELS } from "./pxota.js";
+import { Updater, IS_OTA, IS_OPENPOCKET, OUR_LOADER, MODELS, NEW_LAYOUT } from "./pxota.js";
 import { productOf, logicalImage, checkOfficial } from "./pxpkg.js";
 import { BLACKBOX_V21, verifyFactorySounds } from "./pxfactory.js";
 
@@ -147,7 +147,7 @@ const T = {
     pedal: "Pedal", firmware: "Firmware", port: "MIDI port",
     official: "official", opfw: "OpenPocket", loader: "update mode (loader)",
     s2: "Install OpenPocket", s2note: "Available version:",
-    s2warn: "During the install (about 1 to 2 minutes): do not unplug or switch the pedal off, keep this tab open. Nothing is written before the pedal has checked the package. First install over the official firmware: keep your backup (SD card / fm1buddy) at hand.",
+    s2warn: "During the install (about 1 to 2 minutes): do not unplug or switch the pedal off, keep this tab open. Nothing is written before the pedal has checked the package. First install over the official firmware: keep your backup (SD card / fm1buddy) at hand. A BlackBox with M-VAVE's firmware V22 or later is not supported yet: the page and the pedal refuse it, nothing is written.",
     install: "Install", resume: "Resume the update",
     st_start: "start", st_verify: "check", st_loader: "loader", st_write: "write", st_reboot: "restart", st_done: "done",
     done: "Done: the pedal now runs ", nexteditor: "Open the preset editor", nextnotes: "What is new in this version", sameok: "OpenPocket is up to date.",
@@ -169,6 +169,8 @@ toeditor: "Preset editor →",
     e_stopped: "The pedal stopped answering. ", e_noloader: "The update loader did not appear. Replug the cable, then Resume.",
     e_noreturn: "The pedal did not come back: switch it off and on.", e_mismatch: "Written, but the pedal reports: ",
     e_foreign: "The pedal is in the update mode of another firmware: ", e_pkg: "OpenPocket package missing on this site: ",
+    e_layout: "Not installed: this pedal has M-VAVE's firmware V22 or later, whose memory layout OpenPocket cannot write yet (installing would overwrite the pedal's own start-up code and it would no longer switch on). Nothing was written, and the pedal keeps its own firmware. If it stays dark, switch it on holding HOME, > and the knob (M-VAVE's Recovery Mode) and reinstall M-VAVE's firmware with their updater. Details: ",
+    newlayout: "This BlackBox runs M-VAVE's firmware V22 or later. OpenPocket cannot be installed on it yet: the new firmware moved the memory layout, and installing would overwrite the pedal's own start-up code (several pedals stopped switching on this way). The Install button stays off. Keep M-VAVE's firmware for now.",
   },
 };
 const lang = "en";
@@ -218,7 +220,7 @@ function showDev(d) {
   $("verify-factory").disabled = busy || !onV21;
   $("factory-uboot").disabled = busy || !onV21;
   $("resume").hidden = !d || !IS_OTA(d.id);
-  $("install").disabled = busy || !d || IS_OTA(d.id) || !manifest;
+  $("install").disabled = busy || !d || IS_OTA(d.id) || !manifest || NEW_LAYOUT(d.id);   /* (M-VAVE V22 and later: never) */
   $("uboot").disabled = busy || !d || !IS_OPENPOCKET(d.id);
   $("backoff").disabled = busy || !d || IS_OTA(d.id) || !official || official.model !== d.id.model ||
     (!official.known && !$("offok").checked);
@@ -231,6 +233,7 @@ function showDev(d) {
   $("d-port").textContent = d.name;
   const bb = id.model === "BlackBox";               /* not supported yet: boot loop (issue #1) */
   $("bbwarn").hidden = !bb;
+  if (NEW_LAYOUT(id)) setMsg($("msg"), t("newlayout"), "err");   /* (M-VAVE V22 and later: Install stays off) */
 }
 
 async function connect() {
